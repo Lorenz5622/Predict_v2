@@ -125,7 +125,7 @@ def main():
     Qwen2MoeForCausalLM, Qwen2MoeConfig = import_qwen_moe_classes()
     config = Qwen2MoeConfig.from_pretrained(args.model_path)
     if hasattr(args, "router_topk"):
-        config.router_topk = int(args.router_topk)
+        config.num_experts_per_tok = int(args.router_topk)
 
     use_fp16 = bool(args.fp16) and (device.type == "cuda") and (not bool(args.bf16))
     use_bf16 = bool(args.bf16) and (device.type == "cuda")
