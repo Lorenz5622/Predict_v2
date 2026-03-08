@@ -13,7 +13,7 @@ LR=2e-4
 LORA_R=16
 LORA_ALPHA=16
 LORA_DROPOUT=0.05
-NUM_PROC=16
+NUM_PROC=2
 
 # 可选：固定 GPU（没有就注释掉）
 
@@ -33,7 +33,7 @@ run_one () {
   echo
 }
 
-run_one "piqa_4bit" torchrun --nproc_per_node "$NUM_PROC" finetune_qwen1_5_moe_2_7b_4bit.py \
+run_one "piqa_4bit" torchrun --nproc_per_node 2 finetune_qwen1_5_moe_2_7b_4bit.py \
   --model_path "$MODEL_PATH" \
   --output_dir "$OUT_ROOT/out_piqa_lora_4bit" \
   --dataset piqa --eval_dataset piqa \
@@ -46,6 +46,6 @@ run_one "piqa_4bit" torchrun --nproc_per_node "$NUM_PROC" finetune_qwen1_5_moe_2
   --bf16 1 --fp16 0 \
   --bnb_4bit_quant_type nf4 \
   --bnb_4bit_use_double_quant 1 \
-  --gradient_checkpointing 1
+  --gradient_checkpointing 0
 
 echo "ALL DONE ✅  $(date)"
