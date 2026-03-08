@@ -141,9 +141,9 @@ def parse_args():
     # 4bit options
     ap.add_argument("--bnb_4bit_quant_type", type=str, default="nf4", choices=["nf4", "fp4"])
     ap.add_argument("--bnb_4bit_use_double_quant", type=int, default=1)
-    ap.add_argument("--bnb_4bit_compute_dtype", type=str, default="float32",
+    ap.add_argument("--bnb_4bit_compute_dtype", type=str, default="float16",
                     choices=["float32", "float16", "bfloat16"],
-                    help="Compute dtype used by 4-bit kernels. Set float32 to avoid bf16/fp16 compute.")
+                    help="Compute dtype used by 4-bit kernels during training/inference with quantized weights.")
     ap.add_argument("--gradient_checkpointing", type=int, default=1)
     return ap.parse_args()
 
@@ -186,7 +186,8 @@ def main():
 
     if is_main_process():
         print(f"[load] model 4bit compute_dtype={compute_dtype} distributed={is_distributed} world_size={world_size}")
-        print("[note] 4bit means quantized base weights; training compute dtype is controlled by --bnb_4bit_compute_dtype.")
+        print(f"[train] trainer mixed precision: fp16={use_fp16} bf16={use_bf16}")
+        print("[note] base weights stay in 4-bit; LoRA/optimizer precision follows fp16/bf16 settings.")
 
     quantization_config = BitsAndBytesConfig(
         load_in_4bit=True,
