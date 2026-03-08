@@ -11,15 +11,17 @@ Design goals:
 from __future__ import annotations
 
 import argparse
+import inspect
+import os
 from typing import Optional
 
 import torch
+import torch.distributed as dist
 from datasets import concatenate_datasets
 from transformers import AutoTokenizer, BitsAndBytesConfig
 from peft import prepare_model_for_kbit_training
 
 from finetune_baseline_example import (
-    setup_distributed,
     cleanup_distributed,
     is_main_process,
     set_seed,
@@ -37,6 +39,40 @@ from finetune_baseline_example import (
     load_and_pack_arc_challenge_ppl_opencompass,
     load_and_pack_openbookqa_ppl_opencompass,
 )
+
+
+def setup_distributed_safe():
+    """
+    DDP setup with explicit rank<->GPU sanity checks.
+
+    This avoids cryptic CUDA "invalid device ordinal" crashes when
+    --nproc_per_node exceeds visible CUDA devices.
+    """
+    if "RANK" not in os.environ or "WORLD_SIZE" not in os.environ:
+        return -1, 1, False
+
+    rank = int(os.environ["RANK"])
+    world_size = int(os.environ["WORLD_SIZE"])
+    local_rank = int(os.environ.get("LOCAL_RANK", 0))
+
+    if not torch.cuda.is_available():
+        raise RuntimeError(
+            "Distributed launch detected, but CUDA is unavailable. "
+            "Please run single-process or configure CUDA correctly."
+        )
+
+    n_visible = torch.cuda.device_count()
+    if local_rank < 0 or local_rank >= n_visible:
+        raise RuntimeError(
+            f"Invalid LOCAL_RANK={local_rank} for visible CUDA device count={n_visible}. "
+            f"Likely --nproc_per_node is larger than available GPUs (or CUDA_VISIBLE_DEVICES is restrictive). "
+            f"Set --nproc_per_node <= {n_visible}."
+        )
+
+    torch.cuda.set_device(local_rank)
+    dist.init_process_group(backend="nccl", init_method="env://", world_size=world_size, rank=rank)
+    dist.barrier(device_ids=[local_rank])
+    return local_rank, world_size, True
 
 
 def import_qwen_moe_classes():
@@ -76,7 +112,7 @@ def parse_args():
     ap.add_argument("--use_label", type=int, default=1)
 
     ap.add_argument("--fp16", type=int, default=0)
-    ap.add_argument("--bf16", type=int, default=1)
+    ap.add_argument("--bf16", type=int, default=0)
 
     ap.add_argument("--lora_r", type=int, default=16)
     ap.add_argument("--lora_alpha", type=int, default=32)
@@ -105,6 +141,9 @@ def parse_args():
     # 4bit options
     ap.add_argument("--bnb_4bit_quant_type", type=str, default="nf4", choices=["nf4", "fp4"])
     ap.add_argument("--bnb_4bit_use_double_quant", type=int, default=1)
+    ap.add_argument("--bnb_4bit_compute_dtype", type=str, default="float32",
+                    choices=["float32", "float16", "bfloat16"],
+                    help="Compute dtype used by 4-bit kernels. Set float32 to avoid bf16/fp16 compute.")
     ap.add_argument("--gradient_checkpointing", type=int, default=1)
     return ap.parse_args()
 
@@ -112,7 +151,7 @@ def parse_args():
 def main():
     args = parse_args()
 
-    local_rank, world_size, is_distributed = setup_distributed()
+    local_rank, world_size, is_distributed = setup_distributed_safe()
     set_seed(args.seed + (local_rank if is_distributed else 0))
 
     if is_distributed:
@@ -137,10 +176,17 @@ def main():
 
     use_fp16 = bool(args.fp16) and (device.type == "cuda") and (not bool(args.bf16))
     use_bf16 = bool(args.bf16) and (device.type == "cuda")
-    compute_dtype = torch.float16 if use_fp16 else (torch.bfloat16 if use_bf16 else torch.float32)
+
+    dtype_map = {
+        "float32": torch.float32,
+        "float16": torch.float16,
+        "bfloat16": torch.bfloat16,
+    }
+    compute_dtype = dtype_map[args.bnb_4bit_compute_dtype]
 
     if is_main_process():
         print(f"[load] model 4bit compute_dtype={compute_dtype} distributed={is_distributed} world_size={world_size}")
+        print("[note] 4bit means quantized base weights; training compute dtype is controlled by --bnb_4bit_compute_dtype.")
 
     quantization_config = BitsAndBytesConfig(
         load_in_4bit=True,
@@ -166,7 +212,11 @@ def main():
     if bool(args.gradient_checkpointing):
         model.gradient_checkpointing_enable()
 
-    model = prepare_model_for_kbit_training(model)
+    prep_sig = inspect.signature(prepare_model_for_kbit_training)
+    if "use_gradient_checkpointing" in prep_sig.parameters:
+        model = prepare_model_for_kbit_training(model, use_gradient_checkpointing=bool(args.gradient_checkpointing))
+    else:
+        model = prepare_model_for_kbit_training(model)
 
     targets = [t.strip() for t in args.lora_target_modules.split(",") if t.strip()] if args.lora_target_modules else None
     model = apply_lora(model, r=args.lora_r, alpha=args.lora_alpha, dropout=args.lora_dropout, target_modules=targets)
@@ -221,7 +271,6 @@ def main():
 
     from torch.utils.data import DataLoader
     from torch.utils.data.distributed import DistributedSampler
-    import torch.distributed as dist
 
     collator = LMDataCollator(pad_id=0)
 
