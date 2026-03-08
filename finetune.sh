@@ -33,7 +33,7 @@ run_one () {
   echo
 }
 
-run_one "piqa_4bit" torchrun --nproc_per_node 2 finetune_qwen1_5_moe_2_7b_4bit.py \
+run_one "piqa_4bit" torchrun --nproc_per_node 2 finetune_qwen_1_5_moe_2_7b_4bit.py \
   --model_path "$MODEL_PATH" \
   --output_dir "$OUT_ROOT/out_piqa_lora_4bit" \
   --dataset piqa --eval_dataset piqa \
@@ -43,9 +43,10 @@ run_one "piqa_4bit" torchrun --nproc_per_node 2 finetune_qwen1_5_moe_2_7b_4bit.p
   --num_proc "$NUM_PROC" \
   --num_experts_per_tok 4 \
   --eval_max_samples 200 \
-  --bf16 1 --fp16 0 \
+  --bf16 0 --fp16 1 \
   --bnb_4bit_quant_type nf4 \
   --bnb_4bit_use_double_quant 1 \
+  --bnb_4bit_compute_dtype float16 \
   --gradient_checkpointing 0
 
 echo "ALL DONE ✅  $(date)"
