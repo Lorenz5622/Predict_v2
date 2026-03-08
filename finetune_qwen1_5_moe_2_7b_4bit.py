@@ -92,7 +92,10 @@ def parse_args():
     ap.add_argument("--metrics_every", type=int, default=10)
 
     ap.add_argument("--device", type=str, default="cuda")
-    ap.add_argument("--router_topk", type=int, default=0)
+    ap.add_argument("--num_experts_per_tok", type=int, default=0,
+                    help="Override MoE top-k experts per token (maps to config.num_experts_per_tok). 0 keeps config default.")
+    ap.add_argument("--router_topk", type=int, default=0,
+                    help="Deprecated alias of --num_experts_per_tok.")
 
     ap.add_argument("--bbh_task", type=str, default="boolean_expressions")
     ap.add_argument("--winogrande_config", type=str, default="winogrande_xl")
@@ -124,8 +127,13 @@ def main():
 
     Qwen2MoeForCausalLM, Qwen2MoeConfig = import_qwen_moe_classes()
     config = Qwen2MoeConfig.from_pretrained(args.model_path)
-    if hasattr(args, "router_topk"):
-        config.num_experts_per_tok = int(args.router_topk)
+    requested_topk = int(args.num_experts_per_tok) if int(args.num_experts_per_tok) > 0 else int(args.router_topk)
+    if requested_topk > 0:
+        if hasattr(config, "num_experts") and requested_topk > int(config.num_experts):
+            raise ValueError(
+                f"requested top-k ({requested_topk}) cannot exceed config.num_experts ({config.num_experts})."
+            )
+        config.num_experts_per_tok = requested_topk
 
     use_fp16 = bool(args.fp16) and (device.type == "cuda") and (not bool(args.bf16))
     use_bf16 = bool(args.bf16) and (device.type == "cuda")
