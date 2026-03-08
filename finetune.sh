@@ -33,7 +33,7 @@ run_one () {
   echo
 }
 
-run_one "piqa_4bit" torchrun --nproc_per_node 2 finetune_qwen_1_5_moe_2_7b_4bit.py \
+run_one "piqa_4bit" torchrun --nproc_per_node 2 finetune_qwen1_5_moe_2_7b_4bit.py \
   --model_path "$MODEL_PATH" \
   --output_dir "$OUT_ROOT/out_piqa_lora_4bit" \
   --dataset piqa --eval_dataset piqa \
