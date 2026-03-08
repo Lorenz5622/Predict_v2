@@ -105,7 +105,7 @@ def parse_args():
     # 4bit options
     ap.add_argument("--bnb_4bit_quant_type", type=str, default="nf4", choices=["nf4", "fp4"])
     ap.add_argument("--bnb_4bit_use_double_quant", type=int, default=1)
-    ap.add_argument("--gradient_checkpointing", type=int, default=1)
+    ap.add_argument("--gradient_checkpointing", type=int, default=0)
     return ap.parse_args()
 
 
@@ -166,7 +166,7 @@ def main():
     if bool(args.gradient_checkpointing):
         model.gradient_checkpointing_enable()
 
-    model = prepare_model_for_kbit_training(model)
+    model = prepare_model_for_kbit_training(model, use_gradient_checkpointing=False)
 
     targets = [t.strip() for t in args.lora_target_modules.split(",") if t.strip()] if args.lora_target_modules else None
     model = apply_lora(model, r=args.lora_r, alpha=args.lora_alpha, dropout=args.lora_dropout, target_modules=targets)
@@ -236,7 +236,7 @@ def main():
     eval_dl = DataLoader(eval_ds, batch_size=args.batch_size, sampler=eval_sampler, shuffle=False, drop_last=False, num_workers=2, pin_memory=True, collate_fn=collator)
 
     if is_distributed:
-        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[local_rank], output_device=local_rank, find_unused_parameters=False)
+        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[local_rank], output_device=local_rank, find_unused_parameters=True)
 
     train(
         model=model,
