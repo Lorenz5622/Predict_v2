@@ -29,6 +29,7 @@ Notes:
 from __future__ import annotations
 
 import os
+import copy
 import math
 import json
 import time
@@ -1276,6 +1277,92 @@ def train(
 # -----------------------------
 # Main
 # -----------------------------
+
+def _init_low_rank_router_from_dense_router(low_rank_model: nn.Module, dense_model: nn.Module, rank: int):
+    """
+    Initialize low-rank router (router_up/router_down) from a dense router weight
+    using truncated SVD so that `router_up @ router_down` approximates `gate.weight`.
+    """
+    num_inited = 0
+    with torch.no_grad():
+        for layer_idx, low_layer in enumerate(low_rank_model.model.layers):
+            low_mlp = low_layer.mlp
+            if not (getattr(low_mlp, "use_switch", False) and hasattr(low_mlp.gate, "router_down")):
+                continue
+
+            dense_mlp = dense_model.model.layers[layer_idx].mlp
+            if not hasattr(dense_mlp, "gate"):
+                continue
+
+            dense_w = dense_mlp.gate.weight.data.float()  # [num_experts, hidden_size]
+            max_rank = min(rank, dense_w.shape[0], dense_w.shape[1])
+            if max_rank <= 0:
+                continue
+
+            U, S, Vh = torch.linalg.svd(dense_w, full_matrices=False)
+            U = U[:, :max_rank]
+            S = S[:max_rank]
+            Vh = Vh[:max_rank, :]
+
+            sqrt_s = torch.sqrt(S)
+            up = U * sqrt_s.unsqueeze(0)
+            down = sqrt_s.unsqueeze(1) * Vh
+
+            low_up = low_mlp.gate.router_up.weight.data
+            low_down = low_mlp.gate.router_down.weight.data
+            low_up.zero_()
+            low_down.zero_()
+            low_up[:, :max_rank].copy_(up.to(dtype=low_up.dtype, device=low_up.device))
+            low_down[:max_rank, :].copy_(down.to(dtype=low_down.dtype, device=low_down.device))
+            num_inited += 1
+
+    return num_inited
+
+
+def build_model_with_router_compat(args, MoEForCausalLM, config, device, dtype):
+    """
+    Build model in a backward-compatible way:
+      - `use_low_rank_router=0`: load original checkpoint directly.
+      - `use_low_rank_router=1`: first load dense model from checkpoint, then transfer
+        shared weights and SVD-initialize low-rank router weights.
+    """
+    if not bool(args.use_low_rank_router):
+        model = MoEForCausalLM.from_pretrained(
+            args.model_path,
+            config=config,
+            torch_dtype=dtype if device.type == "cuda" else torch.float32,
+            low_cpu_mem_usage=True,
+        )
+        return model
+
+    dense_config = copy.deepcopy(config)
+    dense_config.use_low_rank_router = False
+
+    dense_model = MoEForCausalLM.from_pretrained(
+        args.model_path,
+        config=dense_config,
+        torch_dtype=dtype if device.type == "cuda" else torch.float32,
+        low_cpu_mem_usage=True,
+    )
+
+    low_rank_model = MoEForCausalLM(config)
+    low_rank_model.to(device)
+
+    missing_keys, unexpected_keys = low_rank_model.load_state_dict(dense_model.state_dict(), strict=False)
+    if is_main_process():
+        print(f"[load] transferred dense->lowrank params, missing={len(missing_keys)} unexpected={len(unexpected_keys)}")
+
+    inited_layers = _init_low_rank_router_from_dense_router(
+        low_rank_model=low_rank_model,
+        dense_model=dense_model,
+        rank=int(config.router_rank),
+    )
+    if is_main_process():
+        print(f"[load] SVD-initialized low-rank router for {inited_layers} layers (rank={int(config.router_rank)})")
+
+    del dense_model
+    return low_rank_model
+
 def parse_args():
     ap = argparse.ArgumentParser()
     ap.add_argument("--model_path", type=str, required=True, help="Local HF model dir (baseline).")
@@ -1349,6 +1436,10 @@ def parse_args():
 
     ap.add_argument("--router_topk", type=int, default=0,
                     help="Fixed top-k routing for MoE. 0 disables and falls back to original top-p routing. सुझाव: 1 or 2.")
+    ap.add_argument("--use_low_rank_router", type=int, default=0,
+                    help="1: enable low-rank router during finetuning; 0: keep original dense router.")
+    ap.add_argument("--router_rank", type=int, default=64,
+                    help="Low-rank router rank when --use_low_rank_router=1.")
     return ap.parse_args()
     
 
@@ -1376,6 +1467,7 @@ def main():
     MoEForCausalLM, MoEConfig = import_moe_classes()
     config = MoEConfig.from_pretrained(args.model_path)
     # [ADD] pass fixed top-k routing into config (works even if MoEConfig doesn't define it explicitly)
+    config.use_low_rank_router = bool(args.use_low_rank_router)
     if hasattr(args, "router_topk"):
         config.router_topk = int(args.router_topk)
     # <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
@@ -1388,11 +1480,12 @@ def main():
     if is_main_process():
         print(f"[load] model dtype={dtype} distributed={is_distributed} world_size={world_size}")
 
-    model = MoEForCausalLM.from_pretrained(
-        args.model_path,
+    model = build_model_with_router_compat(
+        args=args,
+        MoEForCausalLM=MoEForCausalLM,
         config=config,
-        torch_dtype=dtype if device.type == "cuda" else torch.float32,
-        low_cpu_mem_usage=True,
+        device=device,
+        dtype=dtype,
     )
     model.to(device)
 
