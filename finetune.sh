@@ -5,15 +5,15 @@ set -Eeuo pipefail
 MODEL_PATH="/data/cyx/models/Qwen1.5-MoE-A2.7B"
 OUT_ROOT="/data/cyx/models"
 LOG_PATH="/home/cyx/qwen_moe"
-BLOCK_SIZE=256
-BATCH_SIZE=5
+BLOCK_SIZE=192
+BATCH_SIZE=4
 GRAD_ACCUM=4
-EPOCHS=3
+EPOCHS=2
 LR=2e-4
-LORA_R=16
+LORA_R=8
 LORA_ALPHA=16
 LORA_DROPOUT=0.05
-NUM_PROC=2
+NUM_PROC=8
 
 # 可选：固定 GPU（没有就注释掉）
 
@@ -33,7 +33,8 @@ run_one () {
   echo
 }
 
-run_one "piqa_4bit" torchrun --nproc_per_node 2 finetune_qwen1_5_moe_2_7b_4bit.py \
+# run_one "piqa_4bit" torchrun --nproc_per_node 2 finetune_qwen1_5_moe_2_7b_4bit.py \
+run_one "piqa_4bit" torchrun --nproc_per_node 2 finetune_4bit.py \
   --model_path "$MODEL_PATH" \
   --output_dir "$OUT_ROOT/out_piqa_lora_4bit" \
   --dataset piqa --eval_dataset piqa \
@@ -42,11 +43,10 @@ run_one "piqa_4bit" torchrun --nproc_per_node 2 finetune_qwen1_5_moe_2_7b_4bit.p
   --lr "$LR" --lora_r "$LORA_R" --lora_alpha "$LORA_ALPHA" --lora_dropout "$LORA_DROPOUT" \
   --num_proc "$NUM_PROC" \
   --num_experts_per_tok 4 \
-  --eval_max_samples 200 \
-  --bf16 0 --fp16 1 \
+  --eval_max_samples 50 \
   --bnb_4bit_quant_type nf4 \
   --bnb_4bit_use_double_quant 1 \
-  --bnb_4bit_compute_dtype float16 \
+  --bnb_4bit_compute_dtype bfloat16 \
   --gradient_checkpointing 0
 
 echo "ALL DONE ✅  $(date)"
