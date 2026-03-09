@@ -1375,8 +1375,6 @@ def main():
 
     MoEForCausalLM, MoEConfig = import_moe_classes()
     config = MoEConfig.from_pretrained(args.model_path)
-    # Set use_low_rank_router to False to match original model parameters
-    config.use_low_rank_router = False
     # [ADD] pass fixed top-k routing into config (works even if MoEConfig doesn't define it explicitly)
     if hasattr(args, "router_topk"):
         config.router_topk = int(args.router_topk)
