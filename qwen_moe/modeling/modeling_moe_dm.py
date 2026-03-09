@@ -218,14 +218,14 @@ class SwitchMLP(nn.Module):
             self.num_experts = config.num_experts
 
             if self.use_low_rank_router:
-                self.gate = LowRankRouter(
+                self.router = LowRankRouter(
                     hidden_size=config.hidden_size,
                     num_experts=config.num_experts,
                     rank=config.router_rank,
                     dropout=getattr(config, "router_dropout", 0.0),
                 )
             else:
-                self.gate = torch.nn.Linear(
+                self.router = torch.nn.Linear(
                     config.hidden_size,
                     config.num_experts,
                     bias=False,
@@ -256,7 +256,7 @@ class SwitchMLP(nn.Module):
         b = hidden_states.size(1)
         h = hidden_states.size(2)
 
-        route_logits = self.gate(hidden_states)
+        route_logits = self.router(hidden_states)
         route = torch.nn.functional.softmax(route_logits, dim=2)
 
         topk_weights, topk_ind = top_p_sampling_batched_all_sequence(
