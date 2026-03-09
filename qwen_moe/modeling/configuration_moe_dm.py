@@ -118,7 +118,9 @@ class MoEConfig(PretrainedConfig):
         max_k=8,
         k_gumbel_tau=1.0,
         allow_zero_k=False,
-        use_low_rank_router: bool = True,
+        # Keep disabled by default for backward compatibility with checkpoints
+        # that only contain dense router weights (gate.weight).
+        use_low_rank_router: bool = False,
         router_rank: int = 64,
         **kwargs,
     ):
