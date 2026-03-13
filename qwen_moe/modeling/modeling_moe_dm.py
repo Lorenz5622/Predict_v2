@@ -185,22 +185,92 @@ def top_p_sampling_batched_all_sequence(logits, top_p=0.9, temperature=1.0):
     sorted_probs = torch.where(mask, 0.0, sorted_probs)   
     return sorted_probs, sorted_indices
 
+def top_k_routing_batched_all_sequence(probs, top_k: int):
+    """
+    probs: (seq_len, batch_size, num_experts)
+    返回:
+        topk_probs: (seq_len, batch_size, top_k)
+        topk_idx:   (seq_len, batch_size, top_k)
+    """
+    topk_probs, topk_idx = torch.topk(probs, k=top_k, dim=-1)
+
+    # 重新归一化，只在选中的 top-k 上归一化
+    denom = topk_probs.sum(dim=-1, keepdim=True).clamp_min(1e-9)
+    topk_probs = topk_probs / denom
+    return topk_probs, topk_idx
+
 class LowRankRouter(nn.Module):
-    def __init__(self, hidden_size: int, num_experts: int, rank: int, dropout: float = 0.0):
+    """
+    Sharp low-rank QK router
+
+    数学形式:
+        q(x) = normalize(W_q x)
+        k_j  = normalize(u_j)
+        logits_j = temperature * <q(x), k_j>
+
+    其中:
+        router_down: W_q
+        router_up.weight[j]: 第 j 个 expert 的 key prototype
+    """
+    def __init__(
+        self,
+        hidden_size: int,
+        num_experts: int,
+        rank: int,
+        dropout: float = 0.0,
+        router_temperature_init: float = 10.0,
+        router_eps: float = 1e-6,
+        normalize_q: bool = True,
+        normalize_k: bool = True,
+    ):
         super().__init__()
         self.hidden_size = hidden_size
         self.num_experts = num_experts
         self.rank = rank
+        self.router_eps = router_eps
+        self.normalize_q = normalize_q
+        self.normalize_k = normalize_k
 
+        # W_q
         self.router_down = nn.Linear(hidden_size, rank, bias=False)
+
+        # 这里的 weight 每一行就是一个 expert key
         self.router_up = nn.Linear(rank, num_experts, bias=False)
+
         self.dropout = nn.Dropout(dropout) if dropout > 0.0 else None
 
+        # 用 log_temperature 保证温度始终为正
+        self.log_router_temperature = nn.Parameter(
+            torch.log(torch.tensor(float(router_temperature_init)))
+        )
+
+    @property
+    def router_temperature(self):
+        return torch.exp(self.log_router_temperature)
+
+    def _normalize_last_dim(self, x: torch.Tensor) -> torch.Tensor:
+        return x / x.norm(dim=-1, keepdim=True).clamp_min(self.router_eps)
+
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
-        router_latent = self.router_down(hidden_states)
+        # hidden_states: (seq_len, batch, hidden_size)
+        q = self.router_down(hidden_states)   # (seq_len, batch, rank)
+
         if self.dropout is not None:
-            router_latent = self.dropout(router_latent)
-        router_logits = self.router_up(router_latent)
+            q = self.dropout(q)
+
+        if self.normalize_q:
+            q = self._normalize_last_dim(q)
+
+        # router_up.weight: (num_experts, rank)
+        k = self.router_up.weight
+        if self.normalize_k:
+            k = k / k.norm(dim=-1, keepdim=True).clamp_min(self.router_eps)
+
+        # logits = temperature * q @ k^T
+        # q: (..., rank), k.T: (rank, num_experts)
+        router_logits = torch.matmul(q, k.transpose(0, 1))
+        router_logits = self.router_temperature * router_logits
+
         return router_logits
 
 class SwitchMLP(nn.Module):
@@ -214,31 +284,44 @@ class SwitchMLP(nn.Module):
         self.use_low_rank_router = getattr(config, "use_low_rank_router", False)
 
         if self.use_switch:
-            self.top_p_threshold = config.top_p_threshold
+            self.experts = torch.nn.ModuleList()
             self.num_experts = config.num_experts
+            for i in range(config.num_experts):
+                self.experts.append(LlamaMLP(config.hidden_size, config.intermediate_size, config.hidden_act))
 
-            if self.use_low_rank_router:
+            # 改成 fixed top-k，而不是 top-p
+            self.router_top_k = getattr(config, "router_top_k", 2)
+
+            self.use_low_rank_router = getattr(config, "use_low_rank_router", False)
+            self.use_sharp_router = getattr(config, "use_sharp_router", True)
+
+            if self.use_low_rank_router and self.use_sharp_router:
                 self.router = LowRankRouter(
                     hidden_size=config.hidden_size,
                     num_experts=config.num_experts,
                     rank=config.router_rank,
                     dropout=getattr(config, "router_dropout", 0.0),
+                    router_temperature_init=getattr(config, "router_temperature_init", 10.0),
+                    router_eps=getattr(config, "router_eps", 1e-6),
+                    normalize_q=getattr(config, "router_normalize_q", True),
+                    normalize_k=getattr(config, "router_normalize_k", True),
+                )
+            elif self.use_low_rank_router:
+                self.router = LowRankRouter(
+                    hidden_size=config.hidden_size,
+                    num_experts=config.num_experts,
+                    rank=config.router_rank,
+                    dropout=getattr(config, "router_dropout", 0.0),
+                    router_temperature_init=1.0,
+                    router_eps=getattr(config, "router_eps", 1e-6),
+                    normalize_q=False,
+                    normalize_k=False,
                 )
             else:
                 self.router = torch.nn.Linear(
                     config.hidden_size,
                     config.num_experts,
                     bias=False,
-                )
-
-            self.experts = torch.nn.ModuleList()
-            for i in range(config.num_experts):
-                self.experts.append(
-                    LlamaMLP(
-                        config.hidden_size,
-                        config.intermediate_size,
-                        config.hidden_act,
-                    )
                 )
         else:
             self.mlp = LlamaMLP(
@@ -256,23 +339,45 @@ class SwitchMLP(nn.Module):
         b = hidden_states.size(1)
         h = hidden_states.size(2)
 
-        route_logits = self.router(hidden_states)
-        route = torch.nn.functional.softmax(route_logits, dim=2)
+        # ----------------------------
+        # 1) router logits
+        # ----------------------------
+        route_logits = self.router(hidden_states)   # (seq, batch, num_experts)
 
-        topk_weights, topk_ind = top_p_sampling_batched_all_sequence(
-            route,
-            self.top_p_threshold,
+        # ----------------------------
+        # 2) dense router prob
+        # ----------------------------
+        route_probs = torch.nn.functional.softmax(route_logits, dim=2)
+
+        # ----------------------------
+        # 3) fixed top-k routing
+        # ----------------------------
+        topk_weights, topk_ind = top_k_routing_batched_all_sequence(
+            route_probs,
+            self.router_top_k,
         )
 
-        hidden_states = hidden_states.view(-1, hidden_states.size(2))
-        topk_weights = topk_weights.view(-1, topk_weights.size(2))
-        topk_ind = topk_ind.view(-1, topk_ind.size(2))
+        # ----------------------------
+        # 4) flatten tokens
+        # ----------------------------
+        hidden_states = hidden_states.view(-1, hidden_states.size(2))   # (seq*batch, hidden)
+        topk_weights = topk_weights.view(-1, topk_weights.size(2))      # (seq*batch, top_k)
+        topk_ind = topk_ind.view(-1, topk_ind.size(2))                  # (seq*batch, top_k)
 
+        # ----------------------------
+        # 5) sparse expert dispatch
+        # ----------------------------
         output_total = torch.zeros_like(hidden_states).to(hidden_states)
+
         for expert_num, expert in enumerate(self.experts):
             sample_ind, expert_ind = torch.where(topk_ind == expert_num)
+
+            if sample_ind.numel() == 0:
+                continue
+
             hidden = hidden_states[sample_ind.unsqueeze(1), :]
             expert_output = expert(hidden)
+
             output_total[sample_ind] += torch.mul(
                 expert_output.squeeze(1),
                 topk_weights[sample_ind, expert_ind].unsqueeze(1),

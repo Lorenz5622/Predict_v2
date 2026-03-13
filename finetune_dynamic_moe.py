@@ -103,8 +103,8 @@ def import_moe_classes():
     tried = []
 
     for (m_model, m_cfg) in [
-        ("modeling_moe_ori", "configuration_moe"),
-        ("Predict_MoE.modeling.modeling_moe_dm", "Predict_MoE.modeling.configuration_moe_dm"),
+        ("modeling_moe_dm", "configuration_moe_dm"),
+        ("qwen_moe.modeling.modeling_moe_dm", "qwen_moe.modeling.configuration_moe_dm"),
     ]:
         try:
             mod_model = __import__(m_model, fromlist=["MoEForCausalLM"])
@@ -1281,20 +1281,20 @@ def train(
 def _init_low_rank_router_from_dense_router(low_rank_model: nn.Module, dense_model: nn.Module, rank: int):
     """
     Initialize low-rank router (router_up/router_down) from a dense router weight
-    using truncated SVD so that `router_up @ router_down` approximates `gate.weight`.
+    using truncated SVD so that `router_up @ router_down` approximates `router.weight`.
     """
     num_inited = 0
     with torch.no_grad():
         for layer_idx, low_layer in enumerate(low_rank_model.model.layers):
             low_mlp = low_layer.mlp
-            if not (getattr(low_mlp, "use_switch", False) and hasattr(low_mlp.gate, "router_down")):
+            if not (getattr(low_mlp, "use_switch", False) and hasattr(low_mlp.router, "router_down")):
                 continue
 
             dense_mlp = dense_model.model.layers[layer_idx].mlp
-            if not hasattr(dense_mlp, "gate"):
+            if not hasattr(dense_mlp, "router"):
                 continue
 
-            dense_w = dense_mlp.gate.weight.data.float()  # [num_experts, hidden_size]
+            dense_w = dense_mlp.router.weight.data.float()  # [num_experts, hidden_size]
             max_rank = min(rank, dense_w.shape[0], dense_w.shape[1])
             if max_rank <= 0:
                 continue
@@ -1308,8 +1308,8 @@ def _init_low_rank_router_from_dense_router(low_rank_model: nn.Module, dense_mod
             up = U * sqrt_s.unsqueeze(0)
             down = sqrt_s.unsqueeze(1) * Vh
 
-            low_up = low_mlp.gate.router_up.weight.data
-            low_down = low_mlp.gate.router_down.weight.data
+            low_up = low_mlp.router.router_up.weight.data
+            low_down = low_mlp.router.router_down.weight.data
             low_up.zero_()
             low_down.zero_()
             low_up[:, :max_rank].copy_(up.to(dtype=low_up.dtype, device=low_up.device))
@@ -1436,9 +1436,9 @@ def parse_args():
 
     ap.add_argument("--router_topk", type=int, default=0,
                     help="Fixed top-k routing for MoE. 0 disables and falls back to original top-p routing. सुझाव: 1 or 2.")
-    ap.add_argument("--use_low_rank_router", type=int, default=0,
+    ap.add_argument("--use_low_rank_router", type=int, default=1,
                     help="1: enable low-rank router during finetuning; 0: keep original dense router.")
-    ap.add_argument("--router_rank", type=int, default=64,
+    ap.add_argument("--router_rank", type=int, default=128,
                     help="Low-rank router rank when --use_low_rank_router=1.")
     return ap.parse_args()
     
@@ -1680,7 +1680,7 @@ def main():
             model,
             device_ids=[local_rank],
             output_device=local_rank,
-            find_unused_parameters=False,
+            find_unused_parameters=True,
         )
 
     # train
