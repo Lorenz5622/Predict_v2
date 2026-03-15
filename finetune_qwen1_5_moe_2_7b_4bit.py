@@ -11,12 +11,14 @@ Design goals:
 from __future__ import annotations
 
 import argparse
+import copy
 import inspect
 import os
 from typing import Optional
 
 import torch
 import torch.distributed as dist
+import torch.nn as nn
 from datasets import concatenate_datasets
 from transformers import AutoTokenizer, BitsAndBytesConfig
 from peft import prepare_model_for_kbit_training
@@ -77,9 +79,132 @@ def setup_distributed_safe():
 
 def import_qwen_moe_classes():
     from qwen_moe.modeling.configuration_moe import Qwen2MoeConfig
-    from qwen_moe.modeling.modeling_moe import Qwen2MoeForCausalLM
+    from qwen_moe.modeling.modeling_moe import Qwen2MoeForCausalLM, LowRankRouter
 
-    return Qwen2MoeForCausalLM, Qwen2MoeConfig
+    return Qwen2MoeForCausalLM, Qwen2MoeConfig, LowRankRouter
+
+
+def _extract_dense_gate_weight(gate_module: nn.Module) -> Optional[torch.Tensor]:
+    weight = getattr(gate_module, "weight", None)
+    if weight is None:
+        return None
+    try:
+        if hasattr(weight, "dequantize"):
+            weight = weight.dequantize()
+        return weight.float()
+    except Exception:
+        try:
+            return weight.data.float()
+        except Exception:
+            return None
+
+
+def _init_low_rank_router_inplace(model: nn.Module, LowRankRouter, config) -> int:
+    """
+    Convert dense gate -> LowRankRouter in-place, and SVD-init router_up/router_down
+    so `router_up @ router_down` approximates dense gate.
+    """
+    num_inited = 0
+    rank = int(config.router_rank)
+    with torch.no_grad():
+        for _, layer in enumerate(model.model.layers):
+            mlp = layer.mlp
+            old_gate = getattr(mlp, "gate", None)
+            if old_gate is None:
+                continue
+            if hasattr(old_gate, "router_down") and hasattr(old_gate, "router_up"):
+                # already low-rank
+                continue
+
+            dense_w = _extract_dense_gate_weight(old_gate)
+            if dense_w is None:
+                continue
+
+            max_rank = min(int(rank), int(dense_w.shape[0]), int(dense_w.shape[1]))
+            if max_rank <= 0:
+                continue
+
+            try:
+                U, S, Vh = torch.linalg.svd(dense_w, full_matrices=False)
+            except Exception:
+                continue
+            U = U[:, :max_rank]
+            S = S[:max_rank]
+            Vh = Vh[:max_rank, :]
+
+            sqrt_s = torch.sqrt(S)
+            up = U * sqrt_s.unsqueeze(0)
+            down = sqrt_s.unsqueeze(1) * Vh
+
+            new_gate = LowRankRouter(
+                hidden_size=int(config.hidden_size),
+                num_experts=int(config.num_experts),
+                rank=int(config.router_rank),
+                router_temperature_init=float(config.router_temperature_init) if bool(config.use_sharp_router) else 1.0,
+                router_eps=float(config.router_eps),
+                normalize_q=bool(config.router_normalize_q) if bool(config.use_sharp_router) else False,
+                normalize_k=bool(config.router_normalize_k) if bool(config.use_sharp_router) else False,
+            ).to(device=dense_w.device, dtype=dense_w.dtype)
+
+            low_up = new_gate.router_up.weight.data
+            low_down = new_gate.router_down.weight.data
+            low_up.zero_()
+            low_down.zero_()
+            low_up[:, :max_rank].copy_(up.to(dtype=low_up.dtype, device=low_up.device))
+            low_down[:max_rank, :].copy_(down.to(dtype=low_down.dtype, device=low_down.device))
+            mlp.gate = new_gate
+            num_inited += 1
+
+    return num_inited
+
+
+def build_model_with_router_compat(
+    args,
+    Qwen2MoeForCausalLM,
+    LowRankRouter,
+    config,
+    quantization_config,
+    device,
+    local_rank: int,
+    is_distributed: bool,
+):
+    if is_distributed:
+        device_map = {"": local_rank}
+    else:
+        device_map = {"": 0} if device.type == "cuda" else None
+
+    dense_config = copy.deepcopy(config)
+    dense_config.use_low_rank_router = False
+    model = Qwen2MoeForCausalLM.from_pretrained(
+        args.model_path,
+        config=dense_config,
+        quantization_config=quantization_config,
+        torch_dtype=torch.float32 if device.type != "cuda" else quantization_config.bnb_4bit_compute_dtype,
+        low_cpu_mem_usage=True,
+        device_map=device_map,
+    )
+
+    if not bool(args.use_low_rank_router):
+        model.config.use_low_rank_router = False
+        return model
+
+    # Convert dense gate -> low-rank gate in-place and SVD-init.
+    try:
+        inited_layers = _init_low_rank_router_inplace(model=model, LowRankRouter=LowRankRouter, config=config)
+        model.config.use_low_rank_router = True
+        model.config.router_rank = int(config.router_rank)
+        model.config.use_sharp_router = bool(config.use_sharp_router)
+        model.config.router_temperature_init = float(config.router_temperature_init)
+        model.config.router_normalize_q = bool(config.router_normalize_q)
+        model.config.router_normalize_k = bool(config.router_normalize_k)
+        model.config.router_eps = float(config.router_eps)
+        if is_main_process():
+            print(f"[load] SVD-initialized low-rank router for {inited_layers} layers (rank={int(config.router_rank)})")
+    except Exception as e:
+        if is_main_process():
+            print(f"[warn] low-rank router SVD init skipped: {e}")
+
+    return model
 
 
 def parse_args():
@@ -132,6 +257,16 @@ def parse_args():
                     help="Override MoE top-k experts per token (maps to config.num_experts_per_tok). 0 keeps config default.")
     ap.add_argument("--router_topk", type=int, default=0,
                     help="Deprecated alias of --num_experts_per_tok.")
+    ap.add_argument("--use_low_rank_router", type=int, default=1,
+                    help="1: enable low-rank router; 0: keep dense gate router.")
+    ap.add_argument("--router_rank", type=int, default=64,
+                    help="Low-rank router rank when --use_low_rank_router=1.")
+    ap.add_argument("--use_sharp_router", type=int, default=1,
+                    help="1: use sharp normalized low-rank router; 0: plain low-rank linear router.")
+    ap.add_argument("--router_temperature_init", type=float, default=10.0)
+    ap.add_argument("--router_normalize_q", type=int, default=1)
+    ap.add_argument("--router_normalize_k", type=int, default=1)
+    ap.add_argument("--router_eps", type=float, default=1e-6)
 
     ap.add_argument("--bbh_task", type=str, default="boolean_expressions")
     ap.add_argument("--winogrande_config", type=str, default="winogrande_xl")
@@ -164,7 +299,7 @@ def main():
 
     tokenizer = AutoTokenizer.from_pretrained(args.model_path, use_fast=True)
 
-    Qwen2MoeForCausalLM, Qwen2MoeConfig = import_qwen_moe_classes()
+    Qwen2MoeForCausalLM, Qwen2MoeConfig, LowRankRouter = import_qwen_moe_classes()
     config = Qwen2MoeConfig.from_pretrained(args.model_path)
     requested_topk = int(args.num_experts_per_tok) if int(args.num_experts_per_tok) > 0 else int(args.router_topk)
     if requested_topk > 0:
@@ -173,6 +308,13 @@ def main():
                 f"requested top-k ({requested_topk}) cannot exceed config.num_experts ({config.num_experts})."
             )
         config.num_experts_per_tok = requested_topk
+    config.use_low_rank_router = bool(args.use_low_rank_router)
+    config.router_rank = int(args.router_rank)
+    config.use_sharp_router = bool(args.use_sharp_router)
+    config.router_temperature_init = float(args.router_temperature_init)
+    config.router_normalize_q = bool(args.router_normalize_q)
+    config.router_normalize_k = bool(args.router_normalize_k)
+    config.router_eps = float(args.router_eps)
 
     use_fp16 = bool(args.fp16) and (device.type == "cuda") and (not bool(args.bf16))
     use_bf16 = bool(args.bf16) and (device.type == "cuda")
@@ -196,18 +338,15 @@ def main():
         bnb_4bit_compute_dtype=compute_dtype,
     )
 
-    if is_distributed:
-        device_map = {"": local_rank}
-    else:
-        device_map = {"": 0} if device.type == "cuda" else None
-
-    model = Qwen2MoeForCausalLM.from_pretrained(
-        args.model_path,
+    model = build_model_with_router_compat(
+        args=args,
+        Qwen2MoeForCausalLM=Qwen2MoeForCausalLM,
+        LowRankRouter=LowRankRouter,
         config=config,
         quantization_config=quantization_config,
-        torch_dtype=compute_dtype if device.type == "cuda" else torch.float32,
-        low_cpu_mem_usage=True,
-        device_map=device_map,
+        device=device,
+        local_rank=local_rank,
+        is_distributed=is_distributed,
     )
 
     if bool(args.gradient_checkpointing):

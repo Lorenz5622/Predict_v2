@@ -255,6 +255,48 @@ class Qwen2MoeMLP(nn.Module):
         return self.down_proj(self.act_fn(self.gate_proj(x)) * self.up_proj(x))
 
 
+class LowRankRouter(nn.Module):
+    """Low-rank router: hidden -> rank -> experts, with optional sharp routing."""
+
+    def __init__(
+        self,
+        hidden_size: int,
+        num_experts: int,
+        rank: int,
+        router_temperature_init: float = 10.0,
+        router_eps: float = 1e-6,
+        normalize_q: bool = True,
+        normalize_k: bool = True,
+    ):
+        super().__init__()
+        self.router_eps = router_eps
+        self.normalize_q = normalize_q
+        self.normalize_k = normalize_k
+
+        self.router_down = nn.Linear(hidden_size, rank, bias=False)
+        self.router_up = nn.Linear(rank, num_experts, bias=False)
+        self.log_router_temperature = nn.Parameter(torch.log(torch.tensor(float(router_temperature_init))))
+
+    @property
+    def router_temperature(self):
+        return torch.exp(self.log_router_temperature)
+
+    def _normalize_last_dim(self, x: torch.Tensor) -> torch.Tensor:
+        return x / x.norm(dim=-1, keepdim=True).clamp_min(self.router_eps)
+
+    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        q = self.router_down(hidden_states)
+        if self.normalize_q:
+            q = self._normalize_last_dim(q)
+
+        k = self.router_up.weight
+        if self.normalize_k:
+            k = k / k.norm(dim=-1, keepdim=True).clamp_min(self.router_eps)
+
+        router_logits = torch.matmul(q, k.transpose(0, 1))
+        return self.router_temperature * router_logits
+
+
 # Copied from transformers.models.llama.modeling_llama.repeat_kv
 def repeat_kv(hidden_states: torch.Tensor, n_rep: int) -> torch.Tensor:
     """
@@ -593,8 +635,32 @@ class Qwen2MoeSparseMoeBlock(nn.Module):
         self.top_k = config.num_experts_per_tok
         self.norm_topk_prob = config.norm_topk_prob
 
+        self.use_low_rank_router = getattr(config, "use_low_rank_router", False)
+        self.use_sharp_router = getattr(config, "use_sharp_router", True)
+
         # gating
-        self.gate = nn.Linear(config.hidden_size, config.num_experts, bias=False)
+        if self.use_low_rank_router and self.use_sharp_router:
+            self.gate = LowRankRouter(
+                hidden_size=config.hidden_size,
+                num_experts=config.num_experts,
+                rank=config.router_rank,
+                router_temperature_init=getattr(config, "router_temperature_init", 10.0),
+                router_eps=getattr(config, "router_eps", 1e-6),
+                normalize_q=getattr(config, "router_normalize_q", True),
+                normalize_k=getattr(config, "router_normalize_k", True),
+            )
+        elif self.use_low_rank_router:
+            self.gate = LowRankRouter(
+                hidden_size=config.hidden_size,
+                num_experts=config.num_experts,
+                rank=config.router_rank,
+                router_temperature_init=1.0,
+                router_eps=getattr(config, "router_eps", 1e-6),
+                normalize_q=False,
+                normalize_k=False,
+            )
+        else:
+            self.gate = nn.Linear(config.hidden_size, config.num_experts, bias=False)
         self.experts = nn.ModuleList(
             [Qwen2MoeMLP(config, intermediate_size=config.moe_intermediate_size) for _ in range(self.num_experts)]
         )

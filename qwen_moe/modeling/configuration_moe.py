@@ -135,6 +135,20 @@ class Qwen2MoeConfig(PretrainedConfig):
             If `mlp_only_layers` is empty, `decoder_sparse_step` is used to determine the sparsity.
         qkv_bias (`bool`, *optional*, defaults to `True`):
             Whether to add a bias to the queries, keys and values.
+        use_low_rank_router (`bool`, *optional*, defaults to `False`):
+            Whether to replace dense gate with low-rank router decomposition.
+        router_rank (`int`, *optional*, defaults to 64):
+            Rank used by low-rank router (`hidden_size -> router_rank -> num_experts`).
+        use_sharp_router (`bool`, *optional*, defaults to `True`):
+            Whether to use normalized sharp router logits with learnable temperature.
+        router_temperature_init (`float`, *optional*, defaults to 10.0):
+            Initial value of sharp router temperature.
+        router_normalize_q (`bool`, *optional*, defaults to `True`):
+            Whether to L2-normalize low-rank query before routing.
+        router_normalize_k (`bool`, *optional*, defaults to `True`):
+            Whether to L2-normalize expert keys in low-rank router.
+        router_eps (`float`, *optional*, defaults to 1e-6):
+            Numerical epsilon for router normalization.
     ```python
     >>> from transformers import Qwen2MoeModel, Qwen2MoeConfig
 
@@ -197,6 +211,13 @@ class Qwen2MoeConfig(PretrainedConfig):
         router_aux_loss_coef=0.001,
         mlp_only_layers=None,
         qkv_bias=True,
+        use_low_rank_router=False,
+        router_rank=64,
+        use_sharp_router=True,
+        router_temperature_init=10.0,
+        router_normalize_q=True,
+        router_normalize_k=True,
+        router_eps=1e-6,
         **kwargs,
     ):
         self.vocab_size = vocab_size
@@ -232,6 +253,13 @@ class Qwen2MoeConfig(PretrainedConfig):
         self.norm_topk_prob = norm_topk_prob
         self.output_router_logits = output_router_logits
         self.router_aux_loss_coef = router_aux_loss_coef
+        self.use_low_rank_router = use_low_rank_router
+        self.router_rank = router_rank
+        self.use_sharp_router = use_sharp_router
+        self.router_temperature_init = router_temperature_init
+        self.router_normalize_q = router_normalize_q
+        self.router_normalize_k = router_normalize_k
+        self.router_eps = router_eps
         self.mlp_only_layers = [] if mlp_only_layers is None else mlp_only_layers
         self.qkv_bias = qkv_bias
 
