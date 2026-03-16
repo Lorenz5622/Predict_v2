@@ -51,7 +51,7 @@ run_one () {
 
 run_one "piqa" torchrun --nproc_per_node 2 finetune_dynamic_moe.py \
   --model_path "$MODEL_PATH" \
-  --output_dir "$OUT_ROOT/out_piqa_lowrank_v2" \
+  --output_dir "$OUT_ROOT/out_piqa_lowrank_entmax" \
   --dataset piqa --eval_dataset piqa \
   --train_split train --eval_split validation \
   --block_size "$BLOCK_SIZE" --batch_size "$BATCH_SIZE" --grad_accum "$GRAD_ACCUM" --epochs 3 \

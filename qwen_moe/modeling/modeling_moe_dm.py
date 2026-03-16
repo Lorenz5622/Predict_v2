@@ -199,6 +199,44 @@ def top_k_routing_batched_all_sequence(probs, top_k: int):
     topk_probs = topk_probs / denom
     return topk_probs, topk_idx
 
+def entmax_bisect(
+    inputs: torch.Tensor,
+    alpha: float = 1.5,
+    dim: int = -1,
+    n_iter: int = 32,
+    eps: float = 1e-12,
+) -> torch.Tensor:
+    """
+    Differentiable alpha-entmax via bisection.
+    alpha in (1, 2], where:
+      alpha -> 1 : softmax
+      alpha = 2  : sparsemax
+    """
+    if not (1.0 < alpha <= 2.0):
+        raise ValueError(f"alpha must be in (1, 2], got {alpha}")
+
+    alpha_m1 = alpha - 1.0
+    inv_alpha_m1 = 1.0 / alpha_m1
+
+    # Shift for numerical stability.
+    x = inputs - inputs.max(dim=dim, keepdim=True).values
+
+    # Search tau s.t. sum(((alpha-1)*(x - tau))_+^(1/(alpha-1))) = 1.
+    tau_lo = x.min(dim=dim, keepdim=True).values - 1.0
+    tau_hi = x.max(dim=dim, keepdim=True).values
+
+    for _ in range(n_iter):
+        tau_mid = (tau_lo + tau_hi) * 0.5
+        p_mid = torch.clamp(alpha_m1 * (x - tau_mid), min=0.0) ** inv_alpha_m1
+        sum_p = p_mid.sum(dim=dim, keepdim=True)
+        tau_lo = torch.where(sum_p > 1.0, tau_mid, tau_lo)
+        tau_hi = torch.where(sum_p <= 1.0, tau_mid, tau_hi)
+
+    tau_star = (tau_lo + tau_hi) * 0.5
+    probs = torch.clamp(alpha_m1 * (x - tau_star), min=0.0) ** inv_alpha_m1
+    probs = probs / probs.sum(dim=dim, keepdim=True).clamp_min(eps)
+    return probs
+
 class LowRankRouter(nn.Module):
     """
     Sharp low-rank QK router
@@ -293,6 +331,8 @@ class SwitchMLP(nn.Module):
             self.router_top_k = getattr(config, "router_top_k", 2)
 
             self.use_low_rank_router = getattr(config, "use_low_rank_router", False)
+            self.router_use_entmax = getattr(config, "router_use_entmax", True)
+            self.router_entmax_alpha = float(getattr(config, "router_entmax_alpha", 1.5))
             self.use_sharp_router = getattr(config, "use_sharp_router", True)
 
             if self.use_low_rank_router and self.use_sharp_router:
@@ -347,7 +387,14 @@ class SwitchMLP(nn.Module):
         # ----------------------------
         # 2) dense router prob
         # ----------------------------
-        route_probs = torch.nn.functional.softmax(route_logits, dim=2)
+        if self.router_use_entmax:
+            route_probs = entmax_bisect(
+                route_logits.to(torch.float32),
+                alpha=self.router_entmax_alpha,
+                dim=2,
+            ).to(route_logits.dtype)
+        else:
+            route_probs = torch.nn.functional.softmax(route_logits, dim=2)
 
         # ----------------------------
         # 3) fixed top-k routing

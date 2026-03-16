@@ -329,6 +329,8 @@ class MoEConfig(PretrainedConfig):
         router_temperature_init: float = 10.0,
         router_normalize_q: bool = True,
         router_normalize_k: bool = True,
+        router_use_entmax: bool = True,
+        router_entmax_alpha: float = 1.7,
         router_eps: float = 1e-6,
         **kwargs,
     ):
@@ -351,6 +353,12 @@ class MoEConfig(PretrainedConfig):
         self.router_normalize_q = router_normalize_q
         self.router_normalize_k = router_normalize_k
         self.router_eps = router_eps
+        self.router_use_entmax = bool(router_use_entmax)
+        self.router_entmax_alpha = float(router_entmax_alpha)
+        if self.router_use_entmax and not (1.0 < self.router_entmax_alpha <= 2.0):
+            raise ValueError(
+                f"`router_entmax_alpha` must be in (1, 2], got {self.router_entmax_alpha}"
+            )
         # for backward compatibility
         if num_key_value_heads is None:
             num_key_value_heads = num_attention_heads
