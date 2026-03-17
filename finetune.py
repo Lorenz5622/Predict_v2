@@ -1269,8 +1269,25 @@ def train(
                 "Failed to merge LoRA adapters into the base model. "
                 "Your PEFT model may not support merge_and_unload()."
             ) from e
+        is_kbit_model = bool(
+            getattr(merged, "is_loaded_in_8bit", False)
+            or getattr(merged, "is_loaded_in_4bit", False)
+        )
+        if is_kbit_model:
+            if not hasattr(merged, "dequantize"):
+                raise RuntimeError(
+                    "Merged model is still in k-bit mode, but no dequantize() method is available. "
+                    "Cannot export a plain HuggingFace checkpoint."
+                )
+            print("[save] dequantizing merged k-bit model before export")
+            maybe_dequantized = merged.dequantize()
+            if maybe_dequantized is not None:
+                merged = maybe_dequantized
+        for attr_name in ("is_loaded_in_8bit", "is_loaded_in_4bit", "quantization_method"):
+            if hasattr(merged, attr_name):
+                setattr(merged, attr_name, False if attr_name != "quantization_method" else None)
         merged.save_pretrained(output_dir)
-        print(f"[save] merged full model -> {output_dir}")
+        print(f"[save] dequantized + merged full model -> {output_dir}")
 
 
 # -----------------------------

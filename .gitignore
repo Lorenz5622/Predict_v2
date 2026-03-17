@@ -1,2 +1,7 @@
-logs/
-records/
+/logs/
+/records/
+/.vscode/
+/__pycache__/
+*.pyc
+*.pyo
+*.tsv
