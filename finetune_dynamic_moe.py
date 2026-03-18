@@ -220,17 +220,35 @@ def _enable_new_router_params_trainable(model: nn.Module) -> int:
     return n_params
 
 
-def _cast_trainable_params_to_fp32(model: nn.Module) -> int:
+def _cast_selected_trainable_params_to_fp32(model: nn.Module) -> int:
+    """
+    Cast only the *extra* trainable floating-point parameters to fp32.
+
+    This is important for k-bit training: base quantized weights must stay under
+    bitsandbytes control, while LoRA/router params can safely train in fp32.
+    """
+    allow_substrings = (
+        "lora_",
+        "expert_keys",
+        "expert_values",
+        "log_router_temperature",
+        "router_value_proj",
+        "router_context_gate_proj",
+    )
+
     n_params = 0
     with torch.no_grad():
-        for param in model.parameters():
+        for name, param in model.named_parameters():
             if not param.requires_grad:
                 continue
+            if not any(key in name for key in allow_substrings):
+                continue
+            if not torch.is_floating_point(param):
+                continue
             if param.dtype != torch.float32:
-                param.data = param.data.float()
+                param.data = param.data.to(torch.float32)
                 n_params += param.numel()
     return n_params
-
 
 def guess_lora_targets(model: nn.Module) -> List[str]:
     candidates = [
@@ -601,6 +619,13 @@ def parse_args():
     ap.add_argument("--winogrande_config", type=str, default="winogrande_xl")
     ap.add_argument("--mmlu_subjects", type=str, default="all")
     ap.add_argument("--mmlu_answer_mode", type=str, default="text", choices=["text", "letter"])
+
+    ap.add_argument(
+        "--train_extra_params_in_fp32",
+        type=int,
+        default=1,
+        help="Cast LoRA/new-router floating trainable params to fp32. Recommended for k-bit training.",
+    )
     return ap.parse_args()
 
 
@@ -673,7 +698,9 @@ def main():
         if is_main_process():
             print(f"[train] extra trainable new-router params: {n_router}")
 
-    n_fp32 = _cast_trainable_params_to_fp32(model)
+    n_fp32 = 0
+    if bool(args.train_extra_params_in_fp32):
+        n_fp32 = _cast_selected_trainable_params_to_fp32(model)
     if is_main_process():
         trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
         total = sum(p.numel() for p in model.parameters())
