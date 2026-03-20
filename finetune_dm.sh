@@ -5,10 +5,10 @@ set -Eeuo pipefail
 MODEL_PATH="/data/cyx/models/Dynamic_MoE"
 OUT_ROOT="/data/cyx/models"
 LOG_PATH="/home/cyx/qwen_moe"
-BLOCK_SIZE=192
-BATCH_SIZE=8
-GRAD_ACCUM=2
-EPOCHS=3
+BLOCK_SIZE=128
+BATCH_SIZE=4
+GRAD_ACCUM=4
+EPOCHS=2
 LR=2e-4
 LORA_R=16
 LORA_ALPHA=16
@@ -51,11 +51,11 @@ run_one () {
 
 run_one "piqa" torchrun --nproc_per_node 2 finetune_dynamic_moe.py \
   --model_path "$MODEL_PATH" \
-  --output_dir "$OUT_ROOT/out_piqa_lowrank_entmax_v1" \
+  --output_dir "$OUT_ROOT/out_piqa_lowrank_entmax_v3" \
   --dataset piqa --eval_dataset piqa \
   --train_split train --eval_split validation \
   --block_size "$BLOCK_SIZE" --batch_size "$BATCH_SIZE" --grad_accum "$GRAD_ACCUM" --epochs "$EPOCHS" \
   --lr "$LR" --lora_r "$LORA_R" --lora_alpha "$LORA_ALPHA" --lora_dropout "$LORA_DROPOUT" \
-  --num_proc "$NUM_PROC" --load_in_8bit 1 --fp16 0 --bf16 0 --train_extra_params_in_fp32 1
+  --num_proc "$NUM_PROC" --load_in_8bit 0 --load_in_fp16 1 --bf16 0 --train_extra_params_in_fp32 1
 
 echo "ALL DONE ✅  $(date)"

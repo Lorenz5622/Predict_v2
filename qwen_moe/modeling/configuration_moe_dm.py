@@ -346,7 +346,7 @@ class MoEConfig(PretrainedConfig):
         router_min_prob: float = 0.0,
 
         # -------- router context injection --------
-        use_router_context: bool = False,
+        use_router_context: bool = True,
         router_context_mode: str = "add",
         detach_router_context_probs: bool = False,
 

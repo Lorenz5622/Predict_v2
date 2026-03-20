@@ -1023,6 +1023,14 @@ def apply_lora(
     return model
 
 
+def is_quantized_model(model: nn.Module) -> bool:
+    return any([
+        bool(getattr(model, "is_loaded_in_8bit", False)),
+        bool(getattr(model, "is_loaded_in_4bit", False)),
+        getattr(model, "quantization_method", None) is not None,
+    ])
+
+
 # -----------------------------
 # Train / eval
 # -----------------------------
@@ -1262,6 +1270,7 @@ def train(
     # final save (MERGED full model)
     if is_main_process():
         model_to_save = model.module if hasattr(model, "module") else model
+        was_quantized = is_quantized_model(model_to_save)
         try:
             merged = model_to_save.merge_and_unload()
         except Exception as e:
@@ -1270,7 +1279,7 @@ def train(
                 "Your PEFT model may not support merge_and_unload()."
             ) from e
 
-        if hasattr(merged, "dequantize"):
+        if was_quantized and hasattr(merged, "dequantize"):
             print("[save] trying to dequantize merged model before export")
             maybe_dequantized = merged.dequantize()
             if maybe_dequantized is not None:
@@ -1281,11 +1290,15 @@ def train(
             if torch.is_floating_point(v) and v.dtype != torch.float32:
                 state_dict[k] = v.to(torch.float32)
 
-        for attr_name in ("is_loaded_in_8bit", "is_loaded_in_4bit", "quantization_method"):
-            if hasattr(merged, attr_name):
-                setattr(merged, attr_name, False if attr_name != "quantization_method" else None)
+        if was_quantized:
+            for attr_name in ("is_loaded_in_8bit", "is_loaded_in_4bit", "quantization_method"):
+                if hasattr(merged, attr_name):
+                    setattr(merged, attr_name, False if attr_name != "quantization_method" else None)
+            print(f"[save] merged + dequantized + fp32 full model -> {output_dir}")
+        else:
+            print(f"[save] merged + fp32 full model -> {output_dir}")
+
         merged.save_pretrained(output_dir, state_dict=state_dict, safe_serialization=True)
-        print(f"[save] merged + dequantized + fp32 full model -> {output_dir}")
 
 
 # -----------------------------

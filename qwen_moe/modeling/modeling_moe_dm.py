@@ -320,13 +320,15 @@ class CrossAttentionRouter(nn.Module):
         k = self.expert_keys  # (num_experts, router_dim)
         if self.normalize_k:
             k = self._normalize_last_dim(k)
+        if k.dtype != q.dtype:
+            k = k.to(q.dtype)
 
         route_logits = torch.matmul(q, k.transpose(0, 1))  # (b, s, num_experts)
 
         if self.use_scale:
             route_logits = route_logits / math.sqrt(self.router_dim)
 
-        route_logits = self.router_temperature * route_logits
+        route_logits = self.router_temperature.to(route_logits.dtype) * route_logits
         return route_logits
 
     def compute_router_context(self, route_probs: torch.Tensor) -> torch.Tensor:
@@ -335,7 +337,10 @@ class CrossAttentionRouter(nn.Module):
         returns:
             router_context: (batch, seq, value_dim)
         """
-        return torch.matmul(route_probs, self.expert_values)
+        expert_values = self.expert_values
+        if expert_values.dtype != route_probs.dtype:
+            expert_values = expert_values.to(route_probs.dtype)
+        return torch.matmul(route_probs, expert_values)
 
     def get_expert_value_norms(self, norm_type: str = "l1", eps: float = 1e-9) -> torch.Tensor:
         """
@@ -497,15 +502,22 @@ class SwitchMLP(nn.Module):
         returns:
             modulated_hidden_states: (batch, seq, hidden)
         """
+        proj_dtype = self.router_value_proj.weight.dtype
+        if router_context.dtype != proj_dtype:
+            router_context = router_context.to(proj_dtype)
         context_hidden = self.router_value_proj(router_context)  # (b, s, hidden)
 
         if not self.use_router_context:
             return hidden_states
 
         if self.router_context_mode == "add":
+            if context_hidden.dtype != hidden_states.dtype:
+                context_hidden = context_hidden.to(hidden_states.dtype)
             return hidden_states + context_hidden
         elif self.router_context_mode == "gate":
             gate = torch.sigmoid(self.router_context_gate_proj(context_hidden))
+            if gate.dtype != hidden_states.dtype:
+                gate = gate.to(hidden_states.dtype)
             return hidden_states * gate
         else:
             raise ValueError(

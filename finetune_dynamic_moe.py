@@ -395,11 +395,21 @@ def build_model_with_router_compat(
             setattr(model_cls, attr_name, patterns)
 
     if not is_kbit:
+        load_dtype = torch.float16 if bool(args.load_in_fp16) else torch.float32
         model = model_cls(config)
+        model = model.to(dtype=load_dtype)
         legacy_sd = _load_local_checkpoint_state_dict(args.model_path)
+        if load_dtype != torch.float32:
+            legacy_sd = {
+                name: tensor.to(dtype=load_dtype) if torch.is_floating_point(tensor) else tensor
+                for name, tensor in legacy_sd.items()
+            }
         missing_keys, unexpected_keys = model.load_state_dict(legacy_sd, strict=False)
         if is_main_process():
-            print(f"[load] checkpoint loaded with strict=False: missing={len(missing_keys)} unexpected={len(unexpected_keys)}")
+            print(
+                f"[load] checkpoint loaded with strict=False: missing={len(missing_keys)} "
+                f"unexpected={len(unexpected_keys)} dtype={load_dtype}"
+            )
         if bool(args.init_new_router_from_legacy):
             inited = _init_cross_attention_router_from_legacy_dense(model=model, legacy_sd=legacy_sd, config=config)
             if is_main_process():
@@ -585,8 +595,9 @@ def parse_args():
     ap.add_argument("--eval_max_samples", type=int, default=20)
     ap.add_argument("--use_label", type=int, default=1)
 
-    ap.add_argument("--fp16", type=int, default=1)
+    ap.add_argument("--fp16", type=int, default=0)
     ap.add_argument("--bf16", type=int, default=0)
+    ap.add_argument("--load_in_fp16", type=int, default=0)
 
     ap.add_argument("--lora_r", type=int, default=8)
     ap.add_argument("--lora_alpha", type=int, default=8)
