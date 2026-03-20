@@ -154,35 +154,38 @@ class LlamaMLP(nn.Module):
     def forward(self, x):
         return self.down_proj(self.act_fn(self.gate_proj(x)) * self.up_proj(x))
 
-def top_p_sampling_batched_all_sequence(logits, top_p=0.9, temperature=1.0):
+def top_p_sampling_batched_all_sequence(logits, top_p=0.7, temperature=1.0):
     """
-    Apply Top-p sampling to every element in the sequence for each item in the batch.
-    Returns the selected token indices and the corresponding threshold indices.
-    
-    :param logits: Logits from a language model with shape (sequence length, batch size, L)
-    :param top_p: Cumulative probability threshold (float)
-    :param temperature: Sampling temperature (float)
-    :return: Tuple of tensors (selected token indices, threshold indices) for each position in each sequence in the batch
-    """
-    # Apply temperature
-    logits = logits / temperature
-    
-    # Convert logits to probabilities
-    # probabilities = torch.softmax(logits, dim=-1)
-    # Sort probabilities and their indices in descending order
-    sorted_probs, sorted_indices = torch.sort(logits, descending=True)
+    Deterministic top-p routing on normalized probabilities.
 
-    # Compute cumulative probabilities
+    Args:
+        logits: actually normalized router probabilities with shape
+            (seq_len, batch_size, num_experts)
+        top_p: cumulative probability threshold in (0, 1]
+        temperature: unused, kept only for backward-compatible signature
+    Returns:
+        sorted_probs: masked and renormalized probabilities
+        sorted_indices: expert indices, masked positions are -1
+    """
+    if not (0.0 < float(top_p) <= 1.0):
+        raise ValueError(f"top_p must be in (0, 1], got {top_p}")
+
+    probs = logits
+    sorted_probs, sorted_indices = torch.sort(probs, descending=True, dim=-1)
+
     cumulative_probs = torch.cumsum(sorted_probs, dim=-1)
     mask = cumulative_probs > top_p
 
-    # Find the threshold indices
     threshold_indices = mask.long().argmax(dim=-1)
     threshold_mask = torch.nn.functional.one_hot(threshold_indices, num_classes=sorted_indices.size(-1)).bool()
-    
+
     mask = mask & ~threshold_mask
     sorted_indices = torch.where(mask, -1, sorted_indices)
-    sorted_probs = torch.where(mask, 0.0, sorted_probs)   
+    sorted_probs = torch.where(mask, torch.zeros_like(sorted_probs), sorted_probs)
+
+    denom = sorted_probs.sum(dim=-1, keepdim=True).clamp_min(1e-9)
+    sorted_probs = sorted_probs / denom
+
     return sorted_probs, sorted_indices
 
 def top_k_routing_batched_all_sequence(probs, top_k: int):
@@ -327,8 +330,9 @@ class SwitchMLP(nn.Module):
             for i in range(config.num_experts):
                 self.experts.append(LlamaMLP(config.hidden_size, config.intermediate_size, config.hidden_act))
 
-            # 改成 fixed top-k，而不是 top-p
+            # router_top_k > 0 uses fixed top-k; otherwise fall back to top-p routing
             self.router_top_k = getattr(config, "router_top_k", 2)
+            self.top_p_threshold = float(getattr(config, "top_p_threshold", 0.4))
 
             self.use_low_rank_router = getattr(config, "use_low_rank_router", False)
             self.router_use_entmax = getattr(config, "router_use_entmax", True)
@@ -397,12 +401,18 @@ class SwitchMLP(nn.Module):
             route_probs = torch.nn.functional.softmax(route_logits, dim=2)
 
         # ----------------------------
-        # 3) fixed top-k routing
+        # 3) fixed top-k routing; fallback to original top-p routing
         # ----------------------------
-        topk_weights, topk_ind = top_k_routing_batched_all_sequence(
-            route_probs,
-            self.router_top_k,
-        )
+        if self.router_top_k and self.router_top_k > 0:
+            k = min(self.router_top_k, route_probs.size(-1))
+            topk_weights, topk_ind = torch.topk(route_probs, k=k, dim=2)
+            denom = topk_weights.sum(dim=2, keepdim=True).clamp_min(1e-9)
+            topk_weights = topk_weights / denom
+        else:
+            topk_weights, topk_ind = top_p_sampling_batched_all_sequence(
+                route_probs,
+                top_p=self.top_p_threshold,
+            )
 
         # ----------------------------
         # 4) flatten tokens

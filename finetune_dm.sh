@@ -6,9 +6,9 @@ MODEL_PATH="/data/cyx/models/Dynamic_MoE"
 OUT_ROOT="/data/cyx/models"
 LOG_PATH="/home/cyx/qwen_moe"
 BLOCK_SIZE=192
-BATCH_SIZE=2
-GRAD_ACCUM=8
-EPOCHS=2
+BATCH_SIZE=6
+GRAD_ACCUM=3
+EPOCHS=3
 LR=2e-4
 LORA_R=8
 LORA_ALPHA=16
@@ -54,8 +54,8 @@ run_one "piqa" torchrun --nproc_per_node 2 finetune_dynamic_moe.py \
   --output_dir "$OUT_ROOT/out_piqa_lowrank_entmax" \
   --dataset piqa --eval_dataset piqa \
   --train_split train --eval_split validation \
-  --block_size "$BLOCK_SIZE" --batch_size "$BATCH_SIZE" --grad_accum "$GRAD_ACCUM" --epochs 3 \
+  --block_size "$BLOCK_SIZE" --batch_size "$BATCH_SIZE" --grad_accum "$GRAD_ACCUM" --epochs 2 \
   --lr "$LR" --lora_r "$LORA_R" --lora_alpha "$LORA_ALPHA" --lora_dropout "$LORA_DROPOUT" \
-  --num_proc "$NUM_PROC"
+  --num_proc "$NUM_PROC" --fp16 1 --bf16 0
 
 echo "ALL DONE ✅  $(date)"

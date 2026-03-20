@@ -1024,6 +1024,17 @@ def apply_lora(
     return model
 
 
+def cast_trainable_params_to_fp32(model: nn.Module) -> nn.Module:
+    """
+    Keep the frozen base model in low precision, but upcast trainable parameters
+    (e.g. LoRA adapters) to fp32 for optimization stability.
+    """
+    for _, param in model.named_parameters():
+        if param.requires_grad and param.dtype != torch.float32:
+            param.data = param.data.to(torch.float32)
+    return model
+
+
 # -----------------------------
 # Train / eval
 # -----------------------------
@@ -1084,6 +1095,7 @@ def train(
     log_every: int,
     eval_every: int,
     save_every: int,
+    merged_save_dtype: torch.dtype,
 ):
     os.makedirs(output_dir, exist_ok=True)
 
@@ -1270,6 +1282,7 @@ def train(
                 "Failed to merge LoRA adapters into the base model. "
                 "Your PEFT model may not support merge_and_unload()."
             ) from e
+        merged = merged.to(dtype=merged_save_dtype)
         merged.save_pretrained(output_dir)
         print(f"[save] merged full model -> {output_dir}")
 
@@ -1346,7 +1359,8 @@ def build_model_with_router_compat(args, MoEForCausalLM, config, device, dtype):
     )
 
     low_rank_model = MoEForCausalLM(config)
-    low_rank_model.to(device)
+    # Keep the newly built low-rank model aligned with the requested load dtype.
+    low_rank_model.to(device=device, dtype=dtype if device.type == "cuda" else torch.float32)
 
     missing_keys, unexpected_keys = low_rank_model.load_state_dict(dense_model.state_dict(), strict=False)
     if is_main_process():
@@ -1492,6 +1506,11 @@ def main():
     # apply LoRA (train only adapters)
     targets = [t.strip() for t in args.lora_target_modules.split(",") if t.strip()] if args.lora_target_modules else None
     model = apply_lora(model, r=args.lora_r, alpha=args.lora_alpha, dropout=args.lora_dropout, target_modules=targets)
+    model = cast_trainable_params_to_fp32(model)
+
+    if is_main_process():
+        trainable_dtypes = sorted({str(p.dtype) for p in model.parameters() if p.requires_grad})
+        print(f"[lora] trainable dtype(s): {trainable_dtypes}")
 
     # IMPORTANT: print trainable params
     if is_main_process():
@@ -1702,6 +1721,7 @@ def main():
         log_every=max(1, args.log_every),
         eval_every=max(1, args.eval_every),
         save_every=max(0, args.save_every),
+        merged_save_dtype=dtype if device.type == "cuda" else torch.float32,
     )
 
     # Save tokenizer alongside the merged model for standalone inference
