@@ -17,7 +17,6 @@ from __future__ import annotations
 import argparse
 import inspect
 import json
-import math
 import os
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -142,9 +141,8 @@ def _init_cross_attention_router_from_legacy_dense(
     legacy_sd: Dict[str, torch.Tensor],
     config,
 ) -> int:
+    """Initialize simplified router(query/key/value) from legacy dense router weight."""
     num_inited = 0
-    init_std = float(getattr(config, "initializer_range", 0.02))
-    temp0 = max(float(getattr(config, "router_temperature_init", 1.0)), 1e-6)
 
     with torch.no_grad():
         for layer_idx, layer in enumerate(model.model.layers):
@@ -153,51 +151,29 @@ def _init_cross_attention_router_from_legacy_dense(
                 continue
             if not getattr(mlp, "use_cross_attention_router", False):
                 continue
-            if not hasattr(mlp, "router") or not hasattr(mlp.router, "q_proj"):
+            if not hasattr(mlp, "router"):
                 continue
 
             dense_w = legacy_sd.get(f"model.layers.{layer_idx}.mlp.router.weight")
             if dense_w is None:
                 continue
 
-            dense_w = dense_w.float()
             router = mlp.router
-            router_dim = int(router.q_proj.weight.shape[0])
-            max_rank = min(router_dim, dense_w.shape[0], dense_w.shape[1])
-            if max_rank <= 0:
+            if not all(hasattr(router, name) for name in ("query", "key", "value")):
+                # Legacy path (q_proj/expert_keys/...) is no longer used by current simplified router.
                 continue
 
-            u, s, vh = torch.linalg.svd(dense_w, full_matrices=False)
-            u = u[:, :max_rank]
-            s = s[:max_rank]
-            vh = vh[:max_rank, :]
-
-            sqrt_s = torch.sqrt(s)
-            k_part = u * sqrt_s.unsqueeze(0)
-            q_part = sqrt_s.unsqueeze(1) * vh
-
-            router.q_proj.weight.zero_()
-            router.q_proj.weight[:max_rank, :].copy_(
-                q_part.to(dtype=router.q_proj.weight.dtype, device=router.q_proj.weight.device)
-            )
-
-            router.expert_keys.zero_()
-            router.expert_keys[:, :max_rank].copy_(
-                k_part.to(dtype=router.expert_keys.dtype, device=router.expert_keys.device)
-            )
-
-            nn.init.normal_(router.expert_values, mean=0.0, std=init_std)
-            router.log_router_temperature.fill_(math.log(temp0))
-
-            if hasattr(mlp, "router_value_proj"):
-                weight = mlp.router_value_proj.weight
-                if weight.shape[0] == weight.shape[1]:
-                    weight.zero_()
-                    weight.copy_(torch.eye(weight.shape[0], dtype=weight.dtype, device=weight.device))
-                else:
-                    nn.init.xavier_uniform_(weight)
-            if hasattr(mlp, "router_context_gate_proj"):
-                nn.init.zeros_(mlp.router_context_gate_proj.weight)
+            dense_w = dense_w.float()
+            for proj_name in ("query", "key", "value"):
+                proj = getattr(router, proj_name)
+                if not hasattr(proj, "weight"):
+                    continue
+                proj.weight.zero_()
+                rows = min(proj.weight.shape[0], dense_w.shape[0])
+                cols = min(proj.weight.shape[1], dense_w.shape[1])
+                proj.weight[:rows, :cols].copy_(
+                    dense_w[:rows, :cols].to(dtype=proj.weight.dtype, device=proj.weight.device)
+                )
 
             num_inited += 1
 
@@ -206,11 +182,12 @@ def _init_cross_attention_router_from_legacy_dense(
 
 def _enable_new_router_params_trainable(model: nn.Module) -> int:
     keys = (
-        "expert_keys",
-        "expert_values",
-        "log_router_temperature",
-        "router_value_proj",
-        "router_context_gate_proj",
+        "router.query",
+        "router.key",
+        "router.value",
+        # Legacy (unused in current simplified router):
+        # "router.q_proj", "expert_keys", "expert_values", "log_router_temperature",
+        # "router_value_proj", "router_context_gate_proj",
     )
     n_params = 0
     for name, param in model.named_parameters():
@@ -222,26 +199,15 @@ def _enable_new_router_params_trainable(model: nn.Module) -> int:
 
 def _cast_selected_trainable_params_to_fp32(model: nn.Module) -> int:
     """
-    Cast only the *extra* trainable floating-point parameters to fp32.
+    Cast all floating-point trainable parameters to fp32.
 
-    This is important for k-bit training: base quantized weights must stay under
-    bitsandbytes control, while LoRA/router params can safely train in fp32.
+    This keeps base frozen/quantized weights untouched (requires_grad=False),
+    while ensuring every trainable parameter (LoRA/router/custom) stays in fp32.
     """
-    allow_substrings = (
-        "lora_",
-        "expert_keys",
-        "expert_values",
-        "log_router_temperature",
-        "router_value_proj",
-        "router_context_gate_proj",
-    )
-
     n_params = 0
     with torch.no_grad():
-        for name, param in model.named_parameters():
+        for _name, param in model.named_parameters():
             if not param.requires_grad:
-                continue
-            if not any(key in name for key in allow_substrings):
                 continue
             if not torch.is_floating_point(param):
                 continue
@@ -259,8 +225,9 @@ def guess_lora_targets(model: nn.Module) -> List[str]:
         "gate_proj",
         "up_proj",
         "down_proj",
-        "router_value_proj",
-        "router_context_gate_proj",
+        # Legacy (unused in current simplified router):
+        # "router_value_proj",
+        # "router_context_gate_proj",
     ]
     names = set()
     for name, module in model.named_modules():
@@ -353,8 +320,12 @@ def build_quantization_config(args):
             bnb_4bit_compute_dtype=dtype_map[args.bnb_4bit_compute_dtype],
             llm_int8_skip_modules=[
                 "router",
-                "router_value_proj",
-                "router_context_gate_proj",
+                "query",
+                "key",
+                "value",
+                # Legacy (unused in current simplified router):
+                # "router_value_proj",
+                # "router_context_gate_proj",
             ],
         )
 
@@ -364,8 +335,12 @@ def build_quantization_config(args):
             llm_int8_threshold=float(args.llm_int8_threshold),
             llm_int8_skip_modules=[
                 "router",
-                "router_value_proj",
-                "router_context_gate_proj",
+                "query",
+                "key",
+                "value",
+                # Legacy (unused in current simplified router):
+                # "router_value_proj",
+                # "router_context_gate_proj",
             ],
         )
 
@@ -622,8 +597,6 @@ def parse_args():
     ap.add_argument("--device", type=str, default="cuda")
     ap.add_argument("--router_top_k", type=int, default=0)
     ap.add_argument("--router_topk", type=int, default=0)
-    ap.add_argument("--use_low_rank_router", type=int, default=1)
-    ap.add_argument("--router_rank", type=int, default=128)
     ap.add_argument("--init_new_router_from_legacy", type=int, default=1)
 
     ap.add_argument("--bbh_task", type=str, default="boolean_expressions")
@@ -661,12 +634,14 @@ def main():
 
     model_cls, config_cls = import_moe_classes()
     config = config_cls.from_pretrained(args.model_path)
-    config.use_low_rank_router = bool(args.use_low_rank_router)
-    config.router_rank = int(args.router_rank)
+    if hasattr(config, "ensure_model_attributes"):
+        config.ensure_model_attributes()
 
     effective_top_k = int(args.router_top_k) if int(args.router_top_k) > 0 else int(args.router_topk)
     if effective_top_k > 0:
         config.router_top_k = effective_top_k
+    if hasattr(config, "ensure_model_attributes"):
+        config.ensure_model_attributes()
     if int(getattr(config, "router_top_k", 0)) <= 0:
         raise ValueError(f"config.router_top_k must be >= 1, got {getattr(config, 'router_top_k', None)}")
     if int(getattr(config, "num_experts", 0)) > 0 and int(config.router_top_k) > int(config.num_experts):

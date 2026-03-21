@@ -15,6 +15,7 @@ LORA_ALPHA=16
 LORA_DROPOUT=0.05
 NUM_PROC=8
 
+# 模型结构相关参数统一从 $MODEL_PATH 下的 configuration_moe_dm 加载；这里只保留训练参数。
 # 可选：固定 GPU（没有就注释掉）
 
 mkdir -p "$OUT_ROOT/logs"
@@ -33,25 +34,9 @@ run_one () {
   echo
 }
 
-# run_one "piqa_4bit" torchrun --nproc_per_node 2 finetune_qwen1_5_moe_2_7b_4bit.py \
-# run_one "piqa_4bit" torchrun --nproc_per_node 2 finetune_4bit.py \
-#   --model_path "$MODEL_PATH" \
-#   --output_dir "$OUT_ROOT/out_piqa_lora_4bit" \
-#   --dataset piqa --eval_dataset piqa \
-#   --train_split train --eval_split validation \
-#   --block_size "$BLOCK_SIZE" --batch_size "$BATCH_SIZE" --grad_accum "$GRAD_ACCUM" --epochs "$EPOCHS" \
-#   --lr "$LR" --lora_r "$LORA_R" --lora_alpha "$LORA_ALPHA" --lora_dropout "$LORA_DROPOUT" \
-#   --num_proc "$NUM_PROC" \
-#   --num_experts_per_tok 4 \
-#   --eval_max_samples 50 \
-#   --bnb_4bit_quant_type nf4 \
-#   --bnb_4bit_use_double_quant 1 \
-#   --bnb_4bit_compute_dtype bfloat16 \
-#   --gradient_checkpointing 0
-
 run_one "piqa" torchrun --nproc_per_node 2 finetune_dynamic_moe.py \
   --model_path "$MODEL_PATH" \
-  --output_dir "$OUT_ROOT/out_piqa_lowrank_entmax_v3" \
+  --output_dir "$OUT_ROOT/out_piqa_simplified_router_v1" \
   --dataset piqa --eval_dataset piqa \
   --train_split train --eval_split validation \
   --block_size "$BLOCK_SIZE" --batch_size "$BATCH_SIZE" --grad_accum "$GRAD_ACCUM" --epochs "$EPOCHS" \

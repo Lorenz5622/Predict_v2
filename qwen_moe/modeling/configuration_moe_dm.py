@@ -318,43 +318,37 @@ class MoEConfig(PretrainedConfig):
         tie_word_embeddings=False,
         rope_theta=10000.0,
         rope_scaling=None,
+        # -------- MoE / router (active in modeling_moe_dm.py) --------
         num_experts=-1,
-        experts_topk=2,
         expert_frequency=2,
-        top_p_threshold=0.4,
-
-        # -------- backward-compatible router flags --------
-        use_low_rank_router: bool = False,
-        router_rank: int = 64,
-        use_sharp_router: bool = True,
-
-        # -------- new cross-attention-style router --------
-        use_cross_attention_router: bool = True,
-        router_dim: int = None,
-        router_value_dim: int = None,
         router_top_k: int = 2,
-        router_temperature_init: float = 1.0,
-        router_normalize_q: bool = True,
-        router_normalize_k: bool = True,
-        router_use_scale: bool = True,
-        router_dropout: float = 0.0,
-        router_eps: float = 1e-6,
+        use_cross_attention_router: bool = True,
 
-        # -------- sparse routing distribution --------
-        router_use_entmax: bool = True,
-        router_entmax_alpha: float = 1.7,
-        router_min_prob: float = 0.0,
-
-        # -------- router context injection --------
-        use_router_context: bool = True,
-        router_context_mode: str = "add",
-        detach_router_context_probs: bool = False,
-
-        # -------- value-aware routing --------
-        use_value_aware_routing: bool = False,
-        value_norm_type: str = "l1",
-        value_norm_detach: bool = False,
-        value_norm_scale: float = 1.0,
+        # -------- legacy router params (unused by current simplified router) --------
+        # These are intentionally kept as comments for backward compatibility context.
+        # experts_topk=2,
+        # top_p_threshold=0.4,
+        # use_low_rank_router: bool = False,
+        # router_rank: int = 64,
+        # use_sharp_router: bool = True,
+        # router_dim: int = None,
+        # router_value_dim: int = None,
+        # router_temperature_init: float = 1.0,
+        # router_normalize_q: bool = True,
+        # router_normalize_k: bool = True,
+        # router_use_scale: bool = True,
+        # router_dropout: float = 0.0,
+        # router_eps: float = 1e-6,
+        # router_use_entmax: bool = True,
+        # router_entmax_alpha: float = 1.7,
+        # router_min_prob: float = 0.0,
+        # use_router_context: bool = True,
+        # router_context_mode: str = "add",
+        # detach_router_context_probs: bool = False,
+        # use_value_aware_routing: bool = False,
+        # value_norm_type: str = "l1",
+        # value_norm_detach: bool = False,
+        # value_norm_scale: float = 1.0,
 
         **kwargs,
     ):
@@ -364,71 +358,22 @@ class MoEConfig(PretrainedConfig):
         self.intermediate_size = intermediate_size
         self.num_hidden_layers = num_hidden_layers
         self.num_attention_heads = num_attention_heads
-        self.num_experts = num_experts
-        self.expert_frequency = expert_frequency
-        self.experts_topk = experts_topk
-        self.top_p_threshold = top_p_threshold
-
-        # -------- backward compatibility --------
-        self.use_low_rank_router = bool(use_low_rank_router)
-        self.router_rank = int(router_rank)
-        self.use_sharp_router = bool(use_sharp_router)
-
-        # -------- cross-attention router --------
-        # 如果外部没显式给 use_cross_attention_router，
-        # 则当 use_low_rank_router=True 时也自动兼容启用新 router
-        self.use_cross_attention_router = bool(use_cross_attention_router or use_low_rank_router)
-
-        # router_dim: 优先用新字段，否则回退到旧的 router_rank
-        self.router_dim = int(router_dim) if router_dim is not None else int(router_rank)
-
-        # router_value_dim: 默认投影回 hidden_size 前先保持 hidden_size
-        self.router_value_dim = int(router_value_dim) if router_value_dim is not None else int(hidden_size)
-
+        # -------- MoE / router (active in modeling_moe_dm.py) --------
+        self.num_experts = int(num_experts)
+        self.expert_frequency = int(expert_frequency)
         self.router_top_k = int(router_top_k)
-        self.router_temperature_init = float(router_temperature_init)
-        self.router_normalize_q = bool(router_normalize_q)
-        self.router_normalize_k = bool(router_normalize_k)
-        self.router_use_scale = bool(router_use_scale)
-        self.router_dropout = float(router_dropout)
-        self.router_eps = float(router_eps)
 
-        # -------- sparse routing distribution --------
-        self.router_use_entmax = bool(router_use_entmax)
-        self.router_entmax_alpha = float(router_entmax_alpha)
-        self.router_min_prob = float(router_min_prob)
+        # Legacy compatibility: old checkpoints may only have `use_low_rank_router`.
+        legacy_use_low_rank_router = bool(kwargs.get("use_low_rank_router", False))
+        self.use_low_rank_router = legacy_use_low_rank_router
+        self.use_cross_attention_router = bool(use_cross_attention_router or legacy_use_low_rank_router)
 
-        if self.router_use_entmax and not (1.0 < self.router_entmax_alpha <= 2.0):
-            raise ValueError(
-                f"`router_entmax_alpha` must be in (1, 2], got {self.router_entmax_alpha}"
-            )
+        # -------- legacy router params (unused by current simplified router) --------
+        self.experts_topk = int(kwargs.get("experts_topk", 2))
+        self.top_p_threshold = float(kwargs.get("top_p_threshold", 0.4))
 
-        if self.router_min_prob < 0.0:
-            raise ValueError(f"`router_min_prob` must be >= 0, got {self.router_min_prob}")
+        self.ensure_model_attributes()
 
-        # -------- router context injection --------
-        self.use_router_context = bool(use_router_context)
-        self.router_context_mode = str(router_context_mode)
-        self.detach_router_context_probs = bool(detach_router_context_probs)
-
-        if self.router_context_mode not in ["add", "gate"]:
-            raise ValueError(
-                f"`router_context_mode` must be one of ['add', 'gate'], got {self.router_context_mode}"
-            )
-
-        # -------- value-aware routing --------
-        self.use_value_aware_routing = bool(use_value_aware_routing)
-        self.value_norm_type = str(value_norm_type)
-        self.value_norm_detach = bool(value_norm_detach)
-        self.value_norm_scale = float(value_norm_scale)
-
-        if self.value_norm_type not in ["l1", "l2"]:
-            raise ValueError(
-                f"`value_norm_type` must be one of ['l1', 'l2'], got {self.value_norm_type}"
-            )
-
-        if self.value_norm_scale <= 0.0:
-            raise ValueError(f"`value_norm_scale` must be > 0, got {self.value_norm_scale}")
         # for backward compatibility
         if num_key_value_heads is None:
             num_key_value_heads = num_attention_heads
@@ -450,6 +395,34 @@ class MoEConfig(PretrainedConfig):
             tie_word_embeddings=tie_word_embeddings,
             **kwargs,
         )
+
+    def ensure_model_attributes(self):
+        """Backfill and validate model fields consumed by modeling_moe_dm.py."""
+        self.num_experts = int(getattr(self, "num_experts", -1))
+        self.expert_frequency = int(getattr(self, "expert_frequency", 2))
+        self.router_top_k = int(getattr(self, "router_top_k", 2))
+
+        legacy_use_low_rank_router = bool(getattr(self, "use_low_rank_router", False))
+        self.use_cross_attention_router = bool(
+            getattr(self, "use_cross_attention_router", True) or legacy_use_low_rank_router
+        )
+
+        if self.expert_frequency <= 0:
+            raise ValueError(f"`expert_frequency` must be >= 1, got {self.expert_frequency}")
+        if self.router_top_k <= 0:
+            raise ValueError(f"`router_top_k` must be >= 1, got {self.router_top_k}")
+        if self.num_experts > 0 and self.router_top_k > self.num_experts:
+            raise ValueError(
+                f"`router_top_k` ({self.router_top_k}) cannot exceed `num_experts` ({self.num_experts})"
+            )
+
+        # Legacy params kept for checkpoint compatibility (unused by current simplified router):
+        # router_rank, router_dim, router_value_dim, router_temperature_init, router_normalize_q,
+        # router_normalize_k, router_use_scale, router_dropout, router_eps, router_use_entmax,
+        # router_entmax_alpha, router_min_prob, use_router_context, router_context_mode,
+        # detach_router_context_probs, use_value_aware_routing, value_norm_type, value_norm_detach,
+        # value_norm_scale, use_sharp_router, experts_topk, top_p_threshold.
+        return self
 
     def _rope_scaling_validation(self):
         """

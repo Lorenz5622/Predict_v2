@@ -25,7 +25,7 @@ import torch.utils.checkpoint
 from torch import nn
 from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss, MSELoss
 
-
+import torch.nn.functional as F
 from transformers import PreTrainedModel
 from transformers.activations import ACT2FN
 from transformers.modeling_outputs import BaseModelOutputWithPast, CausalLMOutputWithPast
@@ -239,148 +239,40 @@ def entmax_bisect(
 
 class CrossAttentionRouter(nn.Module):
     """
-    Cross-attention-style MoE router.
+    Simplified router: token-wise Q/K/V self-attention over expert dimension.
 
-    这里显式建模:
-        Q = q_proj(hidden_states)
-        K = expert_keys
-        V = expert_values
-
-    路由 logits:
-        logits = temperature * (Q K^T / sqrt(router_dim))
-
-    注意:
-        这里的 expert_values 不是最终的 expert function output，
-        而是 router 侧的显式 value embeddings，用来构造 router_context。
-        真正的动态 value 仍然是后面 Expert_i(x) 的输出。
+    Input:
+        hidden_states: (batch, seq, hidden)
+    Output:
+        router_logits: (batch, seq, num_experts)
     """
-    def __init__(
-        self,
-        self_hidden_size: int,
-        num_experts: int,
-        router_dim: int,
-        value_dim: int,
-        dropout: float = 0.0,
-        router_temperature_init: float = 1.0,
-        router_eps: float = 1e-6,
-        normalize_q: bool = True,
-        normalize_k: bool = True,
-        use_scale: bool = True,
-    ):
+
+    def __init__(self, hidden_size: int, num_experts: int):
         super().__init__()
-        self.hidden_size = self_hidden_size
-        self.num_experts = num_experts
-        self.router_dim = router_dim
-        self.value_dim = value_dim
-        self.router_eps = router_eps
-        self.normalize_q = normalize_q
-        self.normalize_k = normalize_k
-        self.use_scale = use_scale
+        self.hidden_size = int(hidden_size)
+        self.num_experts = int(num_experts)
 
-        # token -> query
-        self.q_proj = nn.Linear(self_hidden_size, router_dim, bias=False)
+        self.query = nn.Linear(self.hidden_size, self.num_experts, bias=False)
+        self.key = nn.Linear(self.hidden_size, self.num_experts, bias=False)
+        self.value = nn.Linear(self.hidden_size, self.num_experts, bias=False)
 
-        # 每个 expert 一个显式 key embedding
-        self.expert_keys = nn.Parameter(torch.empty(num_experts, router_dim))
+    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        # Keep router params in fp32 while allowing upstream hidden states in fp16/bf16.
+        router_in = hidden_states.to(self.query.weight.dtype)
+        q = self.query(router_in).float()  # (b, s, e)
+        k = self.key(router_in).float()    # (b, s, e)
+        v = self.value(router_in).float()  # (b, s, e)
 
-        # 每个 expert 一个显式 value embedding
-        self.expert_values = nn.Parameter(torch.empty(num_experts, value_dim))
+        # Attention in expert space for each token.
+        attn_scores = torch.matmul(q.unsqueeze(-1), k.unsqueeze(-2))  # (b, s, e, e)
+        attn_weights = F.softmax(attn_scores, dim=-1)
+        router_logits = torch.matmul(attn_weights, v.unsqueeze(-1)).squeeze(-1)  # (b, s, e)
+        return router_logits
 
-        nn.init.normal_(self.expert_keys, mean=0.0, std=0.02)
-        nn.init.normal_(self.expert_values, mean=0.0, std=0.02)
-
-        self.dropout = nn.Dropout(dropout) if dropout > 0.0 else None
-
-        # 用 log_temperature 保证温度始终为正
-        self.log_router_temperature = nn.Parameter(
-            torch.log(torch.tensor(float(router_temperature_init)))
-        )
-
-    @property
-    def router_temperature(self):
-        return torch.exp(self.log_router_temperature)
-
-    def _normalize_last_dim(self, x: torch.Tensor) -> torch.Tensor:
-        return x / x.norm(dim=-1, keepdim=True).clamp_min(self.router_eps)
-
-    def compute_logits(self, hidden_states: torch.Tensor) -> torch.Tensor:
-        """
-        hidden_states: (batch, seq, hidden)
-        returns:
-            route_logits: (batch, seq, num_experts)
-        """
-        q = self.q_proj(hidden_states)  # (b, s, router_dim)
-
-        if self.dropout is not None:
-            q = self.dropout(q)
-
-        if self.normalize_q:
-            q = self._normalize_last_dim(q)
-
-        k = self.expert_keys  # (num_experts, router_dim)
-        if self.normalize_k:
-            k = self._normalize_last_dim(k)
-        if k.dtype != q.dtype:
-            k = k.to(q.dtype)
-
-        route_logits = torch.matmul(q, k.transpose(0, 1))  # (b, s, num_experts)
-
-        if self.use_scale:
-            route_logits = route_logits / math.sqrt(self.router_dim)
-
-        route_logits = self.router_temperature.to(route_logits.dtype) * route_logits
-        return route_logits
-
-    def compute_router_context(self, route_probs: torch.Tensor) -> torch.Tensor:
-        """
-        route_probs: (batch, seq, num_experts)
-        returns:
-            router_context: (batch, seq, value_dim)
-        """
-        expert_values = self.expert_values
-        if expert_values.dtype != route_probs.dtype:
-            expert_values = expert_values.to(route_probs.dtype)
-        return torch.matmul(route_probs, expert_values)
-
-    def get_expert_value_norms(self, norm_type: str = "l1", eps: float = 1e-9) -> torch.Tensor:
-        """
-        returns:
-            value_norms: (num_experts,)
-        """
-        if norm_type == "l1":
-            value_norms = self.expert_values.abs().sum(dim=-1)
-        elif norm_type == "l2":
-            value_norms = torch.norm(self.expert_values, p=2, dim=-1)
-        else:
-            raise ValueError(f"Unsupported norm_type={norm_type}, expected 'l1' or 'l2'.")
-        return value_norms.clamp_min(eps)
-    
-    def forward(self, hidden_states: torch.Tensor):
-        """
-        hidden_states: (batch, seq, hidden)
-
-        returns:
-            route_logits:   (batch, seq, num_experts)
-            expert_keys:    (num_experts, router_dim)
-            expert_values:  (num_experts, value_dim)
-        """
-        route_logits = self.compute_logits(hidden_states)
-        return route_logits, self.expert_keys, self.expert_values
 
 class SwitchMLP(nn.Module):
-    """
-    Routes input to one of N MLP "experts" with cross-attention-style gating.
+    """Routes tokens to N experts with a simplified token-internal router."""
 
-    路由流程:
-        1) token hidden -> Q
-        2) expert keys -> K
-        3) QK^T -> route logits
-        4) route probs -> top-k
-        5) 用显式 expert value embeddings 做 router_context
-        6) 将 router_context 注入到 token hidden
-        7) 只对 top-k experts 做 sparse dispatch
-        8) expert outputs 按 top-k 权重加权求和
-    """
     def __init__(self, config, layer_idx):
         super(SwitchMLP, self).__init__()
         self.layer_num = layer_idx
@@ -398,49 +290,20 @@ class SwitchMLP(nn.Module):
                     )
                 )
 
-            self.router_top_k = getattr(config, "router_top_k", 2)
-            self.router_use_entmax = getattr(config, "router_use_entmax", True)
-            self.router_entmax_alpha = float(getattr(config, "router_entmax_alpha", 1.5))
+            self.router_top_k = int(getattr(config, "router_top_k", 2))
+            if self.router_top_k <= 0:
+                raise ValueError(f"router_top_k must be >= 1, got {self.router_top_k}")
+            if self.router_top_k > self.num_experts:
+                raise ValueError(
+                    f"router_top_k ({self.router_top_k}) cannot exceed num_experts ({self.num_experts})"
+                )
 
-            # 新增：显式启用 cross-attention-style router
             self.use_cross_attention_router = getattr(config, "use_cross_attention_router", True)
-
-            # router 维度；兼容旧字段 router_rank
-            self.router_dim = int(getattr(config, "router_dim", getattr(config, "router_rank", config.hidden_size)))
-
-            # 显式 value embedding 维度
-            self.router_value_dim = int(getattr(config, "router_value_dim", config.hidden_size))
-
-            # 是否把 router_context 注入 expert 输入
-            self.use_router_context = getattr(config, "use_router_context", True)
-
-            # 注入方式: "add" 或 "gate"
-            self.router_context_mode = getattr(config, "router_context_mode", "add")
-
-            # 将 value embedding 投影回 hidden size
-            self.router_value_proj = nn.Linear(self.router_value_dim, config.hidden_size, bias=False)
-
-            # 可选 gating 投影
-            self.router_context_gate_proj = nn.Linear(config.hidden_size, config.hidden_size, bias=False)
-
-            self.use_value_aware_routing = getattr(config, "use_value_aware_routing", True)
-
-            self.value_norm_type = getattr(config, "value_norm_type", "l1")
-            self.value_norm_detach = getattr(config, "value_norm_detach", False)
-            self.value_norm_scale = float(getattr(config, "value_norm_scale", 1.0))
 
             if self.use_cross_attention_router:
                 self.router = CrossAttentionRouter(
-                    self_hidden_size=config.hidden_size,
+                    hidden_size=config.hidden_size,
                     num_experts=config.num_experts,
-                    router_dim=self.router_dim,
-                    value_dim=self.router_value_dim,
-                    dropout=getattr(config, "router_dropout", 0.0),
-                    router_temperature_init=getattr(config, "router_temperature_init", 1.0),
-                    router_eps=getattr(config, "router_eps", 1e-6),
-                    normalize_q=getattr(config, "router_normalize_q", True),
-                    normalize_k=getattr(config, "router_normalize_k", True),
-                    use_scale=getattr(config, "router_use_scale", True),
                 )
             else:
                 self.router = nn.Linear(
@@ -456,81 +319,6 @@ class SwitchMLP(nn.Module):
                 config.hidden_act,
             )
 
-    def _compute_route_probs(self, route_logits: torch.Tensor) -> torch.Tensor:
-        return torch.softmax(route_logits, dim=-1)
-
-    def _apply_value_aware_routing(
-        self,
-        route_probs: torch.Tensor,
-    ) -> torch.Tensor:
-        """
-        route_probs: (batch, seq, num_experts)
-        returns:
-            value-aware route_probs: (batch, seq, num_experts)
-        """
-        if not (self.use_cross_attention_router and self.use_value_aware_routing):
-            return route_probs
-
-        value_norms = self.router.get_expert_value_norms(
-            norm_type=self.value_norm_type
-        )  # (num_experts,)
-
-        if self.value_norm_detach:
-            value_norms = value_norms.detach()
-
-        # 归一化，避免数值过大
-        value_norms = value_norms / value_norms.mean().clamp_min(1e-9)
-        value_norms = value_norms.pow(self.value_norm_scale)
-
-        # VATP-style: attention score * value norm
-        route_scores = route_probs * value_norms.view(1, 1, -1)
-
-        # 重新归一化成分布
-        route_scores = route_scores / route_scores.sum(dim=-1, keepdim=True).clamp_min(1e-9)
-        return route_scores
-    
-    def _apply_router_context(self, hidden_states: torch.Tensor, router_context: torch.Tensor) -> torch.Tensor:
-        """
-        hidden_states:  (batch, seq, hidden)
-        router_context: (batch, seq, value_dim)
-        returns:
-            modulated_hidden_states: (batch, seq, hidden)
-        """
-        proj_dtype = self.router_value_proj.weight.dtype
-        if router_context.dtype != proj_dtype:
-            router_context = router_context.to(proj_dtype)
-        context_hidden = self.router_value_proj(router_context)  # (b, s, hidden)
-
-        if not self.use_router_context:
-            return hidden_states
-
-        if self.router_context_mode == "add":
-            if context_hidden.dtype != hidden_states.dtype:
-                context_hidden = context_hidden.to(hidden_states.dtype)
-            return hidden_states + context_hidden
-        elif self.router_context_mode == "gate":
-            gate = torch.sigmoid(self.router_context_gate_proj(context_hidden))
-            if gate.dtype != hidden_states.dtype:
-                gate = gate.to(hidden_states.dtype)
-            return hidden_states * gate
-        else:
-            raise ValueError(
-                f"Unsupported router_context_mode={self.router_context_mode}, expected 'add' or 'gate'."
-            )
-        
-    def get_expert_value_norms(self, norm_type: str = "l1", eps: float = 1e-9) -> torch.Tensor:
-        """
-        returns:
-            value_norms: (num_experts,)
-        """
-        if norm_type == "l1":
-            value_norms = self.expert_values.abs().sum(dim=-1)
-        elif norm_type == "l2":
-            value_norms = torch.norm(self.expert_values, p=2, dim=-1)
-        else:
-            raise ValueError(f"Unsupported norm_type={norm_type}, expected 'l1' or 'l2'.")
-        return value_norms.clamp_min(eps)
-
     def forward(self, hidden_states):
         """
         hidden_states: (batch, seq, hidden)
@@ -540,65 +328,37 @@ class SwitchMLP(nn.Module):
 
         bsz, seq_len, hidden_dim = hidden_states.size()
 
-        # ----------------------------
-        # 1) router logits
-        # ----------------------------
-        if self.use_cross_attention_router:
-            route_logits, _, _ = self.router(hidden_states)  # (b, s, num_experts)
-        else:
-            route_logits = self.router(hidden_states)        # (b, s, num_experts)
+        # 1) router logits -> route probabilities.
+        router_logits = self.router(hidden_states)
+        route_probs = F.softmax(router_logits, dim=-1, dtype=torch.float)
 
-        # ----------------------------
-        # 2) dense route probs
-        route_probs = self._compute_route_probs(route_logits)  # (b, s, num_experts)
-
-        # 2.5) value-aware reweighting (VATP-style)
-        route_probs = self._apply_value_aware_routing(route_probs)
-
-        # ----------------------------
-        # 3) explicit expert value embeddings -> router context
-        # ----------------------------
-        if self.use_cross_attention_router and self.use_router_context:
-            router_context = self.router.compute_router_context(route_probs)  # (b, s, value_dim)
-            expert_input = self._apply_router_context(hidden_states, router_context)
-        else:
-            expert_input = hidden_states
-
-        # ----------------------------
-        # 4) fixed top-k routing
-        # ----------------------------
+        # 2) fixed top-k routing.
         topk_weights, topk_ind = top_k_routing_batched_all_sequence(
             route_probs,
             self.router_top_k,
         )  # both: (b, s, top_k)
 
-        # ----------------------------
-        # 5) flatten tokens
-        # ----------------------------
-        flat_expert_input = expert_input.reshape(-1, hidden_dim)               # (b*s, hidden)
-        flat_topk_weights = topk_weights.reshape(-1, self.router_top_k)        # (b*s, top_k)
-        flat_topk_ind = topk_ind.reshape(-1, self.router_top_k)                # (b*s, top_k)
+        # 3) flatten tokens then sparse expert dispatch.
+        flat_hidden = hidden_states.reshape(-1, hidden_dim)              # (b*s, h)
+        flat_topk_weights = topk_weights.reshape(-1, self.router_top_k)  # (b*s, k)
+        flat_topk_ind = topk_ind.reshape(-1, self.router_top_k)          # (b*s, k)
 
-        # ----------------------------
-        # 6) sparse expert dispatch
-        # ----------------------------
-        output_total = torch.zeros_like(flat_expert_input)
-
+        output_total = torch.zeros_like(flat_hidden)
         for expert_num, expert in enumerate(self.experts):
             token_idx, slot_idx = torch.where(flat_topk_ind == expert_num)
-
             if token_idx.numel() == 0:
                 continue
 
-            selected_hidden = flat_expert_input[token_idx]  # (n, hidden)
-            expert_output = expert(selected_hidden)         # (n, hidden)
+            selected_hidden = flat_hidden[token_idx]  # (n, h)
+            expert_output = expert(selected_hidden)   # (n, h)
 
-            expert_weight = flat_topk_weights[token_idx, slot_idx].unsqueeze(-1)  # (n, 1)
+            expert_weight = flat_topk_weights[token_idx, slot_idx].unsqueeze(-1)
+            expert_weight = expert_weight.to(expert_output.dtype)
             output_total[token_idx] += expert_output * expert_weight
 
         output_total = output_total.view(bsz, seq_len, hidden_dim)
         return output_total
-                
+
 class LlamaAttention(nn.Module):
     """Multi-headed attention from 'Attention Is All You Need' paper"""
 
