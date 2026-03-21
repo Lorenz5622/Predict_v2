@@ -457,12 +457,6 @@ class SwitchMLP(nn.Module):
             )
 
     def _compute_route_probs(self, route_logits: torch.Tensor) -> torch.Tensor:
-        if self.router_use_entmax:
-            return entmax_bisect(
-                route_logits.to(torch.float32),
-                alpha=self.router_entmax_alpha,
-                dim=-1,
-            ).to(route_logits.dtype)
         return torch.softmax(route_logits, dim=-1)
 
     def _apply_value_aware_routing(
