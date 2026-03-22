@@ -299,6 +299,13 @@ class SwitchMLP(nn.Module):
                 )
 
             self.use_cross_attention_router = getattr(config, "use_cross_attention_router", True)
+            self.router_use_entmax = bool(getattr(config, "router_use_entmax", False))
+            self.router_entmax_alpha = float(getattr(config, "router_entmax_alpha", 1.5))
+            if self.router_use_entmax and not (1.0 < self.router_entmax_alpha <= 2.0):
+                raise ValueError(
+                    f"`router_entmax_alpha` must be in (1, 2] when `router_use_entmax=True`, "
+                    f"got {self.router_entmax_alpha}"
+                )
 
             if self.use_cross_attention_router:
                 self.router = CrossAttentionRouter(
@@ -331,6 +338,8 @@ class SwitchMLP(nn.Module):
         # 1) router logits -> route probabilities.
         router_logits = self.router(hidden_states)
         route_probs = F.softmax(router_logits, dim=-1, dtype=torch.float)
+        if self.router_use_entmax:
+            route_probs = entmax_bisect(router_logits.float(), alpha=self.router_entmax_alpha, dim=-1)
 
         # 2) fixed top-k routing.
         topk_weights, topk_ind = top_k_routing_batched_all_sequence(

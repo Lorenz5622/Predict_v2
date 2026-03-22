@@ -598,6 +598,19 @@ def parse_args():
     ap.add_argument("--router_top_k", type=int, default=0)
     ap.add_argument("--router_topk", type=int, default=0)
     ap.add_argument("--init_new_router_from_legacy", type=int, default=1)
+    ap.add_argument(
+        "--router_use_entmax",
+        type=int,
+        default=0,
+        choices=[-1, 0, 1],
+        help="Set -1 to keep config value, 0 to disable, 1 to enable entmax routing.",
+    )
+    ap.add_argument(
+        "--router_entmax_alpha",
+        type=float,
+        default=None,
+        help="Override config.router_entmax_alpha when provided.",
+    )
 
     ap.add_argument("--bbh_task", type=str, default="boolean_expressions")
     ap.add_argument("--winogrande_config", type=str, default="winogrande_xl")
@@ -640,6 +653,10 @@ def main():
     effective_top_k = int(args.router_top_k) if int(args.router_top_k) > 0 else int(args.router_topk)
     if effective_top_k > 0:
         config.router_top_k = effective_top_k
+    if int(args.router_use_entmax) >= 0:
+        config.router_use_entmax = bool(args.router_use_entmax)
+    if args.router_entmax_alpha is not None:
+        config.router_entmax_alpha = float(args.router_entmax_alpha)
     if hasattr(config, "ensure_model_attributes"):
         config.ensure_model_attributes()
     if int(getattr(config, "router_top_k", 0)) <= 0:

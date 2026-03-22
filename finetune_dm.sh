@@ -5,9 +5,9 @@ set -Eeuo pipefail
 MODEL_PATH="/data/cyx/models/Dynamic_MoE"
 OUT_ROOT="/data/cyx/models"
 LOG_PATH="/home/cyx/qwen_moe"
-BLOCK_SIZE=128
-BATCH_SIZE=4
-GRAD_ACCUM=4
+BLOCK_SIZE=192
+BATCH_SIZE=6
+GRAD_ACCUM=3
 EPOCHS=2
 LR=2e-4
 LORA_R=16
@@ -36,11 +36,31 @@ run_one () {
 
 run_one "piqa" torchrun --nproc_per_node 2 finetune_dynamic_moe.py \
   --model_path "$MODEL_PATH" \
-  --output_dir "$OUT_ROOT/out_piqa_simplified_router_v1" \
+  --output_dir "$OUT_ROOT/out_piqa_entmax_15" \
   --dataset piqa --eval_dataset piqa \
   --train_split train --eval_split validation \
-  --block_size "$BLOCK_SIZE" --batch_size "$BATCH_SIZE" --grad_accum "$GRAD_ACCUM" --epochs "$EPOCHS" \
+  --block_size "$BLOCK_SIZE" --batch_size "$BATCH_SIZE" --grad_accum "$GRAD_ACCUM" --epochs 3 \
   --lr "$LR" --lora_r "$LORA_R" --lora_alpha "$LORA_ALPHA" --lora_dropout "$LORA_DROPOUT" \
-  --num_proc "$NUM_PROC" --load_in_8bit 0 --load_in_fp16 1 --bf16 0 --train_extra_params_in_fp32 1
+  --num_proc "$NUM_PROC" --load_in_8bit 0 --load_in_fp16 1 --bf16 0 --train_extra_params_in_fp32 1 \
+  --router_use_entmax 1 --router_entmax_alpha 1.5
 
+run_one "piqa" torchrun --nproc_per_node 2 finetune_dynamic_moe.py \
+  --model_path "$MODEL_PATH" \
+  --output_dir "$OUT_ROOT/out_piqa_entmax_17" \
+  --dataset piqa --eval_dataset piqa \
+  --train_split train --eval_split validation \
+  --block_size "$BLOCK_SIZE" --batch_size "$BATCH_SIZE" --grad_accum "$GRAD_ACCUM" --epochs 3 \
+  --lr "$LR" --lora_r "$LORA_R" --lora_alpha "$LORA_ALPHA" --lora_dropout "$LORA_DROPOUT" \
+  --num_proc "$NUM_PROC" --load_in_8bit 0 --load_in_fp16 1 --bf16 0 --train_extra_params_in_fp32 1 \
+  --router_use_entmax 1 --router_entmax_alpha 1.7
+
+run_one "piqa" torchrun --nproc_per_node 2 finetune_dynamic_moe.py \
+  --model_path "$MODEL_PATH" \
+  --output_dir "$OUT_ROOT/out_piqa_wo_entmax_3e" \
+  --dataset piqa --eval_dataset piqa \
+  --train_split train --eval_split validation \
+  --block_size "$BLOCK_SIZE" --batch_size "$BATCH_SIZE" --grad_accum "$GRAD_ACCUM" --epochs 3 \
+  --lr "$LR" --lora_r "$LORA_R" --lora_alpha "$LORA_ALPHA" --lora_dropout "$LORA_DROPOUT" \
+  --num_proc "$NUM_PROC" --load_in_8bit 0 --load_in_fp16 1 --bf16 0 --train_extra_params_in_fp32 1 \
+  --router_use_entmax 0
 echo "ALL DONE ✅  $(date)"

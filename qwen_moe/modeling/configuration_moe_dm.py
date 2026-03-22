@@ -323,6 +323,8 @@ class MoEConfig(PretrainedConfig):
         expert_frequency=2,
         router_top_k: int = 2,
         use_cross_attention_router: bool = True,
+        router_use_entmax: bool = True,
+        router_entmax_alpha: float = 1.7,
 
         # -------- legacy router params (unused by current simplified router) --------
         # These are intentionally kept as comments for backward compatibility context.
@@ -362,6 +364,8 @@ class MoEConfig(PretrainedConfig):
         self.num_experts = int(num_experts)
         self.expert_frequency = int(expert_frequency)
         self.router_top_k = int(router_top_k)
+        self.router_use_entmax = bool(router_use_entmax)
+        self.router_entmax_alpha = float(router_entmax_alpha)
 
         # Legacy compatibility: old checkpoints may only have `use_low_rank_router`.
         legacy_use_low_rank_router = bool(kwargs.get("use_low_rank_router", False))
@@ -401,6 +405,8 @@ class MoEConfig(PretrainedConfig):
         self.num_experts = int(getattr(self, "num_experts", -1))
         self.expert_frequency = int(getattr(self, "expert_frequency", 2))
         self.router_top_k = int(getattr(self, "router_top_k", 2))
+        self.router_use_entmax = bool(getattr(self, "router_use_entmax", False))
+        self.router_entmax_alpha = float(getattr(self, "router_entmax_alpha", 1.5))
 
         legacy_use_low_rank_router = bool(getattr(self, "use_low_rank_router", False))
         self.use_cross_attention_router = bool(
@@ -414,6 +420,11 @@ class MoEConfig(PretrainedConfig):
         if self.num_experts > 0 and self.router_top_k > self.num_experts:
             raise ValueError(
                 f"`router_top_k` ({self.router_top_k}) cannot exceed `num_experts` ({self.num_experts})"
+            )
+        if self.router_use_entmax and not (1.0 < self.router_entmax_alpha <= 2.0):
+            raise ValueError(
+                f"`router_entmax_alpha` must be in (1, 2] when `router_use_entmax=True`, "
+                f"got {self.router_entmax_alpha}"
             )
 
         # Legacy params kept for checkpoint compatibility (unused by current simplified router):
