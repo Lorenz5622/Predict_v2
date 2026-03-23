@@ -290,12 +290,10 @@ class SwitchMLP(nn.Module):
                     )
                 )
 
-            self.router_top_k = int(getattr(config, "router_top_k", 2))
-            if self.router_top_k <= 0:
-                raise ValueError(f"router_top_k must be >= 1, got {self.router_top_k}")
-            if self.router_top_k > self.num_experts:
+            self.router_top_p = float(getattr(config, "top_p_threshold", 0.7))
+            if not (0.0 < self.router_top_p <= 1.0):
                 raise ValueError(
-                    f"router_top_k ({self.router_top_k}) cannot exceed num_experts ({self.num_experts})"
+                    f"top_p_threshold must be in (0, 1], got {self.router_top_p}"
                 )
 
             self.use_cross_attention_router = getattr(config, "use_cross_attention_router", True)
@@ -341,16 +339,16 @@ class SwitchMLP(nn.Module):
         if self.router_use_entmax:
             route_probs = entmax_bisect(router_logits.float(), alpha=self.router_entmax_alpha, dim=-1)
 
-        # 2) fixed top-k routing.
-        topk_weights, topk_ind = top_k_routing_batched_all_sequence(
+        # 2) top-p routing.
+        topk_weights, topk_ind = top_p_sampling_batched_all_sequence(
             route_probs,
-            self.router_top_k,
-        )  # both: (b, s, top_k)
+            self.router_top_p,
+        )  # both: (b, s, num_experts), masked indices are -1
 
         # 3) flatten tokens then sparse expert dispatch.
-        flat_hidden = hidden_states.reshape(-1, hidden_dim)              # (b*s, h)
-        flat_topk_weights = topk_weights.reshape(-1, self.router_top_k)  # (b*s, k)
-        flat_topk_ind = topk_ind.reshape(-1, self.router_top_k)          # (b*s, k)
+        flat_hidden = hidden_states.reshape(-1, hidden_dim)                  # (b*s, h)
+        flat_topk_weights = topk_weights.reshape(-1, topk_weights.size(-1))  # (b*s, num_experts)
+        flat_topk_ind = topk_ind.reshape(-1, topk_ind.size(-1))              # (b*s, num_experts)
 
         output_total = torch.zeros_like(flat_hidden)
         for expert_num, expert in enumerate(self.experts):
