@@ -1377,6 +1377,13 @@ def parse_args():
 
     ap.add_argument("--router_topk", type=int, default=0,
                     help="Fixed top-k routing for MoE. 0 disables and falls back to original top-p routing. सुझाव: 1 or 2.")
+    ap.add_argument(
+        "--share_router_expert_embedding",
+        type=int,
+        default=-1,
+        choices=[-1, 0, 1],
+        help="Set -1 to keep config value, 0 for per-layer expert embeddings, 1 for one global expert embedding shared across layers.",
+    )
     return ap.parse_args()
     
 
@@ -1406,6 +1413,8 @@ def main():
     # [ADD] pass fixed top-k routing into config (works even if MoEConfig doesn't define it explicitly)
     if hasattr(args, "router_topk"):
         config.router_topk = int(args.router_topk)
+    if int(getattr(args, "share_router_expert_embedding", -1)) >= 0:
+        config.share_router_expert_embedding = bool(args.share_router_expert_embedding)
     # <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
     # dtype
     use_fp16 = bool(args.fp16) and (device.type == "cuda") and (not bool(args.bf16))

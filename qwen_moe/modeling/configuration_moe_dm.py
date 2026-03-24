@@ -323,6 +323,8 @@ class MoEConfig(PretrainedConfig):
         expert_frequency=2,
         router_top_k: int = 2,
         use_cross_attention_router: bool = True,
+        router_dim=None,
+        share_router_expert_embedding: bool = False,
         router_use_entmax: bool = False,
         router_entmax_alpha: float = 1.7,
         router_top_p: float = 0.8,
@@ -364,6 +366,8 @@ class MoEConfig(PretrainedConfig):
         self.num_experts = int(num_experts)
         self.expert_frequency = int(expert_frequency)
         self.router_top_k = int(router_top_k)
+        self.router_dim = int(hidden_size if router_dim is None else router_dim)
+        self.share_router_expert_embedding = bool(share_router_expert_embedding)
         self.router_use_entmax = bool(router_use_entmax)
         self.router_entmax_alpha = float(router_entmax_alpha)
 
@@ -405,6 +409,8 @@ class MoEConfig(PretrainedConfig):
         self.num_experts = int(getattr(self, "num_experts", -1))
         self.expert_frequency = int(getattr(self, "expert_frequency", 2))
         self.router_top_k = int(getattr(self, "router_top_k", 2))
+        self.router_dim = int(getattr(self, "router_dim", self.hidden_size))
+        self.share_router_expert_embedding = bool(getattr(self, "share_router_expert_embedding", False))
         self.router_use_entmax = bool(getattr(self, "router_use_entmax", False))
         self.router_entmax_alpha = float(getattr(self, "router_entmax_alpha", 1.5))
 
@@ -417,6 +423,8 @@ class MoEConfig(PretrainedConfig):
             raise ValueError(f"`expert_frequency` must be >= 1, got {self.expert_frequency}")
         if self.router_top_k <= 0:
             raise ValueError(f"`router_top_k` must be >= 1, got {self.router_top_k}")
+        if self.router_dim <= 0:
+            raise ValueError(f"`router_dim` must be >= 1, got {self.router_dim}")
         if self.num_experts > 0 and self.router_top_k > self.num_experts:
             raise ValueError(
                 f"`router_top_k` ({self.router_top_k}) cannot exceed `num_experts` ({self.num_experts})"

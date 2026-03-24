@@ -185,6 +185,8 @@ def _enable_new_router_params_trainable(model: nn.Module) -> int:
         "router.query",
         "router.key",
         "router.value",
+        "router.expert_embed",
+        "shared_expert_embed",
         # Legacy (unused in current simplified router):
         # "router.q_proj", "expert_keys", "expert_values", "log_router_temperature",
         # "router_value_proj", "router_context_gate_proj",
@@ -611,6 +613,13 @@ def parse_args():
         default=None,
         help="Override config.router_entmax_alpha when provided.",
     )
+    ap.add_argument(
+        "--share_router_expert_embedding",
+        type=int,
+        default=-1,
+        choices=[-1, 0, 1],
+        help="Set -1 to keep config value, 0 for per-layer expert embeddings, 1 for one global expert embedding shared across layers.",
+    )
 
     ap.add_argument("--bbh_task", type=str, default="boolean_expressions")
     ap.add_argument("--winogrande_config", type=str, default="winogrande_xl")
@@ -657,6 +666,8 @@ def main():
         config.router_use_entmax = bool(args.router_use_entmax)
     if args.router_entmax_alpha is not None:
         config.router_entmax_alpha = float(args.router_entmax_alpha)
+    if int(args.share_router_expert_embedding) >= 0:
+        config.share_router_expert_embedding = bool(args.share_router_expert_embedding)
     if hasattr(config, "ensure_model_attributes"):
         config.ensure_model_attributes()
     if int(getattr(config, "router_top_k", 0)) <= 0:

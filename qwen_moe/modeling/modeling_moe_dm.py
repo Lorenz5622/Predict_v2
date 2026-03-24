@@ -239,35 +239,51 @@ def entmax_bisect(
 
 class CrossAttentionRouter(nn.Module):
     """
-    Simplified router: token-wise Q/K/V self-attention over expert dimension.
+    Router that scores experts by cross attention from token queries to learnable
+    expert embeddings.
 
     Input:
         hidden_states: (batch, seq, hidden)
     Output:
-        router_logits: (batch, seq, num_experts)
+        route_probs: (batch, seq, num_experts)
     """
 
-    def __init__(self, hidden_size: int, num_experts: int):
+    def __init__(self, hidden_size: int, num_experts: int, d_router: Optional[int] = None):
         super().__init__()
         self.hidden_size = int(hidden_size)
         self.num_experts = int(num_experts)
+        self.d_router = int(d_router if d_router is not None else hidden_size)
 
-        self.query = nn.Linear(self.hidden_size, self.num_experts, bias=False)
-        self.key = nn.Linear(self.hidden_size, self.num_experts, bias=False)
-        self.value = nn.Linear(self.hidden_size, self.num_experts, bias=False)
+        self.query = nn.Linear(self.hidden_size, self.d_router, bias=False)
+        self.key = nn.Linear(self.d_router, self.d_router, bias=False)
+        # Keep a value projection for QKV symmetry even though routing now uses
+        # attention weights directly as expert probabilities.
+        self.value = nn.Linear(self.d_router, self.d_router, bias=False)
+        self.expert_embed = nn.Parameter(torch.randn(self.num_experts, self.d_router))
+        self._shared_expert_embed_ref = None
+
+    def set_shared_expert_embed(self, expert_embed: nn.Parameter) -> None:
+        self.expert_embed = None
+        self._shared_expert_embed_ref = [expert_embed]
+
+    def get_expert_embed(self) -> torch.Tensor:
+        if self._shared_expert_embed_ref is not None:
+            return self._shared_expert_embed_ref[0]
+        if self.expert_embed is None:
+            raise RuntimeError("CrossAttentionRouter expert_embed is not initialized.")
+        return self.expert_embed
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
         # Keep router params in fp32 while allowing upstream hidden states in fp16/bf16.
         router_in = hidden_states.to(self.query.weight.dtype)
-        q = self.query(router_in).float()  # (b, s, e)
-        k = self.key(router_in).float()    # (b, s, e)
-        v = self.value(router_in).float()  # (b, s, e)
+        expert_embed = self.get_expert_embed().to(self.key.weight.dtype)
 
-        # Attention in expert space for each token.
-        attn_scores = torch.matmul(q.unsqueeze(-1), k.unsqueeze(-2))  # (b, s, e, e)
+        q = self.query(router_in).float()     # (b, s, d)
+        k = self.key(expert_embed).float()    # (e, d)
+
+        attn_scores = torch.matmul(q, k.transpose(0, 1)) / math.sqrt(self.d_router)  # (b, s, e)
         attn_weights = F.softmax(attn_scores, dim=-1)
-        router_logits = torch.matmul(attn_weights, v.unsqueeze(-1)).squeeze(-1)  # (b, s, e)
-        return router_logits
+        return attn_weights
 
 
 class SwitchMLP(nn.Module):
@@ -309,6 +325,7 @@ class SwitchMLP(nn.Module):
                 self.router = CrossAttentionRouter(
                     hidden_size=config.hidden_size,
                     num_experts=config.num_experts,
+                    d_router=getattr(config, "router_dim", config.hidden_size),
                 )
             else:
                 self.router = nn.Linear(
@@ -333,11 +350,14 @@ class SwitchMLP(nn.Module):
 
         bsz, seq_len, hidden_dim = hidden_states.size()
 
-        # 1) router logits -> route probabilities.
-        router_logits = self.router(hidden_states)
-        route_probs = F.softmax(router_logits, dim=-1, dtype=torch.float)
-        if self.router_use_entmax:
-            route_probs = entmax_bisect(router_logits.float(), alpha=self.router_entmax_alpha, dim=-1)
+        # 1) router output -> route probabilities.
+        if self.use_cross_attention_router:
+            route_probs = self.router(hidden_states).float()
+        else:
+            router_logits = self.router(hidden_states)
+            route_probs = F.softmax(router_logits, dim=-1, dtype=torch.float)
+            if self.router_use_entmax:
+                route_probs = entmax_bisect(router_logits.float(), alpha=self.router_entmax_alpha, dim=-1)
 
         # 2) top-p routing.
         topk_weights, topk_ind = top_p_sampling_batched_all_sequence(
@@ -655,7 +675,26 @@ class MoEModel(MoEPreTrainedModel):
         self.vocab_size = config.vocab_size
 
         self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size, self.padding_idx)
+        self.shared_expert_embed = None
+        print(f"share_router_expert_embedding: {getattr(config, 'share_router_expert_embedding', False)}")
+        if (
+            bool(getattr(config, "share_router_expert_embedding", False))
+            and bool(getattr(config, "use_cross_attention_router", True))
+            and int(getattr(config, "num_experts", 0)) > 0
+        ):
+            d_router = int(getattr(config, "router_dim", config.hidden_size))
+            self.shared_expert_embed = nn.Parameter(torch.randn(config.num_experts, d_router))
+
         self.layers = nn.ModuleList([LlamaDecoderLayer(config, layer_idx) for layer_idx in range(config.num_hidden_layers)])
+        if self.shared_expert_embed is not None:
+            for layer in self.layers:
+                mlp = getattr(layer, "mlp", None)
+                if not getattr(mlp, "use_switch", False):
+                    continue
+                if not getattr(mlp, "use_cross_attention_router", False):
+                    continue
+                mlp.router.set_shared_expert_embed(self.shared_expert_embed)
+
         self.norm = LlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
 
         self.gradient_checkpointing = False
