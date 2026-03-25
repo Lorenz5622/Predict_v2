@@ -154,36 +154,81 @@ class LlamaMLP(nn.Module):
     def forward(self, x):
         return self.down_proj(self.act_fn(self.gate_proj(x)) * self.up_proj(x))
 
-def top_p_sampling_batched_all_sequence(logits, top_p=0.9, temperature=1.0):
-    """
-    Apply Top-p sampling to every element in the sequence for each item in the batch.
-    Returns the selected token indices and the corresponding threshold indices.
+# def top_p_sampling_batched_all_sequence(logits, top_p=0.9, temperature=1.0):
+#     """
+#     Apply Top-p sampling to every element in the sequence for each item in the batch.
+#     Returns the selected token indices and the corresponding threshold indices.
     
-    :param logits: Logits from a language model with shape (sequence length, batch size, L)
-    :param top_p: Cumulative probability threshold (float)
-    :param temperature: Sampling temperature (float)
-    :return: Tuple of tensors (selected token indices, threshold indices) for each position in each sequence in the batch
-    """
-    # Apply temperature
-    logits = logits / temperature
+#     :param logits: Logits from a language model with shape (sequence length, batch size, L)
+#     :param top_p: Cumulative probability threshold (float)
+#     :param temperature: Sampling temperature (float)
+#     :return: Tuple of tensors (selected token indices, threshold indices) for each position in each sequence in the batch
+#     """
+#     # Apply temperature
+#     logits = logits / temperature
     
-    # Convert logits to probabilities
-    # probabilities = torch.softmax(logits, dim=-1)
-    # Sort probabilities and their indices in descending order
-    sorted_probs, sorted_indices = torch.sort(logits, descending=True)
+#     # Convert logits to probabilities
+#     # probabilities = torch.softmax(logits, dim=-1)
+#     # Sort probabilities and their indices in descending order
+#     sorted_probs, sorted_indices = torch.sort(logits, descending=True)
+#     # print(f"Sorted probabilities: {sorted_probs}")
+#     # print(f"top_p: {top_p}")
+#     # Compute cumulative probabilities
+#     cumulative_probs = torch.cumsum(sorted_probs, dim=-1)
+#     mask = cumulative_probs > top_p
 
-    # Compute cumulative probabilities
+#     # Find the threshold indices
+#     threshold_indices = mask.long().argmax(dim=-1)
+#     threshold_mask = torch.nn.functional.one_hot(threshold_indices, num_classes=sorted_indices.size(-1)).bool()
+    
+#     mask = mask & ~threshold_mask
+#     sorted_indices = torch.where(mask, -1, sorted_indices)
+#     sorted_probs = torch.where(mask, 0.0, sorted_probs)   
+
+#     denom = sorted_probs.sum(dim=-1, keepdim=True).clamp_min(1e-9)
+#     sorted_probs = sorted_probs / denom
+
+#     return sorted_probs, sorted_indices
+
+def top_p_sampling_batched_all_sequence(probs, top_p=0.9, temperature=1.0, eps=1e-9):
+    """
+    probs: (..., num_experts)
+    返回:
+        selected_probs:  形状同 probs，未选中的位置为 0，选中的位置重新归一化后和为 1
+        selected_indices:形状同 probs，未选中的位置为 -1
+    """
+    # 如果输入已经是概率分布（你当前就是 route_probs），一般不建议再除 temperature。
+    # 如果你后面想支持 logits，再单独在外面处理。
+    probs = probs.float()
+    # probs = torch.nan_to_num(probs, nan=0.0, posinf=0.0, neginf=0.0)
+    # probs = probs.clamp_min(0.0)
+    # probs_sum = probs.sum(dim=-1, keepdim=True)
+    # uniform_probs = torch.full_like(probs, 1.0 / probs.size(-1))
+    # probs = torch.where(probs_sum > eps, probs / probs_sum.clamp_min(eps), uniform_probs)
+
+    # 按概率从大到小排序
+    sorted_probs, sorted_indices = torch.sort(probs, dim=-1, descending=True)
+    # print(f"sorted_probs: {sorted_probs}")
+    # 计算 cumulative sum，保留使累计概率刚超过 top_p 的那个专家
     cumulative_probs = torch.cumsum(sorted_probs, dim=-1)
     mask = cumulative_probs > top_p
 
-    # Find the threshold indices
     threshold_indices = mask.long().argmax(dim=-1)
-    threshold_mask = torch.nn.functional.one_hot(threshold_indices, num_classes=sorted_indices.size(-1)).bool()
-    
+    threshold_mask = torch.nn.functional.one_hot(
+        threshold_indices, num_classes=sorted_indices.size(-1)
+    ).bool()
+
+    # 超过 top_p 的去掉，但第一次超过阈值的那个保留
     mask = mask & ~threshold_mask
-    sorted_indices = torch.where(mask, -1, sorted_indices)
-    sorted_probs = torch.where(mask, 0.0, sorted_probs)   
-    return sorted_probs, sorted_indices
+
+    selected_indices = torch.where(mask, -1, sorted_indices)
+    selected_probs = torch.where(mask, 0.0, sorted_probs)
+
+    # 关键：对保留下来的专家权重重新归一化到 1
+    denom = selected_probs.sum(dim=-1, keepdim=True).clamp_min(eps)
+    selected_probs = selected_probs / denom
+
+    return selected_probs, selected_indices
 
 def top_k_routing_batched_all_sequence(probs, top_k: int):
     """
@@ -248,12 +293,12 @@ class CrossAttentionRouter(nn.Module):
         route_probs: (batch, seq, num_experts)
     """
 
-    def __init__(self, hidden_size: int, num_experts: int, d_router: Optional[int] = None):
+    def __init__(self, hidden_size: int, num_experts: int, d_router: Optional[int] = None, alpha: float = 1.5):
         super().__init__()
         self.hidden_size = int(hidden_size)
         self.num_experts = int(num_experts)
         self.d_router = int(d_router if d_router is not None else hidden_size)
-
+        self.alpha = alpha
         self.query = nn.Linear(self.hidden_size, self.d_router, bias=False)
         self.key = nn.Linear(self.d_router, self.d_router, bias=False)
         # Keep a value projection for QKV symmetry even though routing now uses
@@ -277,13 +322,36 @@ class CrossAttentionRouter(nn.Module):
         # Keep router params in fp32 while allowing upstream hidden states in fp16/bf16.
         router_in = hidden_states.to(self.query.weight.dtype)
         expert_embed = self.get_expert_embed().to(self.key.weight.dtype)
+        # print(f"hidden_states finite: {torch.isfinite(hidden_states).all().item()}")
+        # print(f"router_in finite    : {torch.isfinite(router_in).all().item()}")
+        # print(f"expert_embed finite : {torch.isfinite(expert_embed).all().item()}")
+        # print(f"query.weight finite : {torch.isfinite(self.query.weight).all().item()}")
+        # print(f"key.weight finite   : {torch.isfinite(self.key.weight).all().item()}")
+        # print(f"value.weight finite : {torch.isfinite(self.value.weight).all().item()}")
 
-        q = self.query(router_in).float()     # (b, s, d)
-        k = self.key(expert_embed).float()    # (e, d)
+        q = self.query(router_in).float()      # (b, s, d)
+        k = self.key(expert_embed).float()     # (e, d)
+        v = self.value(expert_embed).float()   # (e, d)
+        # print(f"q finite            : {torch.isfinite(q).all().item()}")
+        # print(f"k finite            : {torch.isfinite(k).all().item()}")
+        # print(f"v finite            : {torch.isfinite(v).all().item()}")
 
         attn_scores = torch.matmul(q, k.transpose(0, 1)) / math.sqrt(self.d_router)  # (b, s, e)
-        attn_weights = F.softmax(attn_scores, dim=-1)
-        return attn_weights
+        # print(f"attn_scores has nan : {torch.isnan(attn_scores).any()}")
+        # attn_scores = torch.nan_to_num(attn_scores, nan=0.0, posinf=1e4, neginf=-1e4)
+        attn_weights = entmax_bisect(attn_scores, alpha=self.alpha, dim=-1)
+        # print(f"attn_weights has nan: {torch.isnan(attn_weights).any()}")
+        # attn_weights = torch.nan_to_num(attn_weights, nan=0.0, posinf=1.0, neginf=0.0)
+        attn_output = torch.matmul(attn_weights, v)  # (b, s, d)
+        # print(f"attn_output has nan: {torch.isnan(attn_output).any()}")
+        # attn_output = torch.nan_to_num(attn_output, nan=0.0, posinf=1e4, neginf=-1e4)
+
+        # Map the attended router state back to expert space so downstream routing
+        # continues to receive per-expert probabilities.
+        route_scores = torch.matmul(attn_output, v.transpose(0, 1)) / math.sqrt(self.d_router)  # (b, s, e)
+        # print(f"route_scores has nan: {torch.isnan(route_scores).any()}")
+        # route_scores = torch.nan_to_num(route_scores, nan=0.0, posinf=1e4, neginf=-1e4)
+        return F.softmax(route_scores, dim=-1, dtype=torch.float32)
 
 
 class SwitchMLP(nn.Module):
@@ -293,6 +361,7 @@ class SwitchMLP(nn.Module):
         super(SwitchMLP, self).__init__()
         self.layer_num = layer_idx
         self.use_switch = (layer_idx % config.expert_frequency) == 0
+        self.last_top_p_active_expert_count = 0
 
         if self.use_switch:
             self.experts = nn.ModuleList()
@@ -326,6 +395,7 @@ class SwitchMLP(nn.Module):
                     hidden_size=config.hidden_size,
                     num_experts=config.num_experts,
                     d_router=getattr(config, "router_dim", config.hidden_size),
+                    alpha=self.router_entmax_alpha,
                 )
             else:
                 self.router = nn.Linear(
@@ -353,6 +423,12 @@ class SwitchMLP(nn.Module):
         # 1) router output -> route probabilities.
         if self.use_cross_attention_router:
             route_probs = self.router(hidden_states).float()
+            # print(f"route_probs finite: {torch.isfinite(route_probs).all().item()}")
+            # print(f"route_probs min/max: {route_probs.min().item()} / {route_probs.max().item()}")
+            # print(
+            #     f"route_probs sum min/max: {route_probs.sum(dim=-1).min().item()} / "
+            #     f"{route_probs.sum(dim=-1).max().item()}"
+            # )
         else:
             router_logits = self.router(hidden_states)
             route_probs = F.softmax(router_logits, dim=-1, dtype=torch.float)
@@ -364,6 +440,19 @@ class SwitchMLP(nn.Module):
             route_probs,
             self.router_top_p,
         )  # both: (b, s, num_experts), masked indices are -1
+        # print(f"topk_weights finite: {torch.isfinite(topk_weights).all().item()}")
+        # print(f"topk_weights min/max: {topk_weights.min().item()} / {topk_weights.max().item()}")
+        # print(
+        #     f"topk_weights sum min/max: {topk_weights.sum(dim=-1).min().item()} / "
+        #     f"{topk_weights.sum(dim=-1).max().item()}"
+        # )
+        selected_expert_count_per_token = (topk_ind >= 0).sum(dim=-1)  # (b, s)
+        self.last_top_p_avg_expert_count = selected_expert_count_per_token.float().mean().item()
+        # print(
+        #     f"Layer {self.layer_num} avg selected experts per token: "
+        #     f"{self.last_top_p_avg_expert_count:.4f}"
+        # )
+
 
         # 3) flatten tokens then sparse expert dispatch.
         flat_hidden = hidden_states.reshape(-1, hidden_dim)                  # (b*s, h)
@@ -384,6 +473,7 @@ class SwitchMLP(nn.Module):
             output_total[token_idx] += expert_output * expert_weight
 
         output_total = output_total.view(bsz, seq_len, hidden_dim)
+        # print(f"switch output finite: {torch.isfinite(output_total).all().item()}")
         return output_total
 
 class LlamaAttention(nn.Module):
@@ -512,10 +602,12 @@ class LlamaDecoderLayer(nn.Module):
                 (see `past_key_values`).
             past_key_value (`Tuple(torch.FloatTensor)`, *optional*): cached past key and value projection states
         """
+        # print(f"decoder hidden_states in finite      : {torch.isfinite(hidden_states).all().item()}")
         residual = hidden_states
 
         # hidden_states = self.input_layernorm(hidden_states)
         hidden_states = self.input_norm(hidden_states)
+        # print(f"after input_norm finite             : {torch.isfinite(hidden_states).all().item()}")
 
 
         # Self Attention
@@ -527,12 +619,15 @@ class LlamaDecoderLayer(nn.Module):
             output_attentions=output_attentions,
             use_cache=use_cache,
         )
+        # print(f"self_attn output finite             : {torch.isfinite(hidden_states).all().item()}")
         hidden_states = residual + hidden_states
+        # print(f"after attn residual add finite      : {torch.isfinite(hidden_states).all().item()}")
 
         # Fully Connected
         residual = hidden_states
         # hidden_states = self.post_attention_layernorm(hidden_states)
         hidden_states = self.post_attention_norm(hidden_states)
+        # print(f"after post_attention_norm finite    : {torch.isfinite(hidden_states).all().item()}")
         hidden_states = self.mlp(hidden_states)
         hidden_states = residual + hidden_states
 
@@ -778,6 +873,7 @@ class MoEModel(MoEPreTrainedModel):
 
         if inputs_embeds is None:
             inputs_embeds = self.embed_tokens(input_ids)
+        # print(f"inputs_embeds finite                 : {torch.isfinite(inputs_embeds).all().item()}")
         # embed positions
         if attention_mask is None:
             attention_mask = torch.ones(
@@ -788,6 +884,7 @@ class MoEModel(MoEPreTrainedModel):
         )
 
         hidden_states = inputs_embeds
+        # print(f"hidden_states before layers finite   : {torch.isfinite(hidden_states).all().item()}")
 
         if self.gradient_checkpointing and self.training:
             if use_cache:
@@ -802,6 +899,7 @@ class MoEModel(MoEPreTrainedModel):
         next_decoder_cache = () if use_cache else None
 
         for idx, decoder_layer in enumerate(self.layers):
+            # print(f"layer {idx} input finite             : {torch.isfinite(hidden_states).all().item()}")
             if output_hidden_states:
                 all_hidden_states += (hidden_states,)
 
@@ -834,6 +932,7 @@ class MoEModel(MoEPreTrainedModel):
                 )
 
             hidden_states = layer_outputs[0]
+            # print(f"layer {idx} output finite            : {torch.isfinite(hidden_states).all().item()}")
 
             if use_cache:
                 next_decoder_cache += (layer_outputs[2 if output_attentions else 1],)

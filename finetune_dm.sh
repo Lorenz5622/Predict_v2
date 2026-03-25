@@ -86,21 +86,21 @@ run_one () {
 
 run_one "piqa" torchrun --nproc_per_node 2 finetune_dynamic_moe.py \
   --model_path "$MODEL_PATH" \
-  --output_dir "$OUT_ROOT/out_piqa_each_embedding" \
+  --output_dir "$OUT_ROOT/out_piqa_entmax_17_each_embedding" \
   --dataset piqa --eval_dataset piqa \
   --train_split train --eval_split validation \
-  --block_size "$BLOCK_SIZE" --batch_size "$BATCH_SIZE" --grad_accum "$GRAD_ACCUM" --epochs 3 \
+  --block_size "$BLOCK_SIZE" --batch_size "$BATCH_SIZE" --grad_accum "$GRAD_ACCUM" --epochs 2 \
   --lr "$LR" --lora_r "$LORA_R" --lora_alpha "$LORA_ALPHA" --lora_dropout "$LORA_DROPOUT" \
   --num_proc "$NUM_PROC" --load_in_8bit 0 --load_in_fp16 1 --bf16 0 --train_extra_params_in_fp32 1 \
-  --router_use_entmax 0 --share_router_expert_embedding  1
+  --router_use_entmax 0 --share_router_expert_embedding  0 --router_entmax_alpha 1.7
 
 run_one "piqa" torchrun --nproc_per_node 2 finetune_dynamic_moe.py \
   --model_path "$MODEL_PATH" \
-  --output_dir "$OUT_ROOT/out_piqa_entmax_shared_embedding" \
+  --output_dir "$OUT_ROOT/out_piqa_entmax_17_shared_embedding" \
   --dataset piqa --eval_dataset piqa \
   --train_split train --eval_split validation \
-  --block_size "$BLOCK_SIZE" --batch_size "$BATCH_SIZE" --grad_accum "$GRAD_ACCUM" --epochs 3 \
+  --block_size "$BLOCK_SIZE" --batch_size "$BATCH_SIZE" --grad_accum "$GRAD_ACCUM" --epochs 2 \
   --lr "$LR" --lora_r "$LORA_R" --lora_alpha "$LORA_ALPHA" --lora_dropout "$LORA_DROPOUT" \
   --num_proc "$NUM_PROC" --load_in_8bit 0 --load_in_fp16 1 --bf16 0 --train_extra_params_in_fp32 1 \
-  --router_use_entmax 0 --share_router_expert_embedding  0
+  --router_use_entmax 0 --share_router_expert_embedding  1 --router_entmax_alpha 1.7
 echo "ALL DONE ✅  $(date)"

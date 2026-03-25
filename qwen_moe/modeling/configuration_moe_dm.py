@@ -327,7 +327,7 @@ class MoEConfig(PretrainedConfig):
         share_router_expert_embedding: bool = False,
         router_use_entmax: bool = False,
         router_entmax_alpha: float = 1.7,
-        router_top_p: float = 0.8,
+        router_top_p: float = 0.4,
         # -------- legacy router params (unused by current simplified router) --------
         # These are intentionally kept as comments for backward compatibility context.
         # experts_topk=2,

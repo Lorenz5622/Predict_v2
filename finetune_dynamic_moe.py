@@ -17,9 +17,12 @@ from __future__ import annotations
 import argparse
 import inspect
 import json
+import math
 import os
+import time
+from collections import deque
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Set
 
 import torch
 import torch.distributed as dist
@@ -28,12 +31,16 @@ from datasets import concatenate_datasets
 from peft import LoraConfig, TaskType, get_peft_model, prepare_model_for_kbit_training
 from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
+from tqdm.auto import tqdm
 from transformers import AutoTokenizer, BitsAndBytesConfig
 
 from finetune import (
     LMDataCollator,
+    build_optimizer,
     cleanup_distributed,
+    evaluate,
     is_main_process,
+    is_quantized_model,
     load_and_pack_arc_challenge_ppl_opencompass,
     load_and_pack_arc_easy_ppl_opencompass,
     load_and_pack_bbh_ppl_opencompass,
@@ -45,7 +52,6 @@ from finetune import (
     load_and_pack_siqa_ppl_opencompass,
     load_and_pack_winogrande_ppl_opencompass,
     set_seed,
-    train,
 )
 
 
@@ -141,10 +147,23 @@ def _init_cross_attention_router_from_legacy_dense(
     legacy_sd: Dict[str, torch.Tensor],
     config,
 ) -> int:
-    """Initialize simplified router(query/key/value) from legacy dense router weight."""
+    """
+    Initialize cross-attention router from legacy dense router weight.
+
+    Rules:
+    - query: partial copy from legacy dense router weight
+    - expert_embed/shared_expert_embed: standalone random init
+    - key/value: small-variance random init
+    """
     num_inited = 0
+    base_std = float(getattr(config, "initializer_range", 0.02))
+    kv_std = base_std * 0.1
 
     with torch.no_grad():
+        shared_expert_embed = getattr(model.model, "shared_expert_embed", None)
+        if shared_expert_embed is not None:
+            shared_expert_embed.normal_(mean=0.0, std=base_std)
+
         for layer_idx, layer in enumerate(model.model.layers):
             mlp = layer.mlp
             if not getattr(mlp, "use_switch", False):
@@ -164,16 +183,24 @@ def _init_cross_attention_router_from_legacy_dense(
                 continue
 
             dense_w = dense_w.float()
-            for proj_name in ("query", "key", "value"):
-                proj = getattr(router, proj_name)
-                if not hasattr(proj, "weight"):
-                    continue
-                proj.weight.zero_()
-                rows = min(proj.weight.shape[0], dense_w.shape[0])
-                cols = min(proj.weight.shape[1], dense_w.shape[1])
-                proj.weight[:rows, :cols].copy_(
-                    dense_w[:rows, :cols].to(dtype=proj.weight.dtype, device=proj.weight.device)
+
+            query = getattr(router, "query", None)
+            if query is not None and hasattr(query, "weight"):
+                query.weight.zero_()
+                rows = min(query.weight.shape[0], dense_w.shape[0])
+                cols = min(query.weight.shape[1], dense_w.shape[1])
+                query.weight[:rows, :cols].copy_(
+                    dense_w[:rows, :cols].to(dtype=query.weight.dtype, device=query.weight.device)
                 )
+
+            for proj_name in ("key", "value"):
+                proj = getattr(router, proj_name, None)
+                if proj is None or not hasattr(proj, "weight"):
+                    continue
+                proj.weight.normal_(mean=0.0, std=kv_std)
+
+            if getattr(router, "_shared_expert_embed_ref", None) is None and getattr(router, "expert_embed", None) is not None:
+                router.expert_embed.normal_(mean=0.0, std=base_std)
 
             num_inited += 1
 
@@ -260,6 +287,226 @@ def apply_lora(
         target_modules=target_modules,
     )
     return get_peft_model(model, lora_cfg)
+
+
+def train(
+    model: nn.Module,
+    train_dl: DataLoader,
+    eval_dl: Optional[DataLoader],
+    run_args: argparse.Namespace,
+    device: torch.device,
+    output_dir: str,
+    epochs: int,
+    lr: float,
+    weight_decay: float,
+    warmup_ratio: float,
+    grad_accum: int,
+    max_grad_norm: float,
+    fp16: bool,
+    bf16: bool,
+    use_bnb_8bit: bool,
+    log_every: int,
+    eval_every: int,
+    save_every: int,
+):
+    os.makedirs(output_dir, exist_ok=True)
+
+    optimizer = build_optimizer(model, lr=lr, weight_decay=weight_decay, use_bnb_8bit=use_bnb_8bit)
+
+    steps_per_epoch = math.ceil(len(train_dl) / max(1, grad_accum))
+    total_optim_steps = steps_per_epoch * epochs
+    warmup_steps = int(total_optim_steps * warmup_ratio)
+
+    pbar = tqdm(
+        total=total_optim_steps,
+        disable=not is_main_process(),
+        dynamic_ncols=True,
+        desc="train",
+    )
+
+    def lr_lambda(step: int):
+        if step < warmup_steps:
+            return float(step) / float(max(1, warmup_steps))
+        return 1.0
+
+    scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_lambda)
+
+    scaler = torch.cuda.amp.GradScaler(enabled=(fp16 and device.type == "cuda"))
+
+    model.train()
+
+    global_step = 0
+    optim_step = 0
+    t0 = time.time()
+
+    metrics_f = None
+    ma_win = 50
+    ma_loss_buf = deque(maxlen=ma_win)
+    ma_loss_sum = 0.0
+    ema_loss = None
+    ema_momentum = 0.98
+
+    if is_main_process():
+        records_dir = Path(__file__).resolve().parent / "records"
+        records_dir.mkdir(parents=True, exist_ok=True)
+        run_ts = time.strftime("%Y%m%d_%H%M%S", time.localtime())
+        metrics_path = records_dir / f"{run_ts}.tsv"
+        metrics_f = open(metrics_path, "w", encoding="utf-8")
+        metrics_f.write(f"# run_started_at\t{run_ts}\n")
+        for key, value in sorted(vars(run_args).items()):
+            metrics_f.write("\t".join([
+                "# arg",
+                key,
+                json.dumps(value, ensure_ascii=False, default=str),
+            ]) + "\n")
+        metrics_f.write("\t".join([
+            "time", "epoch", "global_step", "optim_step", "lr",
+            "loss", f"loss_ma{ma_win}", "loss_ema",
+        ]) + "\n")
+        metrics_f.flush()
+
+    amp_dtype = torch.float16 if fp16 else (torch.bfloat16 if bf16 else None)
+
+    for epoch in range(epochs):
+        if isinstance(train_dl.sampler, DistributedSampler):
+            train_dl.sampler.set_epoch(epoch)
+
+        it = enumerate(train_dl)
+        if is_main_process():
+            it = tqdm(it, total=len(train_dl), desc=f"epoch {epoch+1}/{epochs}", dynamic_ncols=True)
+
+        for step, batch in it:
+            batch = {k: v.to(device, non_blocking=True) for k, v in batch.items()}
+
+            if amp_dtype is not None and device.type == "cuda":
+                with torch.autocast(device_type="cuda", dtype=amp_dtype):
+                    out = model(**batch)
+                    loss = out.loss / max(1, grad_accum)
+            else:
+                out = model(**batch)
+                loss = out.loss / max(1, grad_accum)
+
+            if scaler.is_enabled():
+                scaler.scale(loss).backward()
+            else:
+                loss.backward()
+
+            global_step += 1
+
+            if global_step % grad_accum == 0:
+                if max_grad_norm > 0:
+                    if scaler.is_enabled():
+                        scaler.unscale_(optimizer)
+                    nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
+
+                if scaler.is_enabled():
+                    scaler.step(optimizer)
+                    scaler.update()
+                else:
+                    optimizer.step()
+
+                optimizer.zero_grad(set_to_none=True)
+                scheduler.step()
+                optim_step += 1
+
+                loss_real = float(loss.detach().float().item() * grad_accum)
+
+                if len(ma_loss_buf) == ma_loss_buf.maxlen:
+                    ma_loss_sum -= ma_loss_buf[0]
+                ma_loss_buf.append(loss_real)
+                ma_loss_sum += loss_real
+                loss_ma = ma_loss_sum / max(1, len(ma_loss_buf))
+
+                if ema_loss is None:
+                    ema_loss = loss_real
+                else:
+                    ema_loss = ema_momentum * ema_loss + (1.0 - ema_momentum) * loss_real
+
+                if is_main_process() and (optim_step % log_every == 0):
+                    cur_lr = scheduler.get_last_lr()[0]
+
+                    if hasattr(it, "set_postfix"):
+                        it.set_postfix({
+                            "loss": f"{loss_real:.4f}",
+                            f"ma{ma_win}": f"{loss_ma:.4f}",
+                            "ema": f"{ema_loss:.4f}",
+                            "lr": f"{cur_lr:.2e}",
+                        }, refresh=False)
+
+                    if metrics_f is not None:
+                        metrics_f.write("\t".join([
+                            f"{time.time():.3f}",
+                            str(epoch),
+                            str(global_step),
+                            str(optim_step),
+                            f"{cur_lr:.6e}",
+                            f"{loss_real:.6f}",
+                            f"{loss_ma:.6f}",
+                            f"{ema_loss:.6f}",
+                        ]) + "\n")
+                        metrics_f.flush()
+
+                pbar.update(1)
+                pbar.set_postfix({
+                    "loss": f"{(loss.detach().float().item() * grad_accum):.4f}",
+                    "lr": f"{scheduler.get_last_lr()[0]:.3e}",
+                }, refresh=False)
+
+                if is_main_process() and (optim_step % log_every == 0):
+                    cur_lr = scheduler.get_last_lr()[0]
+                    elapsed = time.time() - t0
+                    print(
+                        f"[train] epoch={epoch+1}/{epochs} step={optim_step}/{total_optim_steps} "
+                        f"loss={loss.detach().float().item() * grad_accum:.4f} lr={cur_lr:.3e} "
+                        f"elapsed={elapsed/60:.1f}m"
+                    )
+
+                if eval_dl is not None and (optim_step % eval_every == 0):
+                    ev = evaluate(model, eval_dl, device, fp16=fp16, bf16=bf16)
+                    if is_main_process():
+                        print(f"[eval] step={optim_step} loss={ev:.4f} ppl={math.exp(min(20, ev)):.2f}")
+
+                if False and save_every > 0 and (optim_step % save_every == 0) and is_main_process():
+                    save_dir = os.path.join(output_dir, f"checkpoint-{optim_step}")
+                    os.makedirs(save_dir, exist_ok=True)
+                    model.save_pretrained(save_dir)
+                    print(f"[save] {save_dir}")
+
+    pbar.close()
+    if is_main_process() and metrics_f is not None:
+        metrics_f.close()
+
+    if is_main_process():
+        model_to_save = model.module if hasattr(model, "module") else model
+        was_quantized = is_quantized_model(model_to_save)
+        try:
+            merged = model_to_save.merge_and_unload()
+        except Exception as e:
+            raise RuntimeError(
+                "Failed to merge LoRA adapters into the base model. "
+                "Your PEFT model may not support merge_and_unload()."
+            ) from e
+
+        if was_quantized and hasattr(merged, "dequantize"):
+            print("[save] trying to dequantize merged model before export")
+            maybe_dequantized = merged.dequantize()
+            if maybe_dequantized is not None:
+                merged = maybe_dequantized
+
+        state_dict = merged.state_dict()
+        for k, v in list(state_dict.items()):
+            if torch.is_floating_point(v) and v.dtype != torch.float32:
+                state_dict[k] = v.to(torch.float32)
+
+        if was_quantized:
+            for attr_name in ("is_loaded_in_8bit", "is_loaded_in_4bit", "quantization_method"):
+                if hasattr(merged, attr_name):
+                    setattr(merged, attr_name, False if attr_name != "quantization_method" else None)
+            print(f"[save] merged + dequantized + fp32 full model -> {output_dir}")
+        else:
+            print(f"[save] merged + fp32 full model -> {output_dir}")
+
+        merged.save_pretrained(output_dir, state_dict=state_dict, safe_serialization=True)
 
 
 def _patch_safe_initialize_missing_keys(model_cls):
@@ -778,6 +1025,7 @@ def main():
         model=model,
         train_dl=train_dl,
         eval_dl=eval_dl,
+        run_args=args,
         device=device,
         output_dir=args.output_dir,
         epochs=args.epochs,
