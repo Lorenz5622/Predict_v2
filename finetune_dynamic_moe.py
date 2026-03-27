@@ -361,7 +361,7 @@ def train(
             ]) + "\n")
         metrics_f.write("\t".join([
             "time", "epoch", "global_step", "optim_step", "lr",
-            "loss", f"loss_ma{ma_win}", "loss_ema",
+            "loss", "loss_ce", "loss_aux", "loss_z", f"loss_ma{ma_win}", "loss_ema",
         ]) + "\n")
         metrics_f.flush()
 
@@ -381,10 +381,32 @@ def train(
             if amp_dtype is not None and device.type == "cuda":
                 with torch.autocast(device_type="cuda", dtype=amp_dtype):
                     out = model(**batch)
-                    loss = out.loss / max(1, grad_accum)
+                    raw_loss = out.loss
             else:
                 out = model(**batch)
-                loss = out.loss / max(1, grad_accum)
+                raw_loss = out.loss
+
+            model_for_aux = model.module if hasattr(model, "module") else model
+            base_model = model_for_aux.get_base_model() if hasattr(model_for_aux, "get_base_model") else model_for_aux
+            moe_model = getattr(base_model, "model", None)
+            aux_loss = getattr(moe_model, "last_router_aux_loss", None)
+            if aux_loss is None:
+                aux_loss = raw_loss.new_zeros(())
+            else:
+                aux_loss = aux_loss.to(device=raw_loss.device, dtype=raw_loss.dtype)
+            z_loss = getattr(moe_model, "last_router_z_loss", None)
+            if z_loss is None:
+                z_loss = raw_loss.new_zeros(())
+            else:
+                z_loss = z_loss.to(device=raw_loss.device, dtype=raw_loss.dtype)
+
+            ce_loss = raw_loss - aux_loss - z_loss
+            total_loss = (
+                ce_loss
+                + float(run_args.router_aux_loss_coef) * aux_loss
+                + float(run_args.router_z_loss_coef) * z_loss
+            )
+            loss = total_loss / max(1, grad_accum)
 
             if scaler.is_enabled():
                 scaler.scale(loss).backward()
@@ -409,7 +431,10 @@ def train(
                 scheduler.step()
                 optim_step += 1
 
-                loss_real = float(loss.detach().float().item() * grad_accum)
+                loss_real = float(total_loss.detach().float().item())
+                ce_loss_real = float(ce_loss.detach().float().item())
+                aux_loss_real = float(aux_loss.detach().float().item())
+                z_loss_real = float(z_loss.detach().float().item())
 
                 if len(ma_loss_buf) == ma_loss_buf.maxlen:
                     ma_loss_sum -= ma_loss_buf[0]
@@ -428,6 +453,9 @@ def train(
                     if hasattr(it, "set_postfix"):
                         it.set_postfix({
                             "loss": f"{loss_real:.4f}",
+                            "ce": f"{ce_loss_real:.4f}",
+                            "aux": f"{aux_loss_real:.4f}",
+                            "z": f"{z_loss_real:.4f}",
                             f"ma{ma_win}": f"{loss_ma:.4f}",
                             "ema": f"{ema_loss:.4f}",
                             "lr": f"{cur_lr:.2e}",
@@ -441,6 +469,9 @@ def train(
                             str(optim_step),
                             f"{cur_lr:.6e}",
                             f"{loss_real:.6f}",
+                            f"{ce_loss_real:.6f}",
+                            f"{aux_loss_real:.6f}",
+                            f"{z_loss_real:.6f}",
                             f"{loss_ma:.6f}",
                             f"{ema_loss:.6f}",
                         ]) + "\n")
@@ -448,7 +479,10 @@ def train(
 
                 pbar.update(1)
                 pbar.set_postfix({
-                    "loss": f"{(loss.detach().float().item() * grad_accum):.4f}",
+                    "loss": f"{loss_real:.4f}",
+                    "ce": f"{ce_loss_real:.4f}",
+                    "aux": f"{aux_loss_real:.4f}",
+                    "z": f"{z_loss_real:.4f}",
                     "lr": f"{scheduler.get_last_lr()[0]:.3e}",
                 }, refresh=False)
 
@@ -457,8 +491,8 @@ def train(
                     elapsed = time.time() - t0
                     print(
                         f"[train] epoch={epoch+1}/{epochs} step={optim_step}/{total_optim_steps} "
-                        f"loss={loss.detach().float().item() * grad_accum:.4f} lr={cur_lr:.3e} "
-                        f"elapsed={elapsed/60:.1f}m"
+                        f"loss={loss_real:.4f} ce={ce_loss_real:.4f} aux={aux_loss_real:.4f} z={z_loss_real:.4f} "
+                        f"lr={cur_lr:.3e} elapsed={elapsed/60:.1f}m"
                     )
 
                 if eval_dl is not None and (optim_step % eval_every == 0):
@@ -828,6 +862,18 @@ def parse_args():
     ap.add_argument("--lora_dropout", type=float, default=0.05)
     ap.add_argument("--lora_target_modules", type=str, default="")
     ap.add_argument("--train_new_router_params", type=int, default=1)
+    ap.add_argument(
+        "--router_aux_loss_coef",
+        type=float,
+        default=1.0,
+        help="Coefficient for router balancing aux loss.",
+    )
+    ap.add_argument(
+        "--router_z_loss_coef",
+        type=float,
+        default=1e-3,
+        help="Coefficient for router z-loss on the cross-attention router branch.",
+    )
 
     ap.add_argument("--use_bnb_8bit", type=int, default=0)
     ap.add_argument("--load_in_4bit", type=int, default=0)

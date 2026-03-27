@@ -318,40 +318,24 @@ class CrossAttentionRouter(nn.Module):
             raise RuntimeError("CrossAttentionRouter expert_embed is not initialized.")
         return self.expert_embed
 
-    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+    def forward(self, hidden_states: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         # Keep router params in fp32 while allowing upstream hidden states in fp16/bf16.
         router_in = hidden_states.to(self.query.weight.dtype)
         expert_embed = self.get_expert_embed().to(self.key.weight.dtype)
-        # print(f"hidden_states finite: {torch.isfinite(hidden_states).all().item()}")
-        # print(f"router_in finite    : {torch.isfinite(router_in).all().item()}")
-        # print(f"expert_embed finite : {torch.isfinite(expert_embed).all().item()}")
-        # print(f"query.weight finite : {torch.isfinite(self.query.weight).all().item()}")
-        # print(f"key.weight finite   : {torch.isfinite(self.key.weight).all().item()}")
-        # print(f"value.weight finite : {torch.isfinite(self.value.weight).all().item()}")
 
         q = self.query(router_in).float()      # (b, s, d)
         k = self.key(expert_embed).float()     # (e, d)
         v = self.value(expert_embed).float()   # (e, d)
-        # print(f"q finite            : {torch.isfinite(q).all().item()}")
-        # print(f"k finite            : {torch.isfinite(k).all().item()}")
-        # print(f"v finite            : {torch.isfinite(v).all().item()}")
 
         attn_scores = torch.matmul(q, k.transpose(0, 1)) / math.sqrt(self.d_router)  # (b, s, e)
-        # print(f"attn_scores has nan : {torch.isnan(attn_scores).any()}")
-        # attn_scores = torch.nan_to_num(attn_scores, nan=0.0, posinf=1e4, neginf=-1e4)
         attn_weights = entmax_bisect(attn_scores, alpha=self.alpha, dim=-1)
-        # print(f"attn_weights has nan: {torch.isnan(attn_weights).any()}")
-        # attn_weights = torch.nan_to_num(attn_weights, nan=0.0, posinf=1.0, neginf=0.0)
         attn_output = torch.matmul(attn_weights, v)  # (b, s, d)
-        # print(f"attn_output has nan: {torch.isnan(attn_output).any()}")
-        # attn_output = torch.nan_to_num(attn_output, nan=0.0, posinf=1e4, neginf=-1e4)
 
-        # Map the attended router state back to expert space so downstream routing
-        # continues to receive per-expert probabilities.
+        # Preserve pre-softmax route scores for router z-loss while keeping the
+        # existing probability output used by token routing.
         route_scores = torch.matmul(attn_output, v.transpose(0, 1)) / math.sqrt(self.d_router)  # (b, s, e)
-        # print(f"route_scores has nan: {torch.isnan(route_scores).any()}")
-        # route_scores = torch.nan_to_num(route_scores, nan=0.0, posinf=1e4, neginf=-1e4)
-        return F.softmax(route_scores, dim=-1, dtype=torch.float32)
+        route_probs = F.softmax(route_scores, dim=-1, dtype=torch.float32)
+        return attn_scores, attn_weights
 
 
 class SwitchMLP(nn.Module):
@@ -362,6 +346,8 @@ class SwitchMLP(nn.Module):
         self.layer_num = layer_idx
         self.use_switch = (layer_idx % config.expert_frequency) == 0
         self.last_top_p_active_expert_count = 0
+        self.last_router_aux_loss = None
+        self.last_router_z_loss = None
 
         if self.use_switch:
             self.experts = nn.ModuleList()
@@ -416,24 +402,30 @@ class SwitchMLP(nn.Module):
         hidden_states: (batch, seq, hidden)
         """
         if not self.use_switch:
+            self.last_router_aux_loss = None
+            self.last_router_z_loss = None
             return self.mlp(hidden_states)
 
         bsz, seq_len, hidden_dim = hidden_states.size()
 
         # 1) router output -> route probabilities.
         if self.use_cross_attention_router:
-            route_probs = self.router(hidden_states).float()
-            # print(f"route_probs finite: {torch.isfinite(route_probs).all().item()}")
-            # print(f"route_probs min/max: {route_probs.min().item()} / {route_probs.max().item()}")
-            # print(
-            #     f"route_probs sum min/max: {route_probs.sum(dim=-1).min().item()} / "
-            #     f"{route_probs.sum(dim=-1).max().item()}"
-            # )
+            router_logits, route_probs = self.router(hidden_states)
+            router_logits = router_logits.float()
+            route_probs = route_probs.float()
+            self.last_router_z_loss = torch.logsumexp(router_logits, dim=-1).pow(2).mean()
         else:
             router_logits = self.router(hidden_states)
             route_probs = F.softmax(router_logits, dim=-1, dtype=torch.float)
             if self.router_use_entmax:
                 route_probs = entmax_bisect(router_logits.float(), alpha=self.router_entmax_alpha, dim=-1)
+            self.last_router_z_loss = None
+
+        route_probs_for_aux = route_probs.float()
+        P = route_probs_for_aux.mean(dim=(0, 1))
+        top1_experts = route_probs_for_aux.argmax(dim=-1)
+        f = F.one_hot(top1_experts, num_classes=self.num_experts).to(route_probs_for_aux.dtype).mean(dim=(0, 1))
+        self.last_router_aux_loss = self.num_experts * torch.sum(f * P)
 
         # 2) top-p routing.
         topk_weights, topk_ind = top_p_sampling_batched_all_sequence(
@@ -791,6 +783,8 @@ class MoEModel(MoEPreTrainedModel):
                 mlp.router.set_shared_expert_embed(self.shared_expert_embed)
 
         self.norm = LlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        self.last_router_aux_loss = None
+        self.last_router_z_loss = None
 
         self.gradient_checkpointing = False
         # Initialize weights and apply final processing
@@ -897,6 +891,8 @@ class MoEModel(MoEPreTrainedModel):
         all_hidden_states = () if output_hidden_states else None
         all_self_attns = () if output_attentions else None
         next_decoder_cache = () if use_cache else None
+        self.last_router_aux_loss = None
+        self.last_router_z_loss = None
 
         for idx, decoder_layer in enumerate(self.layers):
             # print(f"layer {idx} input finite             : {torch.isfinite(hidden_states).all().item()}")
@@ -941,6 +937,25 @@ class MoEModel(MoEPreTrainedModel):
                 all_self_attns += (layer_outputs[1],)
 
         hidden_states = self.norm(hidden_states)
+
+        aux_terms = []
+        z_terms = []
+        for layer in self.layers:
+            mlp = getattr(layer, "mlp", None)
+            aux = getattr(mlp, "last_router_aux_loss", None)
+            if aux is not None:
+                aux_terms.append(aux)
+            z_loss = getattr(mlp, "last_router_z_loss", None)
+            if z_loss is not None:
+                z_terms.append(z_loss)
+        if aux_terms:
+            self.last_router_aux_loss = torch.stack(aux_terms).mean()
+        else:
+            self.last_router_aux_loss = hidden_states.new_zeros(())
+        if z_terms:
+            self.last_router_z_loss = torch.stack(z_terms).mean()
+        else:
+            self.last_router_z_loss = hidden_states.new_zeros(())
 
         # add hidden states from the last decoder layer
         if output_hidden_states:
@@ -1057,6 +1072,13 @@ class MoEForCausalLM(MoEPreTrainedModel):
             # Enable model parallelism
             shift_labels = shift_labels.to(shift_logits.device)
             loss = loss_fct(shift_logits, shift_labels)
+
+            aux_loss = getattr(self.model, "last_router_aux_loss", None)
+            if aux_loss is not None:
+                loss = loss + aux_loss.to(loss.device, dtype=loss.dtype)
+            z_loss = getattr(self.model, "last_router_z_loss", None)
+            if z_loss is not None:
+                loss = loss + z_loss.to(loss.device, dtype=loss.dtype)
 
         if not return_dict:
             output = (logits,) + outputs[1:]
