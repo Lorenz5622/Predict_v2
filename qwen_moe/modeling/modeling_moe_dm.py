@@ -293,17 +293,25 @@ class CrossAttentionRouter(nn.Module):
         route_probs: (batch, seq, num_experts)
     """
 
-    def __init__(self, hidden_size: int, num_experts: int, d_router: Optional[int] = None, alpha: float = 1.5):
+    def __init__(
+        self,
+        hidden_size: int,
+        num_experts: int,
+        d_router: Optional[int] = None,
+        use_entmax: bool = False,
+        alpha: float = 1.5,
+    ):
         super().__init__()
         self.hidden_size = int(hidden_size)
         self.num_experts = int(num_experts)
         self.d_router = int(d_router if d_router is not None else hidden_size)
+        self.use_entmax = bool(use_entmax)
         self.alpha = alpha
         self.query = nn.Linear(self.hidden_size, self.d_router, bias=False)
         self.key = nn.Linear(self.d_router, self.d_router, bias=False)
         # Keep a value projection for QKV symmetry even though routing now uses
         # attention weights directly as expert probabilities.
-        self.value = nn.Linear(self.d_router, self.d_router, bias=False)
+        # self.value = nn.Linear(self.d_router, self.d_router, bias=False)
         self.expert_embed = nn.Parameter(torch.randn(self.num_experts, self.d_router))
         self._shared_expert_embed_ref = None
 
@@ -325,16 +333,13 @@ class CrossAttentionRouter(nn.Module):
 
         q = self.query(router_in).float()      # (b, s, d)
         k = self.key(expert_embed).float()     # (e, d)
-        v = self.value(expert_embed).float()   # (e, d)
+        # v = self.value(expert_embed).float()   # (e, d)
 
         attn_scores = torch.matmul(q, k.transpose(0, 1)) / math.sqrt(self.d_router)  # (b, s, e)
-        attn_weights = entmax_bisect(attn_scores, alpha=self.alpha, dim=-1)
-        attn_output = torch.matmul(attn_weights, v)  # (b, s, d)
-
-        # Preserve pre-softmax route scores for router z-loss while keeping the
-        # existing probability output used by token routing.
-        route_scores = torch.matmul(attn_output, v.transpose(0, 1)) / math.sqrt(self.d_router)  # (b, s, e)
-        route_probs = F.softmax(route_scores, dim=-1, dtype=torch.float32)
+        if self.use_entmax:
+            attn_weights = entmax_bisect(attn_scores, alpha=self.alpha, dim=-1)
+        else:
+            attn_weights = F.softmax(attn_scores, dim=-1, dtype=torch.float32)
         return attn_scores, attn_weights
 
 
@@ -381,6 +386,7 @@ class SwitchMLP(nn.Module):
                     hidden_size=config.hidden_size,
                     num_experts=config.num_experts,
                     d_router=getattr(config, "router_dim", config.hidden_size),
+                    use_entmax=self.router_use_entmax,
                     alpha=self.router_entmax_alpha,
                 )
             else:
@@ -1073,12 +1079,8 @@ class MoEForCausalLM(MoEPreTrainedModel):
             shift_labels = shift_labels.to(shift_logits.device)
             loss = loss_fct(shift_logits, shift_labels)
 
-            aux_loss = getattr(self.model, "last_router_aux_loss", None)
-            if aux_loss is not None:
-                loss = loss + aux_loss.to(loss.device, dtype=loss.dtype)
-            z_loss = getattr(self.model, "last_router_z_loss", None)
-            if z_loss is not None:
-                loss = loss + z_loss.to(loss.device, dtype=loss.dtype)
+            # Keep `loss` as pure language-modeling CE. Router regularizers are
+            # exposed separately through `self.model.last_router_*_loss`.
 
         if not return_dict:
             output = (logits,) + outputs[1:]

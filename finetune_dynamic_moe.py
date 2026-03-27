@@ -178,7 +178,7 @@ def _init_cross_attention_router_from_legacy_dense(
                 continue
 
             router = mlp.router
-            if not all(hasattr(router, name) for name in ("query", "key", "value")):
+            if not all(hasattr(router, name) for name in ("query", "key")):
                 # Legacy path (q_proj/expert_keys/...) is no longer used by current simplified router.
                 continue
 
@@ -193,7 +193,7 @@ def _init_cross_attention_router_from_legacy_dense(
                     dense_w[:rows, :cols].to(dtype=query.weight.dtype, device=query.weight.device)
                 )
 
-            for proj_name in ("key", "value"):
+            for proj_name in ("key"):
                 proj = getattr(router, proj_name, None)
                 if proj is None or not hasattr(proj, "weight"):
                     continue
@@ -211,7 +211,7 @@ def _enable_new_router_params_trainable(model: nn.Module) -> int:
     keys = (
         "router.query",
         "router.key",
-        "router.value",
+        # "router.value",
         "router.expert_embed",
         "shared_expert_embed",
         # Legacy (unused in current simplified router):
@@ -344,6 +344,7 @@ def train(
     ma_loss_buf = deque(maxlen=ma_win)
     ma_loss_sum = 0.0
     ema_loss = None
+    ema_ce_loss = None
     ema_momentum = 0.98
 
     if is_main_process():
@@ -361,7 +362,7 @@ def train(
             ]) + "\n")
         metrics_f.write("\t".join([
             "time", "epoch", "global_step", "optim_step", "lr",
-            "loss", "loss_ce", "loss_aux", "loss_z", f"loss_ma{ma_win}", "loss_ema",
+            "loss", "loss_ce", "loss_aux", "loss_z", f"loss_ma{ma_win}", "loss_ema", "loss_ce_ema",
         ]) + "\n")
         metrics_f.flush()
 
@@ -400,7 +401,7 @@ def train(
             else:
                 z_loss = z_loss.to(device=raw_loss.device, dtype=raw_loss.dtype)
 
-            ce_loss = raw_loss - aux_loss - z_loss
+            ce_loss = raw_loss
             total_loss = (
                 ce_loss
                 + float(run_args.router_aux_loss_coef) * aux_loss
@@ -446,6 +447,10 @@ def train(
                     ema_loss = loss_real
                 else:
                     ema_loss = ema_momentum * ema_loss + (1.0 - ema_momentum) * loss_real
+                if ema_ce_loss is None:
+                    ema_ce_loss = ce_loss_real
+                else:
+                    ema_ce_loss = ema_momentum * ema_ce_loss + (1.0 - ema_momentum) * ce_loss_real
 
                 if is_main_process() and (optim_step % log_every == 0):
                     cur_lr = scheduler.get_last_lr()[0]
@@ -458,6 +463,7 @@ def train(
                             "z": f"{z_loss_real:.4f}",
                             f"ma{ma_win}": f"{loss_ma:.4f}",
                             "ema": f"{ema_loss:.4f}",
+                            "ce_ema": f"{ema_ce_loss:.4f}",
                             "lr": f"{cur_lr:.2e}",
                         }, refresh=False)
 
@@ -474,6 +480,7 @@ def train(
                             f"{z_loss_real:.6f}",
                             f"{loss_ma:.6f}",
                             f"{ema_loss:.6f}",
+                            f"{ema_ce_loss:.6f}",
                         ]) + "\n")
                         metrics_f.flush()
 
@@ -483,6 +490,7 @@ def train(
                     "ce": f"{ce_loss_real:.4f}",
                     "aux": f"{aux_loss_real:.4f}",
                     "z": f"{z_loss_real:.4f}",
+                    "ce_ema": f"{ema_ce_loss:.4f}",
                     "lr": f"{scheduler.get_last_lr()[0]:.3e}",
                 }, refresh=False)
 
@@ -491,7 +499,8 @@ def train(
                     elapsed = time.time() - t0
                     print(
                         f"[train] epoch={epoch+1}/{epochs} step={optim_step}/{total_optim_steps} "
-                        f"loss={loss_real:.4f} ce={ce_loss_real:.4f} aux={aux_loss_real:.4f} z={z_loss_real:.4f} "
+                        f"loss={loss_real:.4f} ce={ce_loss_real:.4f} ce_ema={ema_ce_loss:.4f} "
+                        f"aux={aux_loss_real:.4f} z={z_loss_real:.4f} "
                         f"lr={cur_lr:.3e} elapsed={elapsed/60:.1f}m"
                     )
 
@@ -605,7 +614,7 @@ def build_quantization_config(args):
                 "router",
                 "query",
                 "key",
-                "value",
+                # "value",
                 # Legacy (unused in current simplified router):
                 # "router_value_proj",
                 # "router_context_gate_proj",
@@ -620,7 +629,7 @@ def build_quantization_config(args):
                 "router",
                 "query",
                 "key",
-                "value",
+                # "value",
                 # Legacy (unused in current simplified router):
                 # "router_value_proj",
                 # "router_context_gate_proj",
