@@ -246,6 +246,7 @@ def _enable_new_router_params_trainable(model: nn.Module) -> int:
     keys = (
         "router.query",
         "router.key",
+        "router.token_couple_proj",
         # "router.value",  # Disabled with the value-free CrossAttentionRouter path.
         "router.expert_embed",
         "shared_expert_embed",
@@ -279,6 +280,20 @@ def _cast_selected_trainable_params_to_fp32(model: nn.Module) -> int:
                 param.data = param.data.to(torch.float32)
                 n_params += param.numel()
     return n_params
+
+
+def _apply_pending_router_ema_updates(model: nn.Module) -> None:
+    model_for_updates = model.module if hasattr(model, "module") else model
+    base_model = model_for_updates.get_base_model() if hasattr(model_for_updates, "get_base_model") else model_for_updates
+    moe_model = getattr(base_model, "model", None)
+    if moe_model is None:
+        return
+
+    for layer in getattr(moe_model, "layers", []):
+        mlp = getattr(layer, "mlp", None)
+        apply_fn = getattr(mlp, "apply_pending_router_ema_update", None)
+        if callable(apply_fn):
+            apply_fn()
 
 def guess_lora_targets(model: nn.Module) -> List[str]:
     candidates = [
@@ -397,7 +412,8 @@ def train(
             ]) + "\n")
         metrics_f.write("\t".join([
             "time", "epoch", "global_step", "optim_step", "lr",
-            "loss", "loss_ce", "loss_aux", "loss_z", f"loss_ma{ma_win}", "loss_ema", "loss_ce_ema",
+            "loss", "loss_ce", "loss_aux", "loss_z", "loss_pull",
+            f"loss_ma{ma_win}", "loss_ema", "loss_ce_ema",
         ]) + "\n")
         metrics_f.flush()
 
@@ -422,25 +438,29 @@ def train(
                 out = model(**batch)
                 raw_loss = out.loss
 
-            model_for_aux = model.module if hasattr(model, "module") else model
-            base_model = model_for_aux.get_base_model() if hasattr(model_for_aux, "get_base_model") else model_for_aux
-            moe_model = getattr(base_model, "model", None)
-            aux_loss = getattr(moe_model, "last_router_aux_loss", None)
+            aux_loss = getattr(out, "router_aux_loss", None)
             if aux_loss is None:
                 aux_loss = raw_loss.new_zeros(())
             else:
                 aux_loss = aux_loss.to(device=raw_loss.device, dtype=raw_loss.dtype)
-            z_loss = getattr(moe_model, "last_router_z_loss", None)
+            z_loss = getattr(out, "router_z_loss", None)
             if z_loss is None:
                 z_loss = raw_loss.new_zeros(())
             else:
                 z_loss = z_loss.to(device=raw_loss.device, dtype=raw_loss.dtype)
+
+            pull_loss = getattr(out, "router_pull_loss", None)
+            if pull_loss is None:
+                pull_loss = raw_loss.new_zeros(())
+            else:
+                pull_loss = pull_loss.to(device=raw_loss.device, dtype=raw_loss.dtype)
 
             ce_loss = raw_loss
             total_loss = (
                 ce_loss
                 + float(run_args.router_aux_loss_coef) * aux_loss
                 + float(run_args.router_z_loss_coef) * z_loss
+                + float(run_args.router_pull_loss_coef) * pull_loss
             )
             loss = total_loss / max(1, grad_accum)
 
@@ -448,6 +468,8 @@ def train(
                 scaler.scale(loss).backward()
             else:
                 loss.backward()
+
+            _apply_pending_router_ema_updates(model)
 
             global_step += 1
 
@@ -471,6 +493,7 @@ def train(
                 ce_loss_real = float(ce_loss.detach().float().item())
                 aux_loss_real = float(aux_loss.detach().float().item())
                 z_loss_real = float(z_loss.detach().float().item())
+                pull_loss_real = float(pull_loss.detach().float().item())
 
                 if len(ma_loss_buf) == ma_loss_buf.maxlen:
                     ma_loss_sum -= ma_loss_buf[0]
@@ -496,6 +519,7 @@ def train(
                             "ce": f"{ce_loss_real:.4f}",
                             "aux": f"{aux_loss_real:.4f}",
                             "z": f"{z_loss_real:.4f}",
+                            "pull": f"{pull_loss_real:.4f}",
                             f"ma{ma_win}": f"{loss_ma:.4f}",
                             "ema": f"{ema_loss:.4f}",
                             "ce_ema": f"{ema_ce_loss:.4f}",
@@ -513,6 +537,7 @@ def train(
                             f"{ce_loss_real:.6f}",
                             f"{aux_loss_real:.6f}",
                             f"{z_loss_real:.6f}",
+                            f"{pull_loss_real:.6f}",
                             f"{loss_ma:.6f}",
                             f"{ema_loss:.6f}",
                             f"{ema_ce_loss:.6f}",
@@ -663,6 +688,7 @@ def build_quantization_config(args):
                 "router",
                 "query",
                 "key",
+                "token_couple_proj",
                 "value",
                 # Legacy (unused in current simplified router):
                 # "router_value_proj",
@@ -678,6 +704,7 @@ def build_quantization_config(args):
                 "router",
                 "query",
                 "key",
+                "token_couple_proj",
                 "value",
                 # Legacy (unused in current simplified router):
                 # "router_value_proj",
@@ -932,7 +959,30 @@ def parse_args():
         default=1e-3,
         help="Coefficient for router z-loss on the cross-attention router branch.",
     )
-
+    ap.add_argument(
+        "--router_pull_loss_coef",
+        type=float,
+        default=0.01,
+        help="Coefficient for prototype pull loss.",
+    )
+    ap.add_argument(
+        "--router_use_ema_update",
+        type=int,
+        default=1,
+        help="Whether to update expert_embed with EMA from assigned token prototypes.",
+    )
+    ap.add_argument(
+        "--router_ema_momentum",
+        type=float,
+        default=0.99,
+        help="EMA momentum for expert_embed update.",
+    )
+    ap.add_argument(
+        "--router_pull_temperature",
+        type=float,
+        default=1.0,
+        help="Reserved temperature for prototype pull loss / similarity scaling.",
+    )
     ap.add_argument("--use_bnb_8bit", type=int, default=0)
     ap.add_argument("--load_in_4bit", type=int, default=0)
     ap.add_argument("--load_in_8bit", type=int, default=0)
@@ -1025,7 +1075,9 @@ def main():
         raise ValueError(f"config.router_top_k must be >= 1, got {getattr(config, 'router_top_k', None)}")
     if int(getattr(config, "num_experts", 0)) > 0 and int(config.router_top_k) > int(config.num_experts):
         raise ValueError(f"router_top_k ({config.router_top_k}) cannot exceed num_experts ({config.num_experts})")
-
+    config.router_use_ema_update = bool(args.router_use_ema_update)
+    config.router_ema_momentum = float(args.router_ema_momentum)
+    config.router_pull_temperature = float(args.router_pull_temperature)
     quantization_config = build_quantization_config(args)
     if is_main_process():
         print(f"[load] distributed={is_distributed} world_size={world_size} 4bit={bool(args.load_in_4bit)} 8bit={bool(args.load_in_8bit)}")
@@ -1124,7 +1176,6 @@ def main():
             output_device=local_rank,
             find_unused_parameters=True,
         )
-
     train(
         model=model,
         train_dl=train_dl,
