@@ -309,15 +309,53 @@ class CrossAttentionRouter(nn.Module):
         self.alpha = alpha
         self.query = nn.Linear(self.hidden_size, self.d_router, bias=False)
         self.key = nn.Linear(self.d_router, self.d_router, bias=False)
-        # Keep a value projection for QKV symmetry even though routing now uses
-        # attention weights directly as expert probabilities.
-        # self.value = nn.Linear(self.d_router, self.d_router, bias=False)
+        # Value projection is intentionally disabled. Routing now returns
+        # attention scores/probabilities directly from the query-key path.
+        # self.value = nn.Linear(self.d_router, self.num_experts, bias=False)
         self.expert_embed = nn.Parameter(torch.randn(self.num_experts, self.d_router))
         self._shared_expert_embed_ref = None
 
     def set_shared_expert_embed(self, expert_embed: nn.Parameter) -> None:
         self.expert_embed = None
         self._shared_expert_embed_ref = [expert_embed]
+
+    @staticmethod
+    def _reshape_legacy_router_weight(
+        legacy_router_weight: torch.Tensor,
+        target_shape: Tuple[int, int],
+    ) -> torch.Tensor:
+        """
+        Convert a legacy dense router weight into an expert embedding matrix.
+
+        The legacy router is typically shaped `(num_experts, hidden_size)`, but
+        older checkpoints or conversion code may expose the transposed layout.
+        When dimensions do not match exactly, copy the overlapping block into a
+        zero-initialized target tensor so initialization stays deterministic.
+        """
+        source = legacy_router_weight.detach().float()
+        candidates = (source, source.transpose(0, 1))
+
+        def _score(candidate: torch.Tensor) -> Tuple[int, int, int]:
+            return (
+                int(candidate.shape == target_shape),
+                int(candidate.shape[0] == target_shape[0]) + int(candidate.shape[1] == target_shape[1]),
+                min(candidate.shape[0], target_shape[0]) * min(candidate.shape[1], target_shape[1]),
+            )
+
+        best = max(candidates, key=_score)
+        reshaped = best.new_zeros(target_shape)
+        rows = min(best.shape[0], target_shape[0])
+        cols = min(best.shape[1], target_shape[1])
+        reshaped[:rows, :cols] = best[:rows, :cols]
+        return reshaped
+
+    def initialize_expert_embed_from_legacy_router(self, legacy_router_weight: torch.Tensor) -> torch.Tensor:
+        target = self.get_expert_embed()
+        reshaped = self._reshape_legacy_router_weight(legacy_router_weight, tuple(target.shape))
+        reshaped = reshaped.to(dtype=target.dtype, device=target.device)
+        with torch.no_grad():
+            target.copy_(reshaped)
+        return target
 
     def get_expert_embed(self) -> torch.Tensor:
         if self._shared_expert_embed_ref is not None:
@@ -333,14 +371,22 @@ class CrossAttentionRouter(nn.Module):
 
         q = self.query(router_in).float()      # (b, s, d)
         k = self.key(expert_embed).float()     # (e, d)
-        # v = self.value(expert_embed).float()   # (e, d)
+        # Value path intentionally disabled.
+        # v = self.value(expert_embed).float()   # (e, e)
 
         attn_scores = torch.matmul(q, k.transpose(0, 1)) / math.sqrt(self.d_router)  # (b, s, e)
         if self.use_entmax:
             attn_weights = entmax_bisect(attn_scores, alpha=self.alpha, dim=-1)
         else:
             attn_weights = F.softmax(attn_scores, dim=-1, dtype=torch.float32)
-        return attn_scores, attn_weights
+        route_scores = attn_scores
+        route_probs = attn_weights
+        # route_scores = torch.matmul(attn_weights, v)  # (b, s, e)
+        # if self.use_entmax:
+        #     route_probs = entmax_bisect(route_scores, alpha=self.alpha, dim=-1)
+        # else:
+        #     route_probs = F.softmax(route_scores, dim=-1, dtype=torch.float32)
+        return route_scores, route_probs
 
 
 class SwitchMLP(nn.Module):
@@ -419,6 +465,11 @@ class SwitchMLP(nn.Module):
             router_logits, route_probs = self.router(hidden_states)
             router_logits = router_logits.float()
             route_probs = route_probs.float()
+            if route_probs.shape != router_logits.shape:
+                raise RuntimeError(
+                    "CrossAttentionRouter must return per-expert probabilities with shape "
+                    f"{tuple(router_logits.shape)}, got {tuple(route_probs.shape)}"
+                )
             self.last_router_z_loss = torch.logsumexp(router_logits, dim=-1).pow(2).mean()
         else:
             router_logits = self.router(hidden_states)

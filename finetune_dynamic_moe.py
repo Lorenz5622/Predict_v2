@@ -15,6 +15,7 @@ to avoid duplicating the entire training stack.
 from __future__ import annotations
 
 import argparse
+import gc
 import inspect
 import json
 import math
@@ -152,17 +153,19 @@ def _init_cross_attention_router_from_legacy_dense(
 
     Rules:
     - query: partial copy from legacy dense router weight
-    - expert_embed/shared_expert_embed: standalone random init
-    - key/value: small-variance random init
+    - expert_embed: initialized from the matching legacy dense router weight
+    - shared_expert_embed: initialized from the mean of all compatible legacy dense router weights
+    - key: small-variance random init
+    - value: disabled; legacy init path is kept commented out below
     """
     num_inited = 0
     base_std = float(getattr(config, "initializer_range", 0.02))
     kv_std = base_std * 0.1
+    shared_router_inits = []
+    per_layer_init_messages = []
 
     with torch.no_grad():
         shared_expert_embed = getattr(model.model, "shared_expert_embed", None)
-        if shared_expert_embed is not None:
-            shared_expert_embed.normal_(mean=0.0, std=base_std)
 
         for layer_idx, layer in enumerate(model.model.layers):
             mlp = layer.mlp
@@ -173,11 +176,15 @@ def _init_cross_attention_router_from_legacy_dense(
             if not hasattr(mlp, "router"):
                 continue
 
+            router = mlp.router
             dense_w = legacy_sd.get(f"model.layers.{layer_idx}.mlp.router.weight")
             if dense_w is None:
+                if getattr(router, "_shared_expert_embed_ref", None) is None and getattr(router, "expert_embed", None) is not None:
+                    per_layer_init_messages.append(
+                        f"[init] layer {layer_idx} expert_embed kept random init (legacy router.weight not found)"
+                    )
                 continue
 
-            router = mlp.router
             if not all(hasattr(router, name) for name in ("query", "key")):
                 # Legacy path (q_proj/expert_keys/...) is no longer used by current simplified router.
                 continue
@@ -193,16 +200,44 @@ def _init_cross_attention_router_from_legacy_dense(
                     dense_w[:rows, :cols].to(dtype=query.weight.dtype, device=query.weight.device)
                 )
 
-            for proj_name in ("key"):
+            for proj_name in (
+                "key",
+                # "value",  # Disabled with the value-free CrossAttentionRouter path.
+            ):
                 proj = getattr(router, proj_name, None)
                 if proj is None or not hasattr(proj, "weight"):
                     continue
                 proj.weight.normal_(mean=0.0, std=kv_std)
 
-            if getattr(router, "_shared_expert_embed_ref", None) is None and getattr(router, "expert_embed", None) is not None:
-                router.expert_embed.normal_(mean=0.0, std=base_std)
+            if hasattr(router, "_reshape_legacy_router_weight"):
+                target_embed = router.get_expert_embed()
+                reshaped_dense = router._reshape_legacy_router_weight(dense_w, tuple(target_embed.shape))
+                if getattr(router, "_shared_expert_embed_ref", None) is None and getattr(router, "expert_embed", None) is not None:
+                    router.initialize_expert_embed_from_legacy_router(dense_w)
+                    per_layer_init_messages.append(
+                        f"[init] layer {layer_idx} expert_embed initialized from legacy router.weight"
+                    )
+                elif shared_expert_embed is not None:
+                    shared_router_inits.append(reshaped_dense.to(dtype=torch.float32))
 
             num_inited += 1
+
+        if shared_expert_embed is not None:
+            if shared_router_inits:
+                shared_init = torch.stack(shared_router_inits, dim=0).mean(dim=0)
+                shared_expert_embed.copy_(
+                    shared_init.to(dtype=shared_expert_embed.dtype, device=shared_expert_embed.device)
+                )
+                print(
+                    f"[init] shared_expert_embed initialized from legacy router.weight "
+                    f"(mean over {len(shared_router_inits)} layers)"
+                )
+            else:
+                shared_expert_embed.normal_(mean=0.0, std=base_std)
+                print("[init] shared_expert_embed kept random init (no compatible legacy router.weight)")
+
+        for msg in per_layer_init_messages:
+            print(msg)
 
     return num_inited
 
@@ -211,7 +246,7 @@ def _enable_new_router_params_trainable(model: nn.Module) -> int:
     keys = (
         "router.query",
         "router.key",
-        # "router.value",
+        # "router.value",  # Disabled with the value-free CrossAttentionRouter path.
         "router.expert_embed",
         "shared_expert_embed",
         # Legacy (unused in current simplified router):
@@ -519,6 +554,12 @@ def train(
     if is_main_process() and metrics_f is not None:
         metrics_f.close()
 
+    optimizer.zero_grad(set_to_none=True)
+    del optimizer, scheduler, scaler
+    gc.collect()
+    if device.type == "cuda":
+        torch.cuda.empty_cache()
+
     if is_main_process():
         model_to_save = model.module if hasattr(model, "module") else model
         was_quantized = is_quantized_model(model_to_save)
@@ -536,10 +577,18 @@ def train(
             if maybe_dequantized is not None:
                 merged = maybe_dequantized
 
-        state_dict = merged.state_dict()
-        for k, v in list(state_dict.items()):
-            if torch.is_floating_point(v) and v.dtype != torch.float32:
-                state_dict[k] = v.to(torch.float32)
+        print("[save] moving merged model to cpu before export")
+        merged = merged.to("cpu")
+        gc.collect()
+        if device.type == "cuda":
+            torch.cuda.empty_cache()
+
+        state_dict = {}
+        for k, v in merged.state_dict().items():
+            tensor = v.detach().cpu()
+            if torch.is_floating_point(tensor) and tensor.dtype != torch.float32:
+                tensor = tensor.to(torch.float32)
+            state_dict[k] = tensor
 
         if was_quantized:
             for attr_name in ("is_loaded_in_8bit", "is_loaded_in_4bit", "quantization_method"):
@@ -614,7 +663,7 @@ def build_quantization_config(args):
                 "router",
                 "query",
                 "key",
-                # "value",
+                "value",
                 # Legacy (unused in current simplified router):
                 # "router_value_proj",
                 # "router_context_gate_proj",
@@ -629,7 +678,7 @@ def build_quantization_config(args):
                 "router",
                 "query",
                 "key",
-                # "value",
+                "value",
                 # Legacy (unused in current simplified router):
                 # "router_value_proj",
                 # "router_context_gate_proj",

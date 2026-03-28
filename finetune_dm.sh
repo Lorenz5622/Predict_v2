@@ -6,14 +6,14 @@ MODEL_PATH="/data/cyx/models/Dynamic_MoE"
 OUT_ROOT="/data/cyx/models"
 LOG_PATH="/home/cyx/qwen_moe"
 BLOCK_SIZE=128
-BATCH_SIZE=12
-GRAD_ACCUM=1
+BATCH_SIZE=8
+GRAD_ACCUM=2
 EPOCHS=2
-LR=1e-4
+LR=2e-4
 LORA_R=16
 LORA_ALPHA=16
 LORA_DROPOUT=0.05
-NUM_PROC=8
+NUM_PROC=16
 
 # 模型结构相关参数统一从 $MODEL_PATH 下的 configuration_moe_dm 加载；这里只保留训练参数。
 # 可选：固定 GPU（没有就注释掉）
@@ -114,13 +114,23 @@ run_one () {
 #   --num_proc "$NUM_PROC" --load_in_8bit 0 --load_in_fp16 1 --bf16 0 --train_extra_params_in_fp32 1 \
 #   --router_use_entmax 1 --share_router_expert_embedding  0 --router_entmax_alpha 1.7
 
+# run_one "piqa" torchrun --nproc_per_node 2 finetune_dynamic_moe.py \
+#   --model_path "$MODEL_PATH" \
+#   --output_dir "$OUT_ROOT/out_piqa_entmax_17_each_embedding_aux_003_lr2" \
+#   --dataset piqa --eval_dataset piqa \
+#   --train_split train --eval_split validation \
+#   --block_size "$BLOCK_SIZE" --batch_size "$BATCH_SIZE" --grad_accum "$GRAD_ACCUM" --epochs 3 \
+#   --lr "$LR" --lora_r "$LORA_R" --lora_alpha "$LORA_ALPHA" --lora_dropout "$LORA_DROPOUT" \
+#   --num_proc "$NUM_PROC" --load_in_8bit 0 --load_in_fp16 1 --bf16 0 --train_extra_params_in_fp32 1 \
+#   --router_use_entmax 1 --share_router_expert_embedding  0 --router_entmax_alpha 1.7 --router_aux_loss_coef 0.00  --router_z_loss_coef 0.00
+
 run_one "piqa" torchrun --nproc_per_node 2 finetune_dynamic_moe.py \
   --model_path "$MODEL_PATH" \
-  --output_dir "$OUT_ROOT/out_piqa_entmax_17_each_embedding_aux_003" \
+  --output_dir "$OUT_ROOT/out_piqa_entmax_17_each_embedding_aux_003_lr1" \
   --dataset piqa --eval_dataset piqa \
   --train_split train --eval_split validation \
   --block_size "$BLOCK_SIZE" --batch_size "$BATCH_SIZE" --grad_accum "$GRAD_ACCUM" --epochs 3 \
-  --lr "$LR" --lora_r "$LORA_R" --lora_alpha "$LORA_ALPHA" --lora_dropout "$LORA_DROPOUT" \
+  --lr 1e-4 --lora_r "$LORA_R" --lora_alpha "$LORA_ALPHA" --lora_dropout "$LORA_DROPOUT" \
   --num_proc "$NUM_PROC" --load_in_8bit 0 --load_in_fp16 1 --bf16 0 --train_extra_params_in_fp32 1 \
   --router_use_entmax 1 --share_router_expert_embedding  0 --router_entmax_alpha 1.7 --router_aux_loss_coef 0.00  --router_z_loss_coef 0.00
 

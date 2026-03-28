@@ -6,3 +6,5 @@
 *.pyo
 *.tsv
 *.patch
+*_tset.py
+*.log
