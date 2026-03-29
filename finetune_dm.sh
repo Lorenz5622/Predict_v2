@@ -6,7 +6,12 @@ NPROC=2
 LAUNCHER="$SCRIPT_DIR/launch_two_stage_torchrun.py"
 
 CONFIGS=(
-  "configs/finetune_dm.json"
+  # "configs/finetune_dm.json"
+  "configs/finetune_dm_lr1.json"
+  # "configs/finetune_dm_hard.json"
+  "configs/finetune_dm_hard_lr1.json"
+  "configs/finetune_dm_hard_lr1_dl.json"
+  "configs/finetune_dm_lr1_dl.json"
 )
 
 LOGDIR="$SCRIPT_DIR/logs/sweep_$(date +%Y%m%d_%H%M%S)"

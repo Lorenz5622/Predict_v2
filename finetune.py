@@ -1036,20 +1036,26 @@ def is_quantized_model(model: nn.Module) -> bool:
 # -----------------------------
 @torch.no_grad()
 def evaluate(model: nn.Module, dl: DataLoader, device: torch.device, fp16: bool, bf16: bool) -> float:
+    was_training = model.training
     model.eval()
     losses = []
     amp_dtype = torch.float16 if fp16 else (torch.bfloat16 if bf16 else None)
 
-    for batch in dl:
-        batch = {k: v.to(device, non_blocking=True) for k, v in batch.items()}
-        if amp_dtype is not None and device.type == "cuda":
-            with torch.autocast(device_type="cuda", dtype=amp_dtype):
-                out = model(**batch)
-                loss = out.loss
-        else:
-            out = model(**batch)
-            loss = out.loss
-        losses.append(loss.detach().float())
+    try:
+        with torch.no_grad():
+            for batch in dl:
+                batch = {k: v.to(device, non_blocking=True) for k, v in batch.items()}
+                if amp_dtype is not None and device.type == "cuda":
+                    with torch.autocast(device_type="cuda", dtype=amp_dtype):
+                        out = model(**batch)
+                        loss = out.loss
+                else:
+                    out = model(**batch)
+                    loss = out.loss
+                losses.append(loss.detach().float())
+    finally:
+        if was_training:
+            model.train()
 
     if len(losses) == 0:
         return float("nan")
@@ -1554,7 +1560,7 @@ def main():
         if name == "arc-c":
             return load_and_pack_arc_challenge_ppl_opencompass(
                 tokenizer=tokenizer,
-                block_size=argsargs.block_size,
+                block_size=args.block_size,
                 split=split,
                 num_proc=args.num_proc,
                 bos=True,

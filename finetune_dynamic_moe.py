@@ -540,7 +540,7 @@ def train(
         metrics_f.write("\t".join([
             "time", "epoch", "global_step", "optim_step", "lr",
             "loss", "loss_ce", "loss_aux", "loss_z", "loss_pull",
-            f"loss_ma{ma_win}", "loss_ema", "loss_ce_ema",
+            f"loss_ma{ma_win}", "loss_ema", "loss_ce_ema", "eval_loss", "eval_ppl",
         ]) + "\n")
         metrics_f.flush()
 
@@ -637,9 +637,15 @@ def train(
                 else:
                     ema_ce_loss = ema_momentum * ema_ce_loss + (1.0 - ema_momentum) * ce_loss_real
 
-                if is_main_process() and (optim_step % log_every == 0):
-                    cur_lr = scheduler.get_last_lr()[0]
+                cur_lr = scheduler.get_last_lr()[0]
+                should_eval = eval_dl is not None and (optim_step % eval_every == 0)
+                eval_loss_real = None
+                eval_ppl_real = None
+                if should_eval:
+                    eval_loss_real = evaluate(model, eval_dl, device, fp16=fp16, bf16=bf16)
+                    eval_ppl_real = math.exp(min(20, eval_loss_real))
 
+                if is_main_process() and (optim_step % log_every == 0):
                     if hasattr(it, "set_postfix"):
                         it.set_postfix({
                             "loss": f"{loss_real:.4f}",
@@ -653,7 +659,7 @@ def train(
                             "lr": f"{cur_lr:.2e}",
                         }, refresh=False)
 
-                    if metrics_f is not None:
+                if is_main_process() and metrics_f is not None and ((optim_step % log_every == 0) or should_eval):
                         metrics_f.write("\t".join([
                             f"{time.time():.3f}",
                             str(epoch),
@@ -668,6 +674,8 @@ def train(
                             f"{loss_ma:.6f}",
                             f"{ema_loss:.6f}",
                             f"{ema_ce_loss:.6f}",
+                            "" if eval_loss_real is None else f"{eval_loss_real:.6f}",
+                            "" if eval_ppl_real is None else f"{eval_ppl_real:.6f}",
                         ]) + "\n")
                         metrics_f.flush()
 
@@ -682,7 +690,6 @@ def train(
                 }, refresh=False)
 
                 if is_main_process() and (optim_step % log_every == 0):
-                    cur_lr = scheduler.get_last_lr()[0]
                     elapsed = time.time() - t0
                     print(
                         f"[train] epoch={epoch+1}/{epochs} step={optim_step}/{total_optim_steps} "
@@ -691,10 +698,10 @@ def train(
                         f"lr={cur_lr:.3e} elapsed={elapsed/60:.1f}m"
                     )
 
-                if eval_dl is not None and (optim_step % eval_every == 0):
-                    ev = evaluate(model, eval_dl, device, fp16=fp16, bf16=bf16)
+                if should_eval and is_main_process():
+                    assert eval_loss_real is not None and eval_ppl_real is not None
                     if is_main_process():
-                        print(f"[eval] step={optim_step} loss={ev:.4f} ppl={math.exp(min(20, ev)):.2f}")
+                        print(f"[eval] step={optim_step} loss={eval_loss_real:.4f} ppl={eval_ppl_real:.2f}")
 
                 if False and save_every > 0 and (optim_step % save_every == 0) and is_main_process():
                     save_dir = os.path.join(output_dir, f"checkpoint-{optim_step}")
@@ -937,6 +944,7 @@ def configure_model_config(config, args) -> None:
     config.router_use_ema_update = bool(args.router_use_ema_update)
     config.router_ema_momentum = float(args.router_ema_momentum)
     config.router_pull_temperature = float(args.router_pull_temperature)
+    config.router_pull_loss_type = str(args.router_pull_loss_type)
 
 
 def make_dataset(name: str, tokenizer, args, split: str, max_samples: Optional[int]):
@@ -1429,6 +1437,13 @@ def parse_args():
         default=1.0,
         help="Reserved temperature for prototype pull loss / similarity scaling.",
     )
+    ap.add_argument(
+        "--router_pull_loss_type",
+        type=str,
+        default="soft",
+        choices=["soft", "hard_ce"],
+        help="Router pull-loss type: soft assignment pull loss or argmax pseudo-label cross-entropy.",
+    )
     ap.add_argument("--use_bnb_8bit", type=int, default=0)
     ap.add_argument("--load_in_4bit", type=int, default=0)
     ap.add_argument("--load_in_8bit", type=int, default=0)
@@ -1440,7 +1455,7 @@ def parse_args():
 
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--log_every", type=int, default=50)
-    ap.add_argument("--eval_every", type=int, default=1000)
+    ap.add_argument("--eval_every", type=int, default=100)
     ap.add_argument("--save_every", type=int, default=200)
     ap.add_argument("--stage1_epochs", type=int, default=1)
     ap.add_argument("--stage1_lr", type=float, default=2e-4)

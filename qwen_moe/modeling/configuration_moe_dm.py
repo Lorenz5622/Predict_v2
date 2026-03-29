@@ -327,6 +327,7 @@ class MoEConfig(PretrainedConfig):
         share_router_expert_embedding: bool = False,
         router_use_entmax: bool = False,
         router_entmax_alpha: float = 1.7,
+        router_pull_loss_type: str = "soft",
         router_top_p: float = 0.4,
         # -------- legacy router params (unused by current simplified router) --------
         # These are intentionally kept as comments for backward compatibility context.
@@ -370,6 +371,7 @@ class MoEConfig(PretrainedConfig):
         self.share_router_expert_embedding = bool(share_router_expert_embedding)
         self.router_use_entmax = bool(router_use_entmax)
         self.router_entmax_alpha = float(router_entmax_alpha)
+        self.router_pull_loss_type = str(router_pull_loss_type)
 
         # Legacy compatibility: old checkpoints may only have `use_low_rank_router`.
         legacy_use_low_rank_router = bool(kwargs.get("use_low_rank_router", False))
@@ -413,6 +415,7 @@ class MoEConfig(PretrainedConfig):
         self.share_router_expert_embedding = bool(getattr(self, "share_router_expert_embedding", False))
         self.router_use_entmax = bool(getattr(self, "router_use_entmax", False))
         self.router_entmax_alpha = float(getattr(self, "router_entmax_alpha", 1.5))
+        self.router_pull_loss_type = str(getattr(self, "router_pull_loss_type", "soft"))
 
         legacy_use_low_rank_router = bool(getattr(self, "use_low_rank_router", False))
         self.use_cross_attention_router = bool(
@@ -433,6 +436,11 @@ class MoEConfig(PretrainedConfig):
             raise ValueError(
                 f"`router_entmax_alpha` must be in (1, 2] when `router_use_entmax=True`, "
                 f"got {self.router_entmax_alpha}"
+            )
+        if self.router_pull_loss_type not in {"soft", "hard_ce"}:
+            raise ValueError(
+                f"`router_pull_loss_type` must be one of {{'soft', 'hard_ce'}}, "
+                f"got {self.router_pull_loss_type!r}"
             )
 
         # Legacy params kept for checkpoint compatibility (unused by current simplified router):
