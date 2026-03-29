@@ -28,6 +28,7 @@ from typing import Dict, List, Optional, Set
 import torch
 import torch.distributed as dist
 import torch.nn as nn
+import torch.nn.functional as F
 from datasets import concatenate_datasets
 from peft import LoraConfig, TaskType, get_peft_model, prepare_model_for_kbit_training
 from torch.utils.data import DataLoader
@@ -280,6 +281,132 @@ def _cast_selected_trainable_params_to_fp32(model: nn.Module) -> int:
                 param.data = param.data.to(torch.float32)
                 n_params += param.numel()
     return n_params
+
+
+def _unwrap_base_model(model: nn.Module) -> nn.Module:
+    model_for_ops = model.module if hasattr(model, "module") else model
+    return model_for_ops.get_base_model() if hasattr(model_for_ops, "get_base_model") else model_for_ops
+
+
+def get_switch_layers(model: nn.Module) -> List[tuple[int, nn.Module]]:
+    base_model = _unwrap_base_model(model)
+    moe_model = getattr(base_model, "model", None)
+    layers = getattr(moe_model, "layers", None)
+    if layers is None:
+        raise AttributeError("Cannot locate decoder layers on current model.")
+
+    out = []
+    for layer_idx, layer in enumerate(layers):
+        mlp = getattr(layer, "mlp", None)
+        if mlp is not None and getattr(mlp, "use_switch", False):
+            out.append((layer_idx, mlp))
+    return out
+
+
+def freeze_all_params(model: nn.Module) -> None:
+    for param in model.parameters():
+        param.requires_grad = False
+
+
+def enable_cross_attention_router_only(model: nn.Module) -> int:
+    n_params = 0
+    for _layer_idx, mlp in get_switch_layers(model):
+        if not getattr(mlp, "use_cross_attention_router", False):
+            continue
+        router = getattr(mlp, "router", None)
+        if router is None:
+            continue
+        for param in router.parameters():
+            param.requires_grad = True
+            n_params += param.numel()
+
+    for name, param in model.named_parameters():
+        if "shared_expert_embed" in name:
+            param.requires_grad = True
+            n_params += param.numel()
+    return n_params
+
+
+def split_train_dataset_for_stage(ds, stage1_ratio: float, seed: int, stage: str):
+    if not (0.0 < float(stage1_ratio) < 1.0):
+        raise ValueError(f"stage1_ratio must be in (0, 1), got {stage1_ratio}")
+
+    n_total = len(ds)
+    if n_total <= 1:
+        return ds
+
+    ds_shuf = ds.shuffle(seed=int(seed))
+    n_stage1 = int(n_total * float(stage1_ratio))
+    n_stage1 = max(1, min(n_stage1, n_total - 1))
+
+    if stage == "stage1":
+        return ds_shuf.select(range(0, n_stage1))
+    if stage == "stage2":
+        return ds_shuf.select(range(n_stage1, n_total))
+    raise ValueError(f"stage must be 'stage1' or 'stage2', got {stage}")
+
+
+def _align_legacy_router_weight(weight: torch.Tensor, hidden_size: int, num_experts: int) -> torch.Tensor:
+    w = weight.detach().float()
+    if w.shape == (num_experts, hidden_size):
+        return w
+    if w.shape == (hidden_size, num_experts):
+        return w.transpose(0, 1).contiguous()
+
+    candidates = (w, w.transpose(0, 1))
+
+    def _score(candidate: torch.Tensor) -> tuple[int, int, int]:
+        return (
+            int(candidate.shape == (num_experts, hidden_size)),
+            int(candidate.shape[0] == num_experts) + int(candidate.shape[1] == hidden_size),
+            min(candidate.shape[0], num_experts) * min(candidate.shape[1], hidden_size),
+        )
+
+    best = max(candidates, key=_score)
+    aligned = best.new_zeros((num_experts, hidden_size))
+    rows = min(best.shape[0], num_experts)
+    cols = min(best.shape[1], hidden_size)
+    aligned[:rows, :cols] = best[:rows, :cols]
+    return aligned
+
+
+def load_legacy_router_teacher_weights(
+    teacher_model_path: str,
+    switch_layers: List[tuple[int, nn.Module]],
+) -> Dict[int, torch.Tensor]:
+    legacy_sd = _load_local_checkpoint_state_dict(teacher_model_path)
+    teacher_weights: Dict[int, torch.Tensor] = {}
+
+    for layer_idx, mlp in switch_layers:
+        key = f"model.layers.{layer_idx}.mlp.router.weight"
+        weight = legacy_sd.get(key)
+        if weight is None:
+            continue
+        teacher_weights[layer_idx] = _align_legacy_router_weight(
+            weight=weight,
+            hidden_size=int(getattr(mlp, "router").hidden_size),
+            num_experts=int(getattr(mlp, "num_experts")),
+        ).cpu()
+
+    del legacy_sd
+    gc.collect()
+    return teacher_weights
+
+
+def save_full_model_checkpoint(model: nn.Module, output_dir: str, tokenizer, config) -> None:
+    os.makedirs(output_dir, exist_ok=True)
+    model_to_save = _unwrap_base_model(model)
+
+    state_dict = {}
+    for name, tensor in model_to_save.state_dict().items():
+        value = tensor.detach().cpu()
+        if torch.is_floating_point(value) and value.dtype != torch.float32:
+            value = value.to(torch.float32)
+        state_dict[name] = value
+
+    model_to_save.save_pretrained(output_dir, state_dict=state_dict, safe_serialization=True)
+    tokenizer.save_pretrained(output_dir)
+    config.save_pretrained(output_dir)
 
 
 def _apply_pending_router_ema_updates(model: nn.Module) -> None:
@@ -719,10 +846,12 @@ def build_model_with_router_compat(
     args,
     model_cls,
     config,
+    model_path: str,
     device: torch.device,
     quantization_config,
     local_rank: int,
     is_distributed: bool,
+    init_from_legacy: bool = True,
 ):
     is_kbit = bool(args.load_in_4bit) or bool(args.load_in_8bit)
     if is_kbit and device.type != "cuda":
@@ -741,7 +870,7 @@ def build_model_with_router_compat(
         load_dtype = torch.float16 if bool(args.load_in_fp16) else torch.float32
         model = model_cls(config)
         model = model.to(dtype=load_dtype)
-        legacy_sd = _load_local_checkpoint_state_dict(args.model_path)
+        legacy_sd = _load_local_checkpoint_state_dict(model_path)
         if load_dtype != torch.float32:
             legacy_sd = {
                 name: tensor.to(dtype=load_dtype) if torch.is_floating_point(tensor) else tensor
@@ -753,7 +882,7 @@ def build_model_with_router_compat(
                 f"[load] checkpoint loaded with strict=False: missing={len(missing_keys)} "
                 f"unexpected={len(unexpected_keys)} dtype={load_dtype}"
             )
-        if bool(args.init_new_router_from_legacy):
+        if bool(args.init_new_router_from_legacy) and bool(init_from_legacy):
             inited = _init_cross_attention_router_from_legacy_dense(model=model, legacy_sd=legacy_sd, config=config)
             if is_main_process():
                 print(f"[init] initialized new router modules from legacy dense router for {inited} layers")
@@ -775,13 +904,39 @@ def build_model_with_router_compat(
         device_map=device_map,
     )
 
-    if bool(args.init_new_router_from_legacy):
-        legacy_sd = _load_local_checkpoint_state_dict(args.model_path)
+    if bool(args.init_new_router_from_legacy) and bool(init_from_legacy):
+        legacy_sd = _load_local_checkpoint_state_dict(model_path)
         inited = _init_cross_attention_router_from_legacy_dense(model=model, legacy_sd=legacy_sd, config=config)
         if is_main_process():
             print(f"[init] initialized new router modules from legacy dense router for {inited} layers")
 
     return model
+
+
+def configure_model_config(config, args) -> None:
+    if hasattr(config, "ensure_model_attributes"):
+        config.ensure_model_attributes()
+
+    effective_top_k = int(args.router_top_k) if int(args.router_top_k) > 0 else int(args.router_topk)
+    if effective_top_k > 0:
+        config.router_top_k = effective_top_k
+    if int(args.router_use_entmax) >= 0:
+        config.router_use_entmax = bool(args.router_use_entmax)
+    if args.router_entmax_alpha is not None:
+        config.router_entmax_alpha = float(args.router_entmax_alpha)
+    if int(args.share_router_expert_embedding) >= 0:
+        config.share_router_expert_embedding = bool(args.share_router_expert_embedding)
+
+    if hasattr(config, "ensure_model_attributes"):
+        config.ensure_model_attributes()
+    if int(getattr(config, "router_top_k", 0)) <= 0:
+        raise ValueError(f"config.router_top_k must be >= 1, got {getattr(config, 'router_top_k', None)}")
+    if int(getattr(config, "num_experts", 0)) > 0 and int(config.router_top_k) > int(config.num_experts):
+        raise ValueError(f"router_top_k ({config.router_top_k}) cannot exceed num_experts ({config.num_experts})")
+
+    config.router_use_ema_update = bool(args.router_use_ema_update)
+    config.router_ema_momentum = float(args.router_ema_momentum)
+    config.router_pull_temperature = float(args.router_pull_temperature)
 
 
 def make_dataset(name: str, tokenizer, args, split: str, max_samples: Optional[int]):
@@ -905,10 +1060,301 @@ def make_dataset(name: str, tokenizer, args, split: str, max_samples: Optional[i
     raise ValueError(f"Unknown dataset: {name}")
 
 
+def build_train_eval_datasets(tokenizer, args, *, stage: str):
+    if args.dataset == "mix":
+        names = [x.strip() for x in args.mix_datasets.split(",") if x.strip()]
+        train_ds_full = concatenate_datasets([
+            make_dataset(name, tokenizer, args, args.train_split, args.train_max_samples) for name in names
+        ])
+    else:
+        train_ds_full = make_dataset(args.dataset, tokenizer, args, args.train_split, args.train_max_samples)
+
+    if stage == "stage1":
+        train_ds = split_train_dataset_for_stage(
+            train_ds_full,
+            stage1_ratio=float(args.stage1_data_ratio),
+            seed=int(args.stage_split_seed),
+            stage="stage1",
+        )
+    elif stage == "stage2":
+        train_ds = train_ds_full
+    else:
+        raise ValueError(f"Unknown stage: {stage}")
+
+    eval_ds = None
+    if stage == "stage2":
+        eval_ds = make_dataset(args.eval_dataset, tokenizer, args, args.eval_split, args.eval_max_samples)
+    return train_ds, eval_ds
+
+
+def stage1_train_cross_attention_router(
+    model: nn.Module,
+    train_dl: DataLoader,
+    run_args: argparse.Namespace,
+    device: torch.device,
+    teacher_router_weights: Dict[int, torch.Tensor],
+):
+    freeze_all_params(model)
+    n_router_params = enable_cross_attention_router_only(model)
+    if n_router_params == 0:
+        raise RuntimeError("Stage1 found no trainable CrossAttentionRouter parameters.")
+
+    _cast_selected_trainable_params_to_fp32(model)
+
+    trainable = [param for param in model.parameters() if param.requires_grad]
+    optimizer = torch.optim.AdamW(
+        trainable,
+        lr=float(run_args.stage1_lr),
+        betas=(0.9, 0.999),
+        weight_decay=0.0,
+    )
+
+    switch_layers = get_switch_layers(model)
+    if not switch_layers:
+        raise RuntimeError("Stage1 found no switch layers.")
+
+    missing_teachers = [layer_idx for layer_idx, _ in switch_layers if layer_idx not in teacher_router_weights]
+    if missing_teachers:
+        raise RuntimeError(f"Missing legacy teacher router weights for layers: {missing_teachers}")
+
+    teacher_router_weights = {
+        layer_idx: weight.to(device=device, dtype=torch.float32, non_blocking=True)
+        for layer_idx, weight in teacher_router_weights.items()
+    }
+
+    captured: List[tuple[int, nn.Module, torch.Tensor]] = []
+    hook_handles = []
+
+    def _make_pre_hook(layer_idx: int):
+        def _hook(_module: nn.Module, inputs):
+            captured.append((layer_idx, _module, inputs[0].detach()))
+        return _hook
+
+    model.eval()
+    for layer_idx, mlp in switch_layers:
+        if not getattr(mlp, "use_cross_attention_router", False):
+            continue
+        hook_handles.append(mlp.register_forward_pre_hook(_make_pre_hook(layer_idx)))
+        mlp.router.train(True)
+
+    global_step = 0
+    optim_step = 0
+    t0 = time.time()
+
+    def _normalize_logits(logits: torch.Tensor) -> torch.Tensor:
+        mean = logits.mean(dim=-1, keepdim=True)
+        std = logits.std(dim=-1, keepdim=True).clamp_min(1e-6)
+        return (logits - mean) / std
+
+    try:
+        for epoch in range(int(run_args.stage1_epochs)):
+            if isinstance(train_dl.sampler, DistributedSampler):
+                train_dl.sampler.set_epoch(epoch)
+
+            iterator = enumerate(train_dl)
+            if is_main_process():
+                iterator = tqdm(
+                    iterator,
+                    total=len(train_dl),
+                    desc=f"stage1 {epoch + 1}/{int(run_args.stage1_epochs)}",
+                    dynamic_ncols=True,
+                )
+
+            optimizer.zero_grad(set_to_none=True)
+
+            for _step, batch in iterator:
+                batch = {k: v.to(device, non_blocking=True) for k, v in batch.items()}
+                input_ids = batch["input_ids"]
+                valid_mask = input_ids.ne(0)
+
+                captured.clear()
+                with torch.no_grad():
+                    _ = model(**batch)
+
+                total_loss = input_ids.new_zeros((), dtype=torch.float32)
+                kl_acc = input_ids.new_zeros((), dtype=torch.float32)
+                logit_acc = input_ids.new_zeros((), dtype=torch.float32)
+                layer_count = 0
+
+                for layer_idx, mlp, hidden_states in captured:
+                    if not getattr(mlp, "use_cross_attention_router", False):
+                        continue
+
+                    teacher_w = teacher_router_weights[layer_idx]
+                    teacher_logits = F.linear(hidden_states.float(), teacher_w)
+                    student_logits, _, _ = mlp.router(hidden_states)
+                    student_logits = student_logits.float()
+
+                    mask = valid_mask
+                    if teacher_logits.shape[:2] != mask.shape:
+                        raise RuntimeError(
+                            f"Stage1 mask shape mismatch at layer {layer_idx}: "
+                            f"logits={tuple(teacher_logits.shape)} mask={tuple(mask.shape)}"
+                        )
+
+                    temp = float(max(run_args.stage1_distill_temperature, 1e-6))
+                    teacher_probs = torch.softmax(teacher_logits / temp, dim=-1)
+                    student_log_probs = torch.log_softmax(student_logits / temp, dim=-1)
+                    kl_token = F.kl_div(student_log_probs, teacher_probs, reduction="none").sum(dim=-1) * (temp * temp)
+
+                    if bool(run_args.stage1_use_logit_loss):
+                        teacher_norm = _normalize_logits(teacher_logits)
+                        student_norm = _normalize_logits(student_logits)
+                        if str(run_args.stage1_logit_loss_type).lower() == "mse":
+                            logit_token = (student_norm - teacher_norm).pow(2).mean(dim=-1)
+                        else:
+                            logit_token = F.smooth_l1_loss(student_norm, teacher_norm, reduction="none").mean(dim=-1)
+                    else:
+                        logit_token = torch.zeros_like(kl_token)
+
+                    mask_f = mask.to(dtype=kl_token.dtype)
+                    denom = mask_f.sum().clamp_min(1.0)
+                    kl_loss = (kl_token * mask_f).sum() / denom
+                    logit_loss = (logit_token * mask_f).sum() / denom
+                    layer_loss = (
+                        float(run_args.stage1_kl_coef) * kl_loss
+                        + float(run_args.stage1_logit_coef) * logit_loss
+                    )
+
+                    total_loss = total_loss + layer_loss
+                    kl_acc = kl_acc + kl_loss.detach()
+                    logit_acc = logit_acc + logit_loss.detach()
+                    layer_count += 1
+
+                if layer_count == 0:
+                    continue
+
+                total_loss = total_loss / float(layer_count)
+                total_loss_to_backprop = total_loss / max(1, int(run_args.stage1_grad_accum))
+                total_loss_to_backprop.backward()
+                global_step += 1
+
+                if global_step % int(run_args.stage1_grad_accum) != 0:
+                    continue
+
+                if float(run_args.stage1_max_grad_norm) > 0:
+                    nn.utils.clip_grad_norm_(trainable, float(run_args.stage1_max_grad_norm))
+
+                optimizer.step()
+                optimizer.zero_grad(set_to_none=True)
+                optim_step += 1
+
+                mean_kl = kl_acc / float(layer_count)
+                mean_logit = logit_acc / float(layer_count)
+
+                if dist.is_initialized():
+                    for tensor in (total_loss, mean_kl, mean_logit):
+                        dist.all_reduce(tensor, op=dist.ReduceOp.AVG)
+
+                if is_main_process() and (optim_step % max(1, int(run_args.stage1_log_every)) == 0):
+                    elapsed = time.time() - t0
+                    print(
+                        f"[stage1] epoch={epoch + 1}/{int(run_args.stage1_epochs)} "
+                        f"step={optim_step} loss={float(total_loss.item()):.6f} "
+                        f"kl={float(mean_kl.item()):.6f} "
+                        f"logit={float(mean_logit.item()):.6f} "
+                        f"elapsed={elapsed / 60:.1f}m"
+                    )
+
+            if global_step % int(run_args.stage1_grad_accum) != 0:
+                if float(run_args.stage1_max_grad_norm) > 0:
+                    nn.utils.clip_grad_norm_(trainable, float(run_args.stage1_max_grad_norm))
+                optimizer.step()
+                optimizer.zero_grad(set_to_none=True)
+                optim_step += 1
+    finally:
+        for handle in hook_handles:
+            handle.remove()
+
+
+def build_dataloaders(train_ds, eval_ds, args, world_size: int, is_distributed: bool):
+    collator = LMDataCollator(pad_id=0)
+    if is_distributed:
+        train_sampler = DistributedSampler(
+            train_ds,
+            num_replicas=world_size,
+            rank=dist.get_rank(),
+            shuffle=True,
+            drop_last=True,
+        )
+        eval_sampler = None
+        if eval_ds is not None:
+            eval_sampler = DistributedSampler(
+                eval_ds,
+                num_replicas=world_size,
+                rank=dist.get_rank(),
+                shuffle=False,
+                drop_last=False,
+            )
+    else:
+        train_sampler = None
+        eval_sampler = None
+
+    train_dl = DataLoader(
+        train_ds,
+        batch_size=args.batch_size,
+        sampler=train_sampler,
+        shuffle=train_sampler is None,
+        drop_last=True,
+        num_workers=2,
+        pin_memory=True,
+        collate_fn=collator,
+    )
+
+    eval_dl = None
+    if eval_ds is not None:
+        eval_dl = DataLoader(
+            eval_ds,
+            batch_size=args.batch_size,
+            sampler=eval_sampler,
+            shuffle=False,
+            drop_last=False,
+            num_workers=2,
+            pin_memory=True,
+            collate_fn=collator,
+        )
+    return train_dl, eval_dl
+
+
+def maybe_prepare_kbit_model_for_training(model: nn.Module, args, quantization_config) -> nn.Module:
+    if quantization_config is None:
+        return model
+
+    if bool(args.gradient_checkpointing):
+        model.gradient_checkpointing_enable()
+
+    prep_sig = inspect.signature(prepare_model_for_kbit_training)
+    if "use_gradient_checkpointing" in prep_sig.parameters:
+        return prepare_model_for_kbit_training(
+            model,
+            use_gradient_checkpointing=bool(args.gradient_checkpointing),
+        )
+    return prepare_model_for_kbit_training(model)
+
+
 def parse_args():
     ap = argparse.ArgumentParser()
     ap.add_argument("--model_path", type=str, required=True)
     ap.add_argument("--output_dir", type=str, required=True)
+    ap.add_argument(
+        "--stage",
+        type=int,
+        default=0,
+        choices=[0, 1, 2],
+        help="0: run stage1+stage2, 1: run stage1 only, 2: run stage2 only",
+    )
+    ap.add_argument(
+        "--stage2_init_path",
+        type=str,
+        default="",
+        help="Optional initialization path for stage2. Defaults to output_dir/ckpt_after_stage1 when available.",
+    )
+    ap.add_argument(
+        "--stage1_teacher_path",
+        type=str,
+        default="",
+        help="Checkpoint path that provides legacy dense router weights for stage1 teacher. Defaults to model_path.",
+    )
 
     ap.add_argument(
         "--dataset",
@@ -996,6 +1442,18 @@ def parse_args():
     ap.add_argument("--log_every", type=int, default=50)
     ap.add_argument("--eval_every", type=int, default=1000)
     ap.add_argument("--save_every", type=int, default=200)
+    ap.add_argument("--stage1_epochs", type=int, default=1)
+    ap.add_argument("--stage1_lr", type=float, default=2e-4)
+    ap.add_argument("--stage1_grad_accum", type=int, default=1)
+    ap.add_argument("--stage1_log_every", type=int, default=50)
+    ap.add_argument("--stage1_max_grad_norm", type=float, default=1.0)
+    ap.add_argument("--stage1_data_ratio", type=float, default=0.2)
+    ap.add_argument("--stage_split_seed", type=int, default=42)
+    ap.add_argument("--stage1_distill_temperature", type=float, default=1.0)
+    ap.add_argument("--stage1_kl_coef", type=float, default=1.0)
+    ap.add_argument("--stage1_logit_coef", type=float, default=1.0)
+    ap.add_argument("--stage1_use_logit_loss", type=int, default=1)
+    ap.add_argument("--stage1_logit_loss_type", type=str, default="huber", choices=["huber", "mse"])
 
     ap.add_argument("--device", type=str, default="cuda")
     ap.add_argument("--router_top_k", type=int, default=0)
@@ -1041,6 +1499,8 @@ def main():
 
     if bool(args.load_in_4bit) and bool(args.load_in_8bit):
         raise ValueError("Only one of --load_in_4bit and --load_in_8bit can be enabled.")
+    if not (0.0 < float(args.stage1_data_ratio) < 1.0):
+        raise ValueError(f"--stage1_data_ratio must be in (0, 1), got {args.stage1_data_ratio}")
 
     local_rank, world_size, is_distributed = setup_distributed_safe()
     set_seed(args.seed + (local_rank if is_distributed else 0))
@@ -1056,28 +1516,6 @@ def main():
     tokenizer = AutoTokenizer.from_pretrained(args.model_path, use_fast=True)
 
     model_cls, config_cls = import_moe_classes()
-    config = config_cls.from_pretrained(args.model_path)
-    if hasattr(config, "ensure_model_attributes"):
-        config.ensure_model_attributes()
-
-    effective_top_k = int(args.router_top_k) if int(args.router_top_k) > 0 else int(args.router_topk)
-    if effective_top_k > 0:
-        config.router_top_k = effective_top_k
-    if int(args.router_use_entmax) >= 0:
-        config.router_use_entmax = bool(args.router_use_entmax)
-    if args.router_entmax_alpha is not None:
-        config.router_entmax_alpha = float(args.router_entmax_alpha)
-    if int(args.share_router_expert_embedding) >= 0:
-        config.share_router_expert_embedding = bool(args.share_router_expert_embedding)
-    if hasattr(config, "ensure_model_attributes"):
-        config.ensure_model_attributes()
-    if int(getattr(config, "router_top_k", 0)) <= 0:
-        raise ValueError(f"config.router_top_k must be >= 1, got {getattr(config, 'router_top_k', None)}")
-    if int(getattr(config, "num_experts", 0)) > 0 and int(config.router_top_k) > int(config.num_experts):
-        raise ValueError(f"router_top_k ({config.router_top_k}) cannot exceed num_experts ({config.num_experts})")
-    config.router_use_ema_update = bool(args.router_use_ema_update)
-    config.router_ema_momentum = float(args.router_ema_momentum)
-    config.router_pull_temperature = float(args.router_pull_temperature)
     quantization_config = build_quantization_config(args)
     if is_main_process():
         print(f"[load] distributed={is_distributed} world_size={world_size} 4bit={bool(args.load_in_4bit)} 8bit={bool(args.load_in_8bit)}")
@@ -1085,99 +1523,136 @@ def main():
             print(f"[load] 4bit compute_dtype={quantization_config.bnb_4bit_compute_dtype}")
         print(f"[train] mixed precision: fp16={use_fp16} bf16={use_bf16}")
 
-    model = build_model_with_router_compat(
+    stage1_ckpt_dir = os.path.join(args.output_dir, "ckpt_after_stage1")
+
+    if args.stage in (0, 1):
+        if is_main_process():
+            print("[stage1] loading base model for router distillation")
+
+        stage1_config = config_cls.from_pretrained(args.model_path)
+        configure_model_config(stage1_config, args)
+        stage1_model = build_model_with_router_compat(
+            args=args,
+            model_cls=model_cls,
+            config=stage1_config,
+            model_path=args.model_path,
+            device=device,
+            quantization_config=quantization_config,
+            local_rank=local_rank,
+            is_distributed=is_distributed,
+            init_from_legacy=True,
+        )
+        stage1_model = maybe_prepare_kbit_model_for_training(stage1_model, args, quantization_config)
+
+        stage1_train_ds, _ = build_train_eval_datasets(tokenizer, args, stage="stage1")
+        stage1_train_dl, _ = build_dataloaders(stage1_train_ds, None, args, world_size, is_distributed)
+        if is_main_process():
+            print(
+                f"[stage1][data] train={len(stage1_train_ds)} "
+                f"(ratio={float(args.stage1_data_ratio):.3f}, seed={int(args.stage_split_seed)})"
+            )
+
+        stage1_switch_layers = get_switch_layers(stage1_model)
+        teacher_path = args.stage1_teacher_path or args.model_path
+        teacher_router_weights = load_legacy_router_teacher_weights(teacher_path, stage1_switch_layers)
+
+        if is_distributed:
+            stage1_model = torch.nn.parallel.DistributedDataParallel(
+                stage1_model,
+                device_ids=[local_rank],
+                output_device=local_rank,
+                find_unused_parameters=True,
+            )
+
+        stage1_train_cross_attention_router(
+            model=stage1_model,
+            train_dl=stage1_train_dl,
+            run_args=args,
+            device=device,
+            teacher_router_weights=teacher_router_weights,
+        )
+
+        if is_main_process():
+            print(f"[stage1] saving full checkpoint to {stage1_ckpt_dir}")
+            save_full_model_checkpoint(stage1_model, stage1_ckpt_dir, tokenizer, stage1_config)
+        if is_distributed:
+            dist.barrier()
+
+        del stage1_model, stage1_train_dl, stage1_train_ds, teacher_router_weights, stage1_switch_layers
+        gc.collect()
+        if device.type == "cuda":
+            torch.cuda.empty_cache()
+
+        if args.stage == 1:
+            cleanup_distributed()
+            return
+
+    if args.stage2_init_path:
+        stage2_model_path = args.stage2_init_path
+    elif os.path.isdir(stage1_ckpt_dir):
+        stage2_model_path = stage1_ckpt_dir
+    else:
+        stage2_model_path = args.model_path
+
+    if is_main_process():
+        print(f"[stage2] loading model from {stage2_model_path}")
+
+    stage2_config = config_cls.from_pretrained(stage2_model_path)
+    configure_model_config(stage2_config, args)
+    stage2_model = build_model_with_router_compat(
         args=args,
         model_cls=model_cls,
-        config=config,
+        config=stage2_config,
+        model_path=stage2_model_path,
         device=device,
         quantization_config=quantization_config,
         local_rank=local_rank,
         is_distributed=is_distributed,
+        init_from_legacy=os.path.realpath(stage2_model_path) == os.path.realpath(args.model_path),
     )
-
-    if quantization_config is not None:
-        if bool(args.gradient_checkpointing):
-            model.gradient_checkpointing_enable()
-        prep_sig = inspect.signature(prepare_model_for_kbit_training)
-        if "use_gradient_checkpointing" in prep_sig.parameters:
-            model = prepare_model_for_kbit_training(
-                model,
-                use_gradient_checkpointing=bool(args.gradient_checkpointing),
-            )
-        else:
-            model = prepare_model_for_kbit_training(model)
+    stage2_model = maybe_prepare_kbit_model_for_training(stage2_model, args, quantization_config)
 
     targets = [t.strip() for t in args.lora_target_modules.split(",") if t.strip()] if args.lora_target_modules else None
-    model = apply_lora(model, r=args.lora_r, alpha=args.lora_alpha, dropout=args.lora_dropout, target_modules=targets)
+    stage2_model = apply_lora(
+        stage2_model,
+        r=args.lora_r,
+        alpha=args.lora_alpha,
+        dropout=args.lora_dropout,
+        target_modules=targets,
+    )
 
     if bool(args.train_new_router_params):
-        n_router = _enable_new_router_params_trainable(model)
+        n_router = _enable_new_router_params_trainable(stage2_model)
         if is_main_process():
-            print(f"[train] extra trainable new-router params: {n_router}")
+            print(f"[stage2] extra trainable new-router params: {n_router}")
 
     n_fp32 = 0
     if bool(args.train_extra_params_in_fp32):
-        n_fp32 = _cast_selected_trainable_params_to_fp32(model)
+        n_fp32 = _cast_selected_trainable_params_to_fp32(stage2_model)
     if is_main_process():
-        trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
-        total = sum(p.numel() for p in model.parameters())
-        print(f"[train] cast trainable params to fp32: {n_fp32}")
-        print(f"[lora] trainable params: {trainable}/{total} ({trainable / total * 100:.2f}%)")
+        trainable = sum(p.numel() for p in stage2_model.parameters() if p.requires_grad)
+        total = sum(p.numel() for p in stage2_model.parameters())
+        print(f"[stage2] cast trainable params to fp32: {n_fp32}")
+        print(f"[stage2] trainable params: {trainable}/{total} ({trainable / total * 100:.2f}%)")
         try:
-            model.print_trainable_parameters()
+            stage2_model.print_trainable_parameters()
         except Exception:
             pass
 
-    if args.dataset == "mix":
-        names = [x.strip() for x in args.mix_datasets.split(",") if x.strip()]
-        train_ds = concatenate_datasets([
-            make_dataset(name, tokenizer, args, args.train_split, args.train_max_samples) for name in names
-        ])
-    else:
-        train_ds = make_dataset(args.dataset, tokenizer, args, args.train_split, args.train_max_samples)
-    eval_ds = make_dataset(args.eval_dataset, tokenizer, args, args.eval_split, args.eval_max_samples)
-
+    stage2_train_ds, eval_ds = build_train_eval_datasets(tokenizer, args, stage="stage2")
     if is_main_process():
-        print(f"[data] train={len(train_ds)} eval={len(eval_ds)} block_size={args.block_size}")
-
-    collator = LMDataCollator(pad_id=0)
-    if is_distributed:
-        train_sampler = DistributedSampler(train_ds, num_replicas=world_size, rank=dist.get_rank(), shuffle=True, drop_last=True)
-        eval_sampler = DistributedSampler(eval_ds, num_replicas=world_size, rank=dist.get_rank(), shuffle=False, drop_last=False)
-    else:
-        train_sampler = None
-        eval_sampler = None
-
-    train_dl = DataLoader(
-        train_ds,
-        batch_size=args.batch_size,
-        sampler=train_sampler,
-        shuffle=train_sampler is None,
-        drop_last=True,
-        num_workers=2,
-        pin_memory=True,
-        collate_fn=collator,
-    )
-    eval_dl = DataLoader(
-        eval_ds,
-        batch_size=args.batch_size,
-        sampler=eval_sampler,
-        shuffle=False,
-        drop_last=False,
-        num_workers=2,
-        pin_memory=True,
-        collate_fn=collator,
-    )
+        print(f"[stage2][data] train={len(stage2_train_ds)} eval={len(eval_ds)} block_size={args.block_size}")
+    train_dl, eval_dl = build_dataloaders(stage2_train_ds, eval_ds, args, world_size, is_distributed)
 
     if is_distributed:
-        model = torch.nn.parallel.DistributedDataParallel(
-            model,
+        stage2_model = torch.nn.parallel.DistributedDataParallel(
+            stage2_model,
             device_ids=[local_rank],
             output_device=local_rank,
             find_unused_parameters=True,
         )
     train(
-        model=model,
+        model=stage2_model,
         train_dl=train_dl,
         eval_dl=eval_dl,
         run_args=args,
