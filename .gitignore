@@ -9,3 +9,6 @@
 *_tset.py
 *.log
 /configs/
+.vscode/
+records/
+/Qwen_MoE.egg-info/

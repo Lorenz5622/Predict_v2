@@ -38,7 +38,6 @@ from transformers import AutoTokenizer, BitsAndBytesConfig
 
 from finetune import (
     LMDataCollator,
-    build_optimizer,
     cleanup_distributed,
     evaluate,
     is_main_process,
@@ -466,6 +465,63 @@ def apply_lora(
     return get_peft_model(model, lora_cfg)
 
 
+def _is_stage2_router_param(name: str) -> bool:
+    router_keys = (
+        "router.query",
+        "router.key",
+        "router.token_couple_proj",
+        "router.expert_embed",
+        "shared_expert_embed",
+    )
+    return any(key in name for key in router_keys)
+
+
+def build_stage2_optimizer(
+    model: nn.Module,
+    lr: float,
+    weight_decay: float,
+    use_bnb_8bit: bool,
+    router_lr_mult: float,
+):
+    router_params: List[torch.nn.Parameter] = []
+    other_params: List[torch.nn.Parameter] = []
+
+    for name, param in model.named_parameters():
+        if not param.requires_grad:
+            continue
+        if _is_stage2_router_param(name):
+            router_params.append(param)
+        else:
+            other_params.append(param)
+
+    param_groups = []
+    if other_params:
+        param_groups.append({"params": other_params, "lr": lr})
+    if router_params:
+        param_groups.append({"params": router_params, "lr": lr * router_lr_mult})
+    if not param_groups:
+        raise RuntimeError("No trainable parameters found for stage2 optimizer.")
+
+    if is_main_process():
+        print(
+            "[stage2][opt] param groups: "
+            f"other={len(other_params)} router={len(router_params)}"
+        )
+        print(
+            "[stage2][opt] lrs: "
+            f"other={lr:.3e} router={lr * router_lr_mult:.3e}"
+        )
+
+    if use_bnb_8bit:
+        try:
+            import bitsandbytes as bnb
+        except Exception as exc:
+            raise ImportError("bitsandbytes is not available but --use_bnb_8bit=1 was set") from exc
+        return bnb.optim.AdamW8bit(param_groups, lr=lr, weight_decay=weight_decay)
+
+    return torch.optim.AdamW(param_groups, lr=lr, weight_decay=weight_decay)
+
+
 def train(
     model: nn.Module,
     train_dl: DataLoader,
@@ -482,17 +538,26 @@ def train(
     fp16: bool,
     bf16: bool,
     use_bnb_8bit: bool,
+    router_lr_mult: float,
+    min_lr_ratio: float,
     log_every: int,
     eval_every: int,
     save_every: int,
 ):
     os.makedirs(output_dir, exist_ok=True)
 
-    optimizer = build_optimizer(model, lr=lr, weight_decay=weight_decay, use_bnb_8bit=use_bnb_8bit)
+    optimizer = build_stage2_optimizer(
+        model,
+        lr=lr,
+        weight_decay=weight_decay,
+        use_bnb_8bit=use_bnb_8bit,
+        router_lr_mult=router_lr_mult,
+    )
 
     steps_per_epoch = math.ceil(len(train_dl) / max(1, grad_accum))
     total_optim_steps = steps_per_epoch * epochs
     warmup_steps = int(total_optim_steps * warmup_ratio)
+    min_lr_ratio = float(min(max(min_lr_ratio, 0.0), 1.0))
 
     pbar = tqdm(
         total=total_optim_steps,
@@ -503,8 +568,11 @@ def train(
 
     def lr_lambda(step: int):
         if step < warmup_steps:
-            return float(step) / float(max(1, warmup_steps))
-        return 1.0
+            return float(step + 1) / float(max(1, warmup_steps))
+        progress = (step - warmup_steps) / float(max(1, total_optim_steps - warmup_steps))
+        progress = min(max(progress, 0.0), 1.0)
+        cosine_decay = 0.5 * (1.0 + math.cos(math.pi * progress))
+        return min_lr_ratio + (1.0 - min_lr_ratio) * cosine_decay
 
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_lambda)
 
@@ -606,15 +674,27 @@ def train(
                         scaler.unscale_(optimizer)
                     nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
 
+                step_succeeded = True
                 if scaler.is_enabled():
+                    scale_before = scaler.get_scale()
                     scaler.step(optimizer)
                     scaler.update()
+                    scale_after = scaler.get_scale()
+                    step_succeeded = scale_after >= scale_before
                 else:
                     optimizer.step()
 
                 optimizer.zero_grad(set_to_none=True)
-                scheduler.step()
+                if not step_succeeded:
+                    if is_main_process():
+                        print(
+                            "[train] scaler dropped "
+                            f"{scale_before} -> {scale_after}; skip scheduler/optim_step"
+                        )
+                    continue
+
                 optim_step += 1
+                scheduler.step()
 
                 loss_real = float(total_loss.detach().float().item())
                 ce_loss_real = float(ce_loss.detach().float().item())
@@ -1386,10 +1466,12 @@ def parse_args():
     ap.add_argument("--lr", type=float, default=2e-4)
     ap.add_argument("--weight_decay", type=float, default=0.0)
     ap.add_argument("--warmup_ratio", type=float, default=0.03)
+    ap.add_argument("--min_lr_ratio", type=float, default=0.7)
+    ap.add_argument("--router_lr_mult", type=float, default=1.0)
     ap.add_argument("--max_grad_norm", type=float, default=1.0)
     ap.add_argument("--num_proc", type=int, default=8)
     ap.add_argument("--train_max_samples", type=int, default=None)
-    ap.add_argument("--eval_max_samples", type=int, default=20)
+    ap.add_argument("--eval_max_samples", type=int, default=200)
     ap.add_argument("--use_label", type=int, default=1)
 
     ap.add_argument("--fp16", type=int, default=0)
@@ -1682,6 +1764,8 @@ def main():
         fp16=use_fp16,
         bf16=use_bf16,
         use_bnb_8bit=bool(args.use_bnb_8bit),
+        router_lr_mult=args.router_lr_mult,
+        min_lr_ratio=args.min_lr_ratio,
         log_every=max(1, args.log_every),
         eval_every=max(1, args.eval_every),
         save_every=max(0, args.save_every),
