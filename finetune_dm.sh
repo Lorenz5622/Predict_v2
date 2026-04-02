@@ -11,7 +11,7 @@ CONFIGS=(
   # "configs/finetune_dm_hard_lr1_dylr_exp_lrmult125_minlr03_4e.json"
   # "configs/finetune_dm_hard_lr1_dylr_exp_lrmult10_minlr03_4e.json"
   # "configs/finetune_dm_hard_lr1_dylr_CB_load8.json"
-  "configs/finetune_dm_hard_lr1_dylr_CB.json"
+  "configs/finetune_dm_hard_lr1_dylr_CB_v1.json"
   # "configs/finetune_dm_hard.json"
   # "configs/finetune_dm_hard_lr1.json"
   # "configs/finetune_dm_hard_lr1_dl.json"
