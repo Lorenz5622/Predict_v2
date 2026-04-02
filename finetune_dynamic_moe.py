@@ -326,6 +326,15 @@ def enable_cross_attention_router_only(model: nn.Module) -> int:
     return n_params
 
 
+def prepare_stage1_router_trainables(model: nn.Module) -> int:
+    freeze_all_params(model)
+    n_router_params = enable_cross_attention_router_only(model)
+    if n_router_params == 0:
+        raise RuntimeError("Stage1 found no trainable CrossAttentionRouter parameters.")
+    _cast_selected_trainable_params_to_fp32(model)
+    return n_router_params
+
+
 def split_train_dataset_for_stage(ds, stage1_ratio: float, seed: int, stage: str):
     if not (0.0 < float(stage1_ratio) < 1.0):
         raise ValueError(f"stage1_ratio must be in (0, 1), got {stage1_ratio}")
@@ -1182,14 +1191,9 @@ def stage1_train_cross_attention_router(
     device: torch.device,
     teacher_router_weights: Dict[int, torch.Tensor],
 ):
-    freeze_all_params(model)
-    n_router_params = enable_cross_attention_router_only(model)
-    if n_router_params == 0:
-        raise RuntimeError("Stage1 found no trainable CrossAttentionRouter parameters.")
-
-    _cast_selected_trainable_params_to_fp32(model)
-
     trainable = [param for param in model.parameters() if param.requires_grad]
+    if not trainable:
+        raise RuntimeError("Stage1 found no parameters with requires_grad=True before optimizer creation.")
     optimizer = torch.optim.AdamW(
         trainable,
         lr=float(run_args.stage1_lr),
@@ -1384,7 +1388,7 @@ def build_dataloaders(train_ds, eval_ds, args, world_size: int, is_distributed: 
         sampler=train_sampler,
         shuffle=train_sampler is None,
         drop_last=True,
-        num_workers=2,
+        num_workers=8,
         pin_memory=True,
         collate_fn=collator,
     )
@@ -1397,7 +1401,7 @@ def build_dataloaders(train_ds, eval_ds, args, world_size: int, is_distributed: 
             sampler=eval_sampler,
             shuffle=False,
             drop_last=False,
-            num_workers=2,
+            num_workers=8,
             pin_memory=True,
             collate_fn=collator,
         )
@@ -1471,7 +1475,7 @@ def parse_args():
     ap.add_argument("--max_grad_norm", type=float, default=1.0)
     ap.add_argument("--num_proc", type=int, default=8)
     ap.add_argument("--train_max_samples", type=int, default=None)
-    ap.add_argument("--eval_max_samples", type=int, default=200)
+    ap.add_argument("--eval_max_samples", type=int, default=20)
     ap.add_argument("--use_label", type=int, default=1)
 
     ap.add_argument("--fp16", type=int, default=0)
@@ -1537,7 +1541,7 @@ def parse_args():
 
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--log_every", type=int, default=50)
-    ap.add_argument("--eval_every", type=int, default=100)
+    ap.add_argument("--eval_every", type=int, default=500)
     ap.add_argument("--save_every", type=int, default=200)
     ap.add_argument("--stage1_epochs", type=int, default=1)
     ap.add_argument("--stage1_lr", type=float, default=2e-4)
@@ -1640,6 +1644,9 @@ def main():
             init_from_legacy=True,
         )
         stage1_model = maybe_prepare_kbit_model_for_training(stage1_model, args, quantization_config)
+        n_stage1_router_params = prepare_stage1_router_trainables(stage1_model)
+        if is_main_process():
+            print(f"[stage1] trainable cross-attention router params: {n_stage1_router_params}")
 
         stage1_train_ds, _ = build_train_eval_datasets(tokenizer, args, stage="stage1")
         stage1_train_dl, _ = build_dataloaders(stage1_train_ds, None, args, world_size, is_distributed)

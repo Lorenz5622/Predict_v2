@@ -1,0 +1,36 @@
+[15]	Wang L, Gao H, Zhao C, et al. Auxiliary-loss-free load balancing strategy for mixture-of-experts[J]. arXiv preprint arXiv:2408.15664, 2024.
+[16]	Yue T, Guo L, Cheng J, et al. Ada-k routing: Boosting the efficiency of moe-based llms[C]//The Thirteenth International Conference on Learning Representations. 2024.
+[17]	Aghdam M A, Jin H, Wu Y. Da-moe: Towards dynamic expert allocation for mixture-of-experts models[J]. arXiv preprint arXiv:2409.06669, 2024.
+[18]	Guo Y, Cheng Z, Tang X, et al. Dynamic mixture of experts: An auto-tuning approach for efficient transformer models[J]. arXiv preprint arXiv:2405.14297, 2024.
+[19]	Riquelme C, Puigcerver J, Mustafa B, et al. Scaling vision with sparse mixture of experts[J]. Advances in Neural Information Processing Systems, 2021, 34: 8583-8595.
+[20]	Ramachandran P, Le Q V. Diversity and depth in per-example routing models[C]//International Conference on Learning Representations. 2018.
+[21]	Fedus W, Zoph B, Shazeer N. Switch transformers: Scaling to trillion parameter models with simple and efficient sparsity[J]. Journal of Machine Learning Research, 2022, 23(120): 1-39.
+[22]	Yuan Y, Wang Z, Huang Z, et al. Expert race: A flexible routing strategy for scaling diffusion transformer with mixture of experts[J]. arXiv preprint arXiv:2503.16057, 2025.
+[23]	Huang Y, Wang Z, Yuan Z, et al. MoDES: Accelerating Mixture-of-Experts Multimodal Large Language Models via Dynamic Expert Skipping[J]. arXiv preprint arXiv:2511.15690, 2025.
+[24]	Blecher G, Fine S. Moeatt: A deep mixture of experts model using attention-based routing gate[C]//2023 International Conference on Machine Learning and Applications (ICMLA). IEEE, 2023: 1018-1024.
+[25]	Akbarian P, Nguyen H, Han X, et al. Quadratic Gating Mixture of Experts: Statistical Insights into Self-Attention[J]. arXiv preprint arXiv:2410.11222, 2024.
+[26]	Ran J, Zhao G, Wu Y, et al. Router Upcycling: Leveraging Mixture-of-Routers in Mixture-of-Experts Upcycling[J]. arXiv preprint arXiv:2509.00679, 2025.
+[27]	Li Z, Zhou T. Your mixture-of-experts llm is secretly an embedding model for free[J]. arXiv preprint arXiv:2410.10814, 2024.
+[28]	Hazimeh H, Zhao Z, Chowdhery A, et al. Dselect-k: Differentiable selection in the mixture of experts with applications to multi-task learning[J]. Advances in Neural Information Processing Systems, 2021, 34: 29335-29347
+[29]	Wu S, Luo J, Chen X, et al. Yuan 2.0-m32: Mixture of experts with attention router[J]. arXiv preprint arXiv:2405.17976, 2024.
+[30]	Teja Chitty-Venkata K, Madireddy S, Emani M, et al. LExI: Layer-Adaptive Active Experts for Efficient MoE Model Inference[J]. arXiv e-prints, 2025: arXiv: 2509.02753.
+[31]	Wang Z, Zhu J, Chen J. Remoe: Fully differentiable mixture-of-experts with relu routing[J]. arXiv preprint arXiv:2412.14711, 2024.
+[32]	Wu H, Qiu Z, Wang Z, et al. Gw-moe: Resolving uncertainty in moe router with global workspace theory[J]. arXiv preprint arXiv:2406.12375, 2024.
+[33]	Li J, Su Q, Yang Y, et al. Adaptive gating in mixture-of-experts based language models[C]//Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing. 2023: 3577-3587.
+[34]	Han Z, Liu X, Zhou R, et al. Faster, Smaller, and Smarter: Task-Aware Expert Merging for Online MoE Inference[J]. arXiv preprint arXiv:2509.19781, 2025.
+[35]	Nowaz Rabbani Chowdhury M, Wang M, El Maghraoui K, et al. A Provably Effective Method for Pruning Experts in Fine-tuned Sparse Mixture-of-Experts[J]. arXiv e-prints, 2024: arXiv: 2405.16646.
+[36]	Lu X, Liu Q, Xu Y, et al. Not all experts are equal: Efficient expert pruning and skipping for mixture-of-experts large language models[C]//Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers). 2024: 6159-6172.
+[37]	Yang C, Sui Y, Xiao J, et al. Moe-i2: Compressing mixture of experts models through inter-expert pruning and intra-expert low-rank decomposition[C]//Findings of the Association for Computational Linguistics: EMNLP 2024. 2024: 10456-10466.
+[38]	Thiombiano A M O, Hnich B, Mrad A B, et al. MoxE: Mixture of xLSTM Experts with Entropy-Aware Routing for Efficient Language Modeling[J]. arXiv preprint arXiv:2505.01459, 2025.
+[39]	Ai M, Wei T, Chen Y, et al. Resmoe: Space-efficient compression of mixture of experts llms via residual restoration[C]//Proceedings of the 31st ACM SIGKDD Conference on Knowledge Discovery and Data Mining V. 1. 2025: 1-12.
+[40]	Jin C, Peng H, Xiang M, et al. Sparsity-Controllable Dynamic Top-p MoE for Large Foundation Model Pre-training[J]. arXiv preprint arXiv:2512.13996, 2025.
+[41]	Li P, Zhang Z, Yadav P, et al. Merge, then compress: Demystify efficient smoe with hints from its routing policy[J]. arXiv preprint arXiv:2310.01334, 2023.
+[42]	He S, Fan R Z, Ding L, et al. Merging experts into one: Improving computational efficiency of mixture of experts[C]//Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing. 2023: 14685-14691.
+[43]	Xue F, He X, Ren X, et al. One student knows all experts know: From sparse to dense[J]. arXiv preprint arXiv:2201.10890, 2022.
+[44]	Muzio A, Sun A, He C. Seer-moe: Sparse expert efficiency through regularization for mixture-of-experts[J]. arXiv preprint arXiv:2404.05089, 2024.
+[45]	Gao Z F, Liu P, Zhao W X, et al. Parameter-efficient mixture-of-experts architecture for pre-trained language models[C]//Proceedings of the 29th International Conference on Computational Linguistics. 2022: 3263-3273.
+[46]	Shazeer N, Mirhoseini A, Maziarz K, et al. Outrageously large neural networks: The sparsely-gated mixture-of-experts layer[J]. arXiv preprint arXiv:1701.06538, 2017.
+[47]	Lepikhin D, Lee H J, Xu Y, et al. Gshard: Scaling giant models with conditional computation and automatic sharding[J]. arXiv preprint arXiv:2006.16668, 2020.
+[48]	Qiu Z, Huang Z, Cheng S, et al. Layerwise recurrent router for mixture-of-experts[J]. arXiv preprint arXiv:2408.06793, 2024.
+[49]	Dai D, Deng C, Zhao C, et al. Deepseekmoe: Towards ultimate expert specialization in mixture-of-experts language models[C]//Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers). 2024: 1280-1297.
+[50]	Vaswani A, Shazeer N, Parmar N, et al. Attention is all you need[J]. Advances in neural information processing systems, 2017, 30.

@@ -336,13 +336,15 @@ class CrossAttentionRouter(nn.Module):
         self.hidden_size = int(hidden_size)
         self.num_experts = int(num_experts)
         self.d_router = int(d_router if d_router is not None else hidden_size)
+        print(f"d_router in CrossAttentionRouter: {self.d_router}")
         self.use_entmax = bool(use_entmax)
         self.alpha = alpha
 
         self.query = nn.Linear(self.hidden_size, self.d_router, bias=False)
         self.key = nn.Linear(self.d_router, self.d_router, bias=False)
 
-        # [新增] 专门给 Prototype Pull Loss / EMA 使用的 token representation
+        # Kept for checkpoint compatibility with earlier experiments. The
+        # q-k routing space is now reused directly for pull/EMA updates.
         self.token_couple_proj = nn.Linear(self.hidden_size, self.d_router, bias=False)
 
         # Value projection is intentionally disabled.
@@ -392,23 +394,26 @@ class CrossAttentionRouter(nn.Module):
             raise RuntimeError("CrossAttentionRouter expert_embed is not initialized.")
         return self.expert_embed
 
+    def project_routed_expert_repr_to_embed_space(self, routed_expert_repr: torch.Tensor) -> torch.Tensor:
+        """
+        Map routed expert representations k-space back to the stored
+        `expert_embed` parameter space so EMA can still update the parameter.
+        """
+        key_weight_t = self.key.weight.detach().float().transpose(0, 1)
+        key_weight_t_pinv = torch.linalg.pinv(key_weight_t)
+        return routed_expert_repr.float() @ key_weight_t_pinv
+
     def forward(
         self,
         hidden_states: torch.Tensor,
-        return_token_proto: bool = False,
-    ) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
+        return_router_repr: bool = False,
+    ) -> Tuple[torch.Tensor, torch.Tensor, Optional[Tuple[torch.Tensor, torch.Tensor]]]:
         # Keep router params in fp32 while allowing upstream hidden states in fp16/bf16.
         router_in = hidden_states.to(self.query.weight.dtype)
         expert_embed = self.get_expert_embed().to(self.key.weight.dtype)
 
         q = self.query(router_in).float()                  # (b, s, d)
         k = self.key(expert_embed).float()                 # (e, d)
-
-        token_proto = None
-        if return_token_proto:
-            # [新增] 给 pull loss / EMA 的 token prototype 表示
-            token_couple_in = hidden_states.to(self.token_couple_proj.weight.dtype)
-            token_proto = self.token_couple_proj(token_couple_in).float()   # (b, s, d)
 
         attn_scores = torch.matmul(q, k.transpose(0, 1)) / math.sqrt(self.d_router)  # (b, s, e)
         if self.use_entmax:
@@ -418,7 +423,8 @@ class CrossAttentionRouter(nn.Module):
 
         route_scores = attn_scores
         route_probs = attn_weights
-        return route_scores, route_probs, token_proto
+        router_repr = (q, k) if return_router_repr else None
+        return route_scores, route_probs, router_repr
 
 
 class SwitchMLP(nn.Module):
@@ -438,8 +444,8 @@ class SwitchMLP(nn.Module):
         self.router_pull_loss_type = str(getattr(config, "router_pull_loss_type", "soft"))
         self.router_ema_momentum = float(getattr(config, "router_ema_momentum", 0.99))
         self.router_use_ema_update = bool(getattr(config, "router_use_ema_update", False))
-        self._pending_router_ema_token_proto = None
-        self._pending_router_ema_topk_ind = None
+        self._pending_router_ema_token_q = None
+        self._pending_router_ema_selected_probs = None
 
         if self.use_switch:
             self.experts = nn.ModuleList()
@@ -491,26 +497,27 @@ class SwitchMLP(nn.Module):
             )
     def _compute_prototype_pull_loss(
         self,
-        token_proto: torch.Tensor,      # (b, s, d)
-        route_probs: torch.Tensor,      # (b, s, e)
-        expert_embed: torch.Tensor,     # (e, d)
+        token_q: torch.Tensor,          # (b, s, d)
+        selected_probs: torch.Tensor,   # (b, s, e), top-p renormalized weights
+        expert_k: torch.Tensor,         # (e, d)
     ) -> torch.Tensor:
         """
-        Soft prototype pull loss:
-        让 token 的 router 表示更接近其当前被分配到的 expert prototype。
-        用 route_probs.detach() 做软标签，避免直接扰动主路由分布。
+        Pull loss in the actual q-k routing space.
+        The top-p-selected probabilities are treated as detached soft labels so
+        the prototype alignment follows real dispatch decisions.
         """
-        z = F.normalize(token_proto.float(), dim=-1)                # (b, s, d)
-        e = F.normalize(expert_embed.float(), dim=-1)               # (e, d)
-        sim = torch.matmul(z, e.transpose(0, 1))                    # (b, s, e)
+        q = F.normalize(token_q.float(), dim=-1)                    # (b, s, d)
+        k = F.normalize(expert_k.float(), dim=-1)                   # (e, d)
+        temp = max(self.router_pull_temperature, 1e-6)
+        sim = torch.matmul(q, k.transpose(0, 1)) / temp             # (b, s, e)
 
         if self.router_pull_loss_type == "soft":
-            assign = route_probs.detach().float()
-            pull_loss = - (assign * sim).sum(dim=-1).mean()
-            return pull_loss
+            assign = selected_probs.detach().float()
+            log_probs = F.log_softmax(sim, dim=-1)
+            return -(assign * log_probs).sum(dim=-1).mean()
 
         if self.router_pull_loss_type == "hard_ce":
-            target = route_probs.detach().argmax(dim=-1).long()
+            target = selected_probs.detach().argmax(dim=-1).long()
             return F.cross_entropy(sim.reshape(-1, sim.size(-1)), target.reshape(-1))
 
         raise ValueError(f"Unsupported router_pull_loss_type: {self.router_pull_loss_type!r}")
@@ -518,12 +525,12 @@ class SwitchMLP(nn.Module):
     @torch.no_grad()
     def _ema_update_expert_embed(
         self,
-        token_proto: torch.Tensor,      # (b, s, d)
-        topk_ind: torch.Tensor,         # (b, s, num_experts), 未选中为 -1
+        token_q: torch.Tensor,          # (b, s, d)
+        selected_probs: torch.Tensor,   # (b, s, e), top-p renormalized weights
     ) -> None:
         """
-        用当前 batch 被路由到某个 expert 的 token representation 均值，
-        对 expert_embed 做 EMA 更新。
+        Compute expert prototypes in q-space with top-p weights, smooth them in
+        routed k-space, then map them back to `expert_embed` parameter space.
         """
         if not self.use_cross_attention_router:
             return
@@ -533,18 +540,10 @@ class SwitchMLP(nn.Module):
         device = expert_embed.device
         dtype = expert_embed.dtype
 
-        token_proto = F.normalize(token_proto.detach().float(), dim=-1)  # (b, s, d)
-        flat_proto = token_proto.reshape(-1, token_proto.size(-1))       # (b*s, d)
-        flat_topk_ind = topk_ind.reshape(-1, topk_ind.size(-1))          # (b*s, num_experts)
-        proto_sums = flat_proto.new_zeros((self.num_experts, flat_proto.size(-1)))
-        proto_counts = flat_proto.new_zeros((self.num_experts,))
-
-        for expert_idx in range(self.num_experts):
-            token_idx, _slot_idx = torch.where(flat_topk_ind == expert_idx)
-            if token_idx.numel() == 0:
-                continue
-            proto_sums[expert_idx] = flat_proto[token_idx].sum(dim=0)
-            proto_counts[expert_idx] = float(token_idx.numel())
+        flat_q = F.normalize(token_q.detach().float(), dim=-1).reshape(-1, token_q.size(-1))     # (b*s, d)
+        flat_selected_probs = selected_probs.detach().float().reshape(-1, selected_probs.size(-1))  # (b*s, e)
+        proto_sums = flat_selected_probs.transpose(0, 1) @ flat_q                                 # (e, d)
+        proto_counts = flat_selected_probs.sum(dim=0)                                             # (e,)
 
         if dist.is_available() and dist.is_initialized():
             dist.all_reduce(proto_sums, op=dist.ReduceOp.SUM)
@@ -557,22 +556,25 @@ class SwitchMLP(nn.Module):
         proto_means = proto_sums[active_mask] / proto_counts[active_mask].unsqueeze(-1)
         proto_means = F.normalize(proto_means, dim=-1)
 
-        old = expert_embed[active_mask].detach().float()
-        old = F.normalize(old, dim=-1)
+        current_routed = router.key(expert_embed.to(router.key.weight.dtype)).detach().float()
+        current_routed = F.normalize(current_routed, dim=-1)
 
-        new = self.router_ema_momentum * old + (1.0 - self.router_ema_momentum) * proto_means
-        new = F.normalize(new, dim=-1)
-        expert_embed[active_mask].copy_(new.to(device=device, dtype=dtype))
+        old = current_routed[active_mask]
+        new_routed = self.router_ema_momentum * old + (1.0 - self.router_ema_momentum) * proto_means
+        new_routed = F.normalize(new_routed, dim=-1)
+
+        updated_embed = router.project_routed_expert_repr_to_embed_space(new_routed)
+        expert_embed[active_mask].copy_(updated_embed.to(device=device, dtype=dtype))
 
     @torch.no_grad()
     def apply_pending_router_ema_update(self) -> None:
-        token_proto = self._pending_router_ema_token_proto
-        topk_ind = self._pending_router_ema_topk_ind
-        self._pending_router_ema_token_proto = None
-        self._pending_router_ema_topk_ind = None
-        if token_proto is None or topk_ind is None:
+        token_q = self._pending_router_ema_token_q
+        selected_probs = self._pending_router_ema_selected_probs
+        self._pending_router_ema_token_q = None
+        self._pending_router_ema_selected_probs = None
+        if token_q is None or selected_probs is None:
             return
-        self._ema_update_expert_embed(token_proto=token_proto, topk_ind=topk_ind)
+        self._ema_update_expert_embed(token_q=token_q, selected_probs=selected_probs)
     
     def forward(self, hidden_states):
         """
@@ -582,8 +584,8 @@ class SwitchMLP(nn.Module):
             self.last_router_aux_loss = None
             self.last_router_z_loss = None
             self.last_router_pull_loss = None
-            self._pending_router_ema_token_proto = None
-            self._pending_router_ema_topk_ind = None
+            self._pending_router_ema_token_q = None
+            self._pending_router_ema_selected_probs = None
             return self.mlp(hidden_states)
 
         bsz, seq_len, hidden_dim = hidden_states.size()
@@ -591,14 +593,18 @@ class SwitchMLP(nn.Module):
         # 1) router output -> route probabilities.
         if self.use_cross_attention_router:
             compute_router_losses = self.training
-            router_logits, route_probs, token_proto = self.router(
+            router_logits, route_probs, router_repr = self.router(
                 hidden_states,
-                return_token_proto=compute_router_losses,
+                return_router_repr=compute_router_losses,
             )
             router_logits = router_logits.float()
             route_probs = route_probs.float()
-            if token_proto is not None:
-                token_proto = token_proto.float()
+            router_q = None
+            expert_k = None
+            if router_repr is not None:
+                router_q, expert_k = router_repr
+                router_q = router_q.float()
+                expert_k = expert_k.float()
 
             if route_probs.shape != router_logits.shape:
                 raise RuntimeError(
@@ -615,7 +621,8 @@ class SwitchMLP(nn.Module):
             if self.router_use_entmax:
                 route_probs = entmax_bisect(router_logits.float(), alpha=self.router_entmax_alpha, dim=-1)
             self.last_router_z_loss = None
-            token_proto = None
+            router_q = None
+            expert_k = None
 
         if self.training:
             route_probs_for_aux = route_probs.float()
@@ -636,22 +643,23 @@ class SwitchMLP(nn.Module):
 
         # [新增] Prototype Pull Loss
         if self.training and self.use_cross_attention_router:
-            expert_embed_for_loss = self.router.get_expert_embed()
+            if router_q is None or expert_k is None:
+                raise RuntimeError("CrossAttentionRouter did not return q-k router representations during training.")
             self.last_router_pull_loss = self._compute_prototype_pull_loss(
-                token_proto=token_proto,
-                route_probs=route_probs,
-                expert_embed=expert_embed_for_loss,
+                token_q=router_q,
+                selected_probs=topk_weights,
+                expert_k=expert_k,
             )
         else:
             self.last_router_pull_loss = None
 
         # [新增] EMA 更新 expert_embed
         if self.training and self.use_cross_attention_router and self.router_use_ema_update:
-            self._pending_router_ema_token_proto = token_proto.detach()
-            self._pending_router_ema_topk_ind = topk_ind.detach()
+            self._pending_router_ema_token_q = router_q.detach()
+            self._pending_router_ema_selected_probs = topk_weights.detach()
         else:
-            self._pending_router_ema_token_proto = None
-            self._pending_router_ema_topk_ind = None
+            self._pending_router_ema_token_q = None
+            self._pending_router_ema_selected_probs = None
 
         # 3) flatten tokens then sparse expert dispatch.
         flat_hidden = hidden_states.reshape(-1, hidden_dim)                  # (b*s, h)
@@ -971,6 +979,9 @@ class MoEModel(MoEPreTrainedModel):
         self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size, self.padding_idx)
         self.shared_expert_embed = None
         self.last_router_pull_loss = None
+        print(f"share_router_expert_embedding: {getattr(config, 'share_router_expert_embedding', False)}, \
+              use_cross_attention_router: {getattr(config, 'use_cross_attention_router', True)}, num_experts: {getattr(config, 'num_experts', 0)},\
+              num_hidden_layers: {getattr(config, 'num_hidden_layers', 0)}")
         print(f"share_router_expert_embedding: {getattr(config, 'share_router_expert_embedding', False)}")
         if (
             bool(getattr(config, "share_router_expert_embedding", False))
@@ -978,6 +989,7 @@ class MoEModel(MoEPreTrainedModel):
             and int(getattr(config, "num_experts", 0)) > 0
         ):
             d_router = int(getattr(config, "router_dim", config.hidden_size))
+            print(f"d_router: {d_router}")
             self.shared_expert_embed = nn.Parameter(torch.randn(config.num_experts, d_router))
 
         self.layers = nn.ModuleList([LlamaDecoderLayer(config, layer_idx) for layer_idx in range(config.num_hidden_layers)])

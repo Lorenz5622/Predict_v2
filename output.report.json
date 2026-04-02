@@ -1,0 +1,218 @@
+[
+  {
+    "num": "15",
+    "title": "Auxiliary-loss-free load balancing strategy for mixture-of-experts",
+    "status": "ok",
+    "source": "crossref-doi:10.1016/j.procs.2025.10.191"
+  },
+  {
+    "num": "16",
+    "title": "Ada-k routing: Boosting the efficiency of moe-based llms//The Thirteenth International Conference on Learning Representations",
+    "status": "ok",
+    "source": "crossref-doi:10.1016/0959-8049(93)90473-s"
+  },
+  {
+    "num": "17",
+    "title": "Da-moe: Towards dynamic expert allocation for mixture-of-experts models",
+    "status": "ok",
+    "source": "crossref-doi:10.18653/v1/2025.acl-long.633"
+  },
+  {
+    "num": "18",
+    "title": "Dynamic mixture of experts: An auto-tuning approach for efficient transformer models",
+    "status": "ok",
+    "source": "crossref-doi:10.1109/ssitcon66133.2025.11342018"
+  },
+  {
+    "num": "19",
+    "title": "Scaling vision with sparse mixture of experts",
+    "status": "ok",
+    "source": "crossref-doi:10.18653/v1/2023.findings-emnlp.758"
+  },
+  {
+    "num": "20",
+    "title": "Diversity and depth in per-example routing models//International Conference on Learning Representations",
+    "status": "ok",
+    "source": "crossref-doi:10.1109/iccv.2015.66"
+  },
+  {
+    "num": "21",
+    "title": "Switch transformers: Scaling to trillion parameter models with simple and efficient sparsity",
+    "status": "ok",
+    "source": "crossref-doi:10.24963/ijcai.2022/586"
+  },
+  {
+    "num": "22",
+    "title": "Expert race: A flexible routing strategy for scaling diffusion transformer with mixture of experts",
+    "status": "ok",
+    "source": "crossref-doi:10.52202/068431-0515"
+  },
+  {
+    "num": "23",
+    "title": "MoDES: Accelerating Mixture-of-Experts Multimodal Large Language Models via Dynamic Expert Skipping",
+    "status": "ok",
+    "source": "crossref-doi:10.1609/aaai.v40i27.39405"
+  },
+  {
+    "num": "24",
+    "title": "Moeatt: A deep mixture of experts model using attention-based routing gate//2023 International Conference on Machine Learning and Applications (ICMLA)",
+    "status": "ok",
+    "source": "crossref-doi:10.1109/icmla58977.2023.00151"
+  },
+  {
+    "num": "25",
+    "title": "Quadratic Gating Mixture of Experts: Statistical Insights into Self-Attention",
+    "status": "ok",
+    "source": "crossref-doi:10.1109/tit.2025.3647061"
+  },
+  {
+    "num": "26",
+    "title": "Router Upcycling: Leveraging Mixture-of-Routers in Mixture-of-Experts Upcycling",
+    "status": "ok",
+    "source": "crossref-doi:10.3233/faia251318"
+  },
+  {
+    "num": "27",
+    "title": "Your mixture-of-experts llm is secretly an embedding model for free",
+    "status": "ok",
+    "source": "crossref-doi:10.1145/3708036.3708118"
+  },
+  {
+    "num": "28",
+    "title": "Dselect-k: Differentiable selection in the mixture of experts with applications to multi-task learning",
+    "status": "ok",
+    "source": "crossref-doi:10.1109/icde53745.2022.00312"
+  },
+  {
+    "num": "29",
+    "title": "Yuan 2.0-m32: Mixture of experts with attention router",
+    "status": "ok",
+    "source": "crossref-doi:10.3233/faia251318"
+  },
+  {
+    "num": "30",
+    "title": "LExI: Layer-Adaptive Active Experts for Efficient MoE Model Inference",
+    "status": "ok",
+    "source": "crossref-doi:10.1145/3779212.3790187"
+  },
+  {
+    "num": "31",
+    "title": "Remoe: Fully differentiable mixture-of-experts with relu routing",
+    "status": "ok",
+    "source": "crossref-doi:10.1109/icpr48806.2021.9412813"
+  },
+  {
+    "num": "32",
+    "title": "Gw-moe: Resolving uncertainty in moe router with global workspace theory",
+    "status": "ok",
+    "source": "crossref-doi:10.1021/cen-v083n025.p023"
+  },
+  {
+    "num": "33",
+    "title": "Adaptive gating in mixture-of-experts based language models//Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing",
+    "status": "ok",
+    "source": "crossref-doi:10.18653/v1/2023.emnlp-main.217"
+  },
+  {
+    "num": "34",
+    "title": "Faster, Smaller, and Smarter: Task-Aware Expert Merging for Online MoE Inference",
+    "status": "ok",
+    "source": "crossref-doi:10.1109/access.2026.3665697"
+  },
+  {
+    "num": "35",
+    "title": "A Provably Effective Method for Pruning Experts in Fine-tuned Sparse Mixture-of-Experts",
+    "status": "ok",
+    "source": "crossref-doi:10.18653/v1/2025.findings-emnlp.820"
+  },
+  {
+    "num": "36",
+    "title": "Not all experts are equal: Efficient expert pruning and skipping for mixture-of-experts large language models//Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers)",
+    "status": "ok",
+    "source": "crossref-doi:10.18653/v1/2024.acl-long.334"
+  },
+  {
+    "num": "37",
+    "title": "Moe-i2: Compressing mixture of experts models through inter-expert pruning and intra-expert low-rank decomposition//Findings of the Association for Computational Linguistics: EMNLP 2024",
+    "status": "ok",
+    "source": "crossref-doi:10.18653/v1/2024.findings-emnlp.612"
+  },
+  {
+    "num": "38",
+    "title": "MoxE: Mixture of xLSTM Experts with Entropy-Aware Routing for Efficient Language Modeling",
+    "status": "ok",
+    "source": "crossref-doi:10.1109/ijcnn60899.2024.10650737"
+  },
+  {
+    "num": "39",
+    "title": "Resmoe: Space-efficient compression of mixture of experts llms via residual restoration//Proceedings of the 31st ACM SIGKDD Conference on Knowledge Discovery and Data Mining V",
+    "status": "ok",
+    "source": "crossref-doi:10.1145/3690624.3709196"
+  },
+  {
+    "num": "40",
+    "title": "Sparsity-Controllable Dynamic Top-p MoE for Large Foundation Model Pre-training",
+    "status": "ok",
+    "source": "crossref-doi:10.1145/3760250.3762216"
+  },
+  {
+    "num": "41",
+    "title": "Merge, then compress: Demystify efficient smoe with hints from its routing policy",
+    "status": "ok",
+    "source": "crossref-doi:10.1145/2517351.2517441"
+  },
+  {
+    "num": "42",
+    "title": "Merging experts into one: Improving computational efficiency of mixture of experts//Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing",
+    "status": "ok",
+    "source": "crossref-doi:10.18653/v1/2023.emnlp-main.907"
+  },
+  {
+    "num": "43",
+    "title": "One student knows all experts know: From sparse to dense",
+    "status": "ok",
+    "source": "crossref-doi:10.1007/3-211-38214-3_16"
+  },
+  {
+    "num": "44",
+    "title": "Seer-moe: Sparse expert efficiency through regularization for mixture-of-experts",
+    "status": "ok",
+    "source": "crossref-doi:10.18653/v1/2024.findings-emnlp.612"
+  },
+  {
+    "num": "45",
+    "title": "Parameter-efficient mixture-of-experts architecture for pre-trained language models//Proceedings of the 29th International Conference on Computational Linguistics",
+    "status": "ok",
+    "source": "crossref-doi:10.18653/v1/2023.findings-acl.539"
+  },
+  {
+    "num": "46",
+    "title": "Outrageously large neural networks: The sparsely-gated mixture-of-experts layer",
+    "status": "ok",
+    "source": "crossref-doi:10.1109/tmtt.2023.3341616"
+  },
+  {
+    "num": "47",
+    "title": "Gshard: Scaling giant models with conditional computation and automatic sharding",
+    "status": "ok",
+    "source": "crossref-doi:10.1002/9781119989387.ch8"
+  },
+  {
+    "num": "48",
+    "title": "Layerwise recurrent router for mixture-of-experts",
+    "status": "ok",
+    "source": "crossref-doi:10.3233/faia251318"
+  },
+  {
+    "num": "49",
+    "title": "Deepseekmoe: Towards ultimate expert specialization in mixture-of-experts language models//Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers)",
+    "status": "ok",
+    "source": "crossref-doi:10.18653/v1/2024.acl-long.70"
+  },
+  {
+    "num": "50",
+    "title": "Attention is all you need",
+    "status": "ok",
+    "source": "crossref-doi:10.1201/9781003561460-19"
+  }
+]
