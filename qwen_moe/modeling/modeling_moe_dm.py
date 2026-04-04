@@ -313,6 +313,20 @@ def entmax_bisect(
     probs = probs / probs.sum(dim=dim, keepdim=True).clamp_min(eps)
     return probs
 
+
+def _mean_scalar_stat(stat_dicts, key: str):
+    values = [float(stats[key]) for stats in stat_dicts if stats and stats.get(key) is not None]
+    if not values:
+        return None
+    return sum(values) / float(len(values))
+
+
+def _mean_tensor_stat(stat_dicts, key: str):
+    values = [stats[key].detach().float() for stats in stat_dicts if stats and torch.is_tensor(stats.get(key))]
+    if not values:
+        return None
+    return torch.stack(values, dim=0).mean(dim=0)
+
 class CrossAttentionRouter(nn.Module):
     """
     Router that scores experts by cross attention from token queries to learnable
@@ -336,7 +350,7 @@ class CrossAttentionRouter(nn.Module):
         self.hidden_size = int(hidden_size)
         self.num_experts = int(num_experts)
         self.d_router = int(d_router if d_router is not None else hidden_size)
-        print(f"d_router in CrossAttentionRouter: {self.d_router}")
+        # print(f"d_router in CrossAttentionRouter: {self.d_router}")
         self.use_entmax = bool(use_entmax)
         self.alpha = alpha
 
@@ -347,11 +361,11 @@ class CrossAttentionRouter(nn.Module):
         # q-k routing space is now reused directly for pull/EMA updates.
         self.token_couple_proj = nn.Linear(self.hidden_size, self.d_router, bias=False)
 
-        # Value projection is intentionally disabled.
-        # self.value = nn.Linear(self.d_router, self.num_experts, bias=False)
+        self.value = nn.Linear(self.d_router, self.num_experts, bias=False)
 
         self.expert_embed = nn.Parameter(torch.randn(self.num_experts, self.d_router))
         self._shared_expert_embed_ref = None
+        self.last_router_forward_stats = {}
 
     def set_shared_expert_embed(self, expert_embed: nn.Parameter) -> None:
         self.expert_embed = None
@@ -410,19 +424,47 @@ class CrossAttentionRouter(nn.Module):
     ) -> Tuple[torch.Tensor, torch.Tensor, Optional[Tuple[torch.Tensor, torch.Tensor]]]:
         # Keep router params in fp32 while allowing upstream hidden states in fp16/bf16.
         router_in = hidden_states.to(self.query.weight.dtype)
-        expert_embed = self.get_expert_embed().to(self.key.weight.dtype)
+        expert_embed = self.get_expert_embed()
 
         q = self.query(router_in).float()                  # (b, s, d)
-        k = self.key(expert_embed).float()                 # (e, d)
-
+        k = self.key(expert_embed.to(self.key.weight.dtype)).float()    # (e, d)
+        v = self.value(expert_embed.to(self.value.weight.dtype)).float()  # (e, e)
         attn_scores = torch.matmul(q, k.transpose(0, 1)) / math.sqrt(self.d_router)  # (b, s, e)
         if self.use_entmax:
             attn_weights = entmax_bisect(attn_scores, alpha=self.alpha, dim=-1)
         else:
             attn_weights = F.softmax(attn_scores, dim=-1, dtype=torch.float32)
+        attn_output = torch.matmul(attn_weights, v)        # (b, s, e)
 
+        # Keep routing semantics aligned with the dense router: scores are q-k
+        # logits, probabilities are their normalized attention weights.
         route_scores = attn_scores
         route_probs = attn_weights
+        attn_scores_f = attn_scores.detach().float()
+        route_probs_f = route_probs.detach().float()
+        attn_output_f = attn_output.detach().float()
+        row_sums = route_probs_f.sum(dim=-1)
+        probs_clamped = route_probs_f.clamp_min(1e-9)
+        attn_entropy = -(probs_clamped * probs_clamped.log()).sum(dim=-1)
+        attn_top1_mass = route_probs_f.max(dim=-1).values
+        self.last_router_forward_stats = {
+            "attn_scores_mean": float(attn_scores_f.mean().item()),
+            "attn_scores_std": float(attn_scores_f.std().item()),
+            "attn_scores_min": float(attn_scores_f.min().item()),
+            "attn_scores_max": float(attn_scores_f.max().item()),
+            "attn_weights_row_sum_mean": float(row_sums.mean().item()),
+            "attn_weights_row_sum_abs_err": float((row_sums - 1.0).abs().mean().item()),
+            "attn_weights_entropy": float(attn_entropy.mean().item()),
+            "attn_weights_top1_mass": float(attn_top1_mass.mean().item()),
+            "attn_output_mean": float(attn_output_f.mean().item()),
+            "attn_output_std": float(attn_output_f.std().item()),
+            "attn_output_min": float(attn_output_f.min().item()),
+            "attn_output_max": float(attn_output_f.max().item()),
+            "route_prob_min": float(route_probs_f.min().item()),
+            "route_prob_has_neg": float(route_probs_f.lt(0).any().item()),
+            "route_prob_row_sum_mean": float(row_sums.mean().item()),
+            "route_prob_row_sum_abs_err": float((row_sums - 1.0).abs().mean().item()),
+        }
         router_repr = (q, k) if return_router_repr else None
         return route_scores, route_probs, router_repr
 
@@ -440,6 +482,9 @@ class SwitchMLP(nn.Module):
 
         # [新增]
         self.last_router_pull_loss = None
+        self.last_router_forward_stats = {}
+        self.last_router_dispatch_stats = {}
+        self.last_router_ema_stats = {}
         self.router_pull_temperature = float(getattr(config, "router_pull_temperature", 1.0))
         self.router_pull_loss_type = str(getattr(config, "router_pull_loss_type", "soft"))
         self.router_ema_momentum = float(getattr(config, "router_ema_momentum", 0.99))
@@ -498,7 +543,7 @@ class SwitchMLP(nn.Module):
     def _compute_prototype_pull_loss(
         self,
         token_q: torch.Tensor,          # (b, s, d)
-        selected_probs: torch.Tensor,   # (b, s, e), top-p renormalized weights
+        expert_axis_probs: torch.Tensor,   # (b, s, e), top-p renormalized weights on expert axis
         expert_k: torch.Tensor,         # (e, d)
     ) -> torch.Tensor:
         """
@@ -512,27 +557,50 @@ class SwitchMLP(nn.Module):
         sim = torch.matmul(q, k.transpose(0, 1)) / temp             # (b, s, e)
 
         if self.router_pull_loss_type == "soft":
-            assign = selected_probs.detach().float()
+            assign = expert_axis_probs.detach().float()
             log_probs = F.log_softmax(sim, dim=-1)
             return -(assign * log_probs).sum(dim=-1).mean()
 
         if self.router_pull_loss_type == "hard_ce":
-            target = selected_probs.detach().argmax(dim=-1).long()
+            target = expert_axis_probs.detach().argmax(dim=-1).long()
             return F.cross_entropy(sim.reshape(-1, sim.size(-1)), target.reshape(-1))
 
         raise ValueError(f"Unsupported router_pull_loss_type: {self.router_pull_loss_type!r}")
+
+    def _scatter_selected_probs_to_expert_axis(
+        self,
+        selected_probs: torch.Tensor,   # (b, s, e), weights laid out on sorted top-p slots
+        selected_indices: torch.Tensor, # (b, s, e), expert ids or -1
+    ) -> torch.Tensor:
+        """
+        top_p_sampling_batched_all_sequence returns weights aligned to the sorted
+        slot order rather than the original expert axis. Scatter them back so
+        EMA/pull computations operate on true expert ids.
+        """
+        expert_axis_probs = selected_probs.new_zeros(selected_probs.shape)
+        valid_mask = selected_indices >= 0
+        if not torch.any(valid_mask):
+            return expert_axis_probs
+        scatter_index = selected_indices.clamp_min(0)
+        expert_axis_probs.scatter_add_(
+            dim=-1,
+            index=scatter_index,
+            src=selected_probs * valid_mask.to(selected_probs.dtype),
+        )
+        return expert_axis_probs
 
     @torch.no_grad()
     def _ema_update_expert_embed(
         self,
         token_q: torch.Tensor,          # (b, s, d)
-        selected_probs: torch.Tensor,   # (b, s, e), top-p renormalized weights
+        expert_axis_probs: torch.Tensor,   # (b, s, e), top-p renormalized weights on expert axis
     ) -> None:
         """
         Compute expert prototypes in q-space with top-p weights, smooth them in
         routed k-space, then map them back to `expert_embed` parameter space.
         """
         if not self.use_cross_attention_router:
+            self.last_router_ema_stats = {}
             return
 
         router = self.router
@@ -541,7 +609,7 @@ class SwitchMLP(nn.Module):
         dtype = expert_embed.dtype
 
         flat_q = F.normalize(token_q.detach().float(), dim=-1).reshape(-1, token_q.size(-1))     # (b*s, d)
-        flat_selected_probs = selected_probs.detach().float().reshape(-1, selected_probs.size(-1))  # (b*s, e)
+        flat_selected_probs = expert_axis_probs.detach().float().reshape(-1, expert_axis_probs.size(-1))  # (b*s, e)
         proto_sums = flat_selected_probs.transpose(0, 1) @ flat_q                                 # (e, d)
         proto_counts = flat_selected_probs.sum(dim=0)                                             # (e,)
 
@@ -551,6 +619,15 @@ class SwitchMLP(nn.Module):
 
         active_mask = proto_counts > 0
         if not torch.any(active_mask):
+            self.last_router_ema_stats = {
+                "proto_counts": proto_counts.detach().float(),
+                "active_expert_count": 0.0,
+                "proto_count_mean": float(proto_counts.mean().item()),
+                "proto_count_min": float(proto_counts.min().item()),
+                "proto_count_max": float(proto_counts.max().item()),
+                "proto_update_cosine": None,
+                "proto_delta_norm": None,
+            }
             return
 
         proto_means = proto_sums[active_mask] / proto_counts[active_mask].unsqueeze(-1)
@@ -562,19 +639,30 @@ class SwitchMLP(nn.Module):
         old = current_routed[active_mask]
         new_routed = self.router_ema_momentum * old + (1.0 - self.router_ema_momentum) * proto_means
         new_routed = F.normalize(new_routed, dim=-1)
+        proto_update_cosine = F.cosine_similarity(old, new_routed, dim=-1)
+        proto_delta_norm = (new_routed - old).norm(dim=-1)
 
         updated_embed = router.project_routed_expert_repr_to_embed_space(new_routed)
         expert_embed[active_mask].copy_(updated_embed.to(device=device, dtype=dtype))
+        self.last_router_ema_stats = {
+            "proto_counts": proto_counts.detach().float(),
+            "active_expert_count": float(active_mask.sum().item()),
+            "proto_count_mean": float(proto_counts.mean().item()),
+            "proto_count_min": float(proto_counts.min().item()),
+            "proto_count_max": float(proto_counts.max().item()),
+            "proto_update_cosine": float(proto_update_cosine.mean().item()),
+            "proto_delta_norm": float(proto_delta_norm.mean().item()),
+        }
 
     @torch.no_grad()
     def apply_pending_router_ema_update(self) -> None:
         token_q = self._pending_router_ema_token_q
-        selected_probs = self._pending_router_ema_selected_probs
+        expert_axis_probs = self._pending_router_ema_selected_probs
         self._pending_router_ema_token_q = None
         self._pending_router_ema_selected_probs = None
-        if token_q is None or selected_probs is None:
+        if token_q is None or expert_axis_probs is None:
             return
-        self._ema_update_expert_embed(token_q=token_q, selected_probs=selected_probs)
+        self._ema_update_expert_embed(token_q=token_q, expert_axis_probs=expert_axis_probs)
     
     def forward(self, hidden_states):
         """
@@ -584,6 +672,9 @@ class SwitchMLP(nn.Module):
             self.last_router_aux_loss = None
             self.last_router_z_loss = None
             self.last_router_pull_loss = None
+            self.last_router_forward_stats = {}
+            self.last_router_dispatch_stats = {}
+            self.last_router_ema_stats = {}
             self._pending_router_ema_token_q = None
             self._pending_router_ema_selected_probs = None
             return self.mlp(hidden_states)
@@ -597,6 +688,7 @@ class SwitchMLP(nn.Module):
                 hidden_states,
                 return_router_repr=compute_router_losses,
             )
+            self.last_router_forward_stats = dict(getattr(self.router, "last_router_forward_stats", {}))
             router_logits = router_logits.float()
             route_probs = route_probs.float()
             router_q = None
@@ -621,15 +713,16 @@ class SwitchMLP(nn.Module):
             if self.router_use_entmax:
                 route_probs = entmax_bisect(router_logits.float(), alpha=self.router_entmax_alpha, dim=-1)
             self.last_router_z_loss = None
+            self.last_router_forward_stats = {}
             router_q = None
             expert_k = None
 
+        route_probs_for_stats = route_probs.float()
+        soft_load = route_probs_for_stats.mean(dim=(0, 1))
+        top1_experts = route_probs_for_stats.argmax(dim=-1)
+        hard_load = F.one_hot(top1_experts, num_classes=self.num_experts).to(route_probs_for_stats.dtype).mean(dim=(0, 1))
         if self.training:
-            route_probs_for_aux = route_probs.float()
-            P = route_probs_for_aux.mean(dim=(0, 1))
-            top1_experts = route_probs_for_aux.argmax(dim=-1)
-            f = F.one_hot(top1_experts, num_classes=self.num_experts).to(route_probs_for_aux.dtype).mean(dim=(0, 1))
-            self.last_router_aux_loss = self.num_experts * torch.sum(f * P)
+            self.last_router_aux_loss = self.num_experts * torch.sum(hard_load * soft_load)
         else:
             self.last_router_aux_loss = None
 
@@ -638,8 +731,26 @@ class SwitchMLP(nn.Module):
             route_probs,
             self.router_top_p,
         )  # both: (b, s, num_experts), masked indices are -1
+        expert_axis_topk_weights = self._scatter_selected_probs_to_expert_axis(topk_weights, topk_ind)
         selected_expert_count_per_token = (topk_ind >= 0).sum(dim=-1)  # (b, s)
         self.last_top_p_avg_expert_count = selected_expert_count_per_token.float().mean().item()
+        top2_k = min(2, route_probs_for_stats.size(-1))
+        top2_values = torch.topk(route_probs_for_stats, k=top2_k, dim=-1).values
+        top1_top2_margin = top2_values[..., 0] - top2_values[..., 1] if top2_k == 2 else top2_values[..., 0]
+        selected_mask = topk_ind >= 0
+        gathered_route_probs = route_probs_for_stats.gather(-1, topk_ind.clamp_min(0))
+        top_p_pre_mass = (gathered_route_probs * selected_mask.to(gathered_route_probs.dtype)).sum(dim=-1)
+        top_p_post_sum = topk_weights.sum(dim=-1)
+        self.last_router_dispatch_stats = {
+            "avg_selected_expert_count": float(selected_expert_count_per_token.float().mean().item()),
+            "soft_load": soft_load.detach().float(),
+            "hard_load": hard_load.detach().float(),
+            "dead_expert_ratio": float((hard_load <= 0).float().mean().item()),
+            "top1_top2_margin": float(top1_top2_margin.mean().item()),
+            "top_p_pre_mass_mean": float(top_p_pre_mass.mean().item()),
+            "top_p_post_sum_mean": float(top_p_post_sum.mean().item()),
+            "top_p_post_sum_abs_err": float((top_p_post_sum - 1.0).abs().mean().item()),
+        }
 
         # [新增] Prototype Pull Loss
         if self.training and self.use_cross_attention_router:
@@ -647,7 +758,7 @@ class SwitchMLP(nn.Module):
                 raise RuntimeError("CrossAttentionRouter did not return q-k router representations during training.")
             self.last_router_pull_loss = self._compute_prototype_pull_loss(
                 token_q=router_q,
-                selected_probs=topk_weights,
+                expert_axis_probs=expert_axis_topk_weights,
                 expert_k=expert_k,
             )
         else:
@@ -656,10 +767,12 @@ class SwitchMLP(nn.Module):
         # [新增] EMA 更新 expert_embed
         if self.training and self.use_cross_attention_router and self.router_use_ema_update:
             self._pending_router_ema_token_q = router_q.detach()
-            self._pending_router_ema_selected_probs = topk_weights.detach()
+            self._pending_router_ema_selected_probs = expert_axis_topk_weights.detach()
         else:
             self._pending_router_ema_token_q = None
             self._pending_router_ema_selected_probs = None
+            if not self.router_use_ema_update:
+                self.last_router_ema_stats = {}
 
         # 3) flatten tokens then sparse expert dispatch.
         flat_hidden = hidden_states.reshape(-1, hidden_dim)                  # (b*s, h)
@@ -979,17 +1092,20 @@ class MoEModel(MoEPreTrainedModel):
         self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size, self.padding_idx)
         self.shared_expert_embed = None
         self.last_router_pull_loss = None
-        print(f"share_router_expert_embedding: {getattr(config, 'share_router_expert_embedding', False)}, \
-              use_cross_attention_router: {getattr(config, 'use_cross_attention_router', True)}, num_experts: {getattr(config, 'num_experts', 0)},\
-              num_hidden_layers: {getattr(config, 'num_hidden_layers', 0)}")
-        print(f"share_router_expert_embedding: {getattr(config, 'share_router_expert_embedding', False)}")
+        self.last_router_forward_stats = {}
+        self.last_router_dispatch_stats = {}
+        self.last_router_ema_stats = {}
+        # print(f"share_router_expert_embedding: {getattr(config, 'share_router_expert_embedding', False)}, \
+        #       use_cross_attention_router: {getattr(config, 'use_cross_attention_router', True)}, num_experts: {getattr(config, 'num_experts', 0)},\
+        #       num_hidden_layers: {getattr(config, 'num_hidden_layers', 0)}")
+        # print(f"share_router_expert_embedding: {getattr(config, 'share_router_expert_embedding', False)}")
         if (
             bool(getattr(config, "share_router_expert_embedding", False))
             and bool(getattr(config, "use_cross_attention_router", True))
             and int(getattr(config, "num_experts", 0)) > 0
         ):
             d_router = int(getattr(config, "router_dim", config.hidden_size))
-            print(f"d_router: {d_router}")
+            # print(f"d_router: {d_router}")
             self.shared_expert_embed = nn.Parameter(torch.randn(config.num_experts, d_router))
 
         self.layers = nn.ModuleList([LlamaDecoderLayer(config, layer_idx) for layer_idx in range(config.num_hidden_layers)])
@@ -1114,6 +1230,9 @@ class MoEModel(MoEPreTrainedModel):
         self.last_router_aux_loss = None
         self.last_router_z_loss = None
         self.last_router_pull_loss = None
+        self.last_router_forward_stats = {}
+        self.last_router_dispatch_stats = {}
+        self.last_router_ema_stats = {}
 
         for idx, decoder_layer in enumerate(self.layers):
             # print(f"layer {idx} input finite             : {torch.isfinite(hidden_states).all().item()}")
@@ -1164,6 +1283,9 @@ class MoEModel(MoEPreTrainedModel):
             aux_terms = []
             z_terms = []
             pull_terms = []
+            forward_stat_terms = []
+            dispatch_stat_terms = []
+            ema_stat_terms = []
 
             for layer in self.layers:
                 mlp = getattr(layer, "mlp", None)
@@ -1178,6 +1300,15 @@ class MoEModel(MoEPreTrainedModel):
                 pull_loss = getattr(mlp, "last_router_pull_loss", None)
                 if pull_loss is not None:
                     pull_terms.append(pull_loss)
+                forward_stats = getattr(mlp, "last_router_forward_stats", None)
+                if forward_stats:
+                    forward_stat_terms.append(forward_stats)
+                dispatch_stats = getattr(mlp, "last_router_dispatch_stats", None)
+                if dispatch_stats:
+                    dispatch_stat_terms.append(dispatch_stats)
+                ema_stats = getattr(mlp, "last_router_ema_stats", None)
+                if ema_stats:
+                    ema_stat_terms.append(ema_stats)
 
             if aux_terms:
                 self.last_router_aux_loss = torch.stack(aux_terms).mean()
@@ -1193,6 +1324,60 @@ class MoEModel(MoEPreTrainedModel):
                 self.last_router_pull_loss = torch.stack(pull_terms).mean()
             else:
                 self.last_router_pull_loss = hidden_states.new_zeros(())
+
+            forward_scalar_keys = (
+                "attn_scores_mean",
+                "attn_scores_std",
+                "attn_scores_min",
+                "attn_scores_max",
+                "attn_weights_row_sum_mean",
+                "attn_weights_row_sum_abs_err",
+                "attn_weights_entropy",
+                "attn_weights_top1_mass",
+                "attn_output_mean",
+                "attn_output_std",
+                "attn_output_min",
+                "attn_output_max",
+                "route_prob_min",
+                "route_prob_has_neg",
+                "route_prob_row_sum_mean",
+                "route_prob_row_sum_abs_err",
+            )
+            self.last_router_forward_stats = (
+                {key: _mean_scalar_stat(forward_stat_terms, key) for key in forward_scalar_keys}
+                if forward_stat_terms else {}
+            )
+
+            dispatch_scalar_keys = (
+                "avg_selected_expert_count",
+                "dead_expert_ratio",
+                "top1_top2_margin",
+                "top_p_pre_mass_mean",
+                "top_p_post_sum_mean",
+                "top_p_post_sum_abs_err",
+            )
+            self.last_router_dispatch_stats = (
+                {key: _mean_scalar_stat(dispatch_stat_terms, key) for key in dispatch_scalar_keys}
+                if dispatch_stat_terms else {}
+            )
+            if dispatch_stat_terms:
+                self.last_router_dispatch_stats["soft_load"] = _mean_tensor_stat(dispatch_stat_terms, "soft_load")
+                self.last_router_dispatch_stats["hard_load"] = _mean_tensor_stat(dispatch_stat_terms, "hard_load")
+
+            ema_scalar_keys = (
+                "active_expert_count",
+                "proto_count_mean",
+                "proto_count_min",
+                "proto_count_max",
+                "proto_update_cosine",
+                "proto_delta_norm",
+            )
+            self.last_router_ema_stats = (
+                {key: _mean_scalar_stat(ema_stat_terms, key) for key in ema_scalar_keys}
+                if ema_stat_terms else {}
+            )
+            if ema_stat_terms:
+                self.last_router_ema_stats["proto_counts"] = _mean_tensor_stat(ema_stat_terms, "proto_counts")
 
         # add hidden states from the last decoder layer
         if output_hidden_states:

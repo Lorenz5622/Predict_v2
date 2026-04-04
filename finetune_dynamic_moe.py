@@ -23,7 +23,7 @@ import os
 import time
 from collections import deque
 from pathlib import Path
-from typing import Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set
 
 import torch
 import torch.distributed as dist
@@ -155,8 +155,7 @@ def _init_cross_attention_router_from_legacy_dense(
     - query: partial copy from legacy dense router weight
     - expert_embed: initialized from the matching legacy dense router weight
     - shared_expert_embed: initialized from the mean of all compatible legacy dense router weights
-    - key: small-variance random init
-    - value: disabled; legacy init path is kept commented out below
+    - key/value: small-variance random init
     """
     num_inited = 0
     base_std = float(getattr(config, "initializer_range", 0.02))
@@ -200,9 +199,11 @@ def _init_cross_attention_router_from_legacy_dense(
                     dense_w[:rows, :cols].to(dtype=query.weight.dtype, device=query.weight.device)
                 )
 
+            # Keep initializing the active q-k routing path only. The legacy
+            # value projection is retained for checkpoint compatibility but does
+            # not participate in dispatch anymore.
             for proj_name in (
                 "key",
-                # "value",  # Disabled with the value-free CrossAttentionRouter path.
             ):
                 proj = getattr(router, proj_name, None)
                 if proj is None or not hasattr(proj, "weight"):
@@ -247,7 +248,7 @@ def _enable_new_router_params_trainable(model: nn.Module) -> int:
         "router.query",
         "router.key",
         "router.token_couple_proj",
-        # "router.value",  # Disabled with the value-free CrossAttentionRouter path.
+        "router.value",
         "router.expert_embed",
         "shared_expert_embed",
         # Legacy (unused in current simplified router):
@@ -285,6 +286,36 @@ def _cast_selected_trainable_params_to_fp32(model: nn.Module) -> int:
 def _unwrap_base_model(model: nn.Module) -> nn.Module:
     model_for_ops = model.module if hasattr(model, "module") else model
     return model_for_ops.get_base_model() if hasattr(model_for_ops, "get_base_model") else model_for_ops
+
+
+def _get_moe_model(model: nn.Module):
+    base_model = _unwrap_base_model(model)
+    return getattr(base_model, "model", None)
+
+
+def _get_moe_stat_dict(model: nn.Module, attr_name: str) -> Dict[str, Any]:
+    moe_model = _get_moe_model(model)
+    if moe_model is None:
+        return {}
+    stats = getattr(moe_model, attr_name, None)
+    return stats if isinstance(stats, dict) else {}
+
+
+def _metric_cell(value: Any) -> str:
+    if value is None:
+        return ""
+    if torch.is_tensor(value):
+        value = value.detach().float().cpu()
+        if value.numel() == 1:
+            return f"{float(value.item()):.6f}"
+        return json.dumps([round(float(x), 6) for x in value.view(-1).tolist()], ensure_ascii=False)
+    if isinstance(value, float):
+        if math.isnan(value) or math.isinf(value):
+            return ""
+        return f"{value:.6f}"
+    if isinstance(value, int):
+        return str(value)
+    return json.dumps(value, ensure_ascii=False, default=str)
 
 
 def get_switch_layers(model: nn.Module) -> List[tuple[int, nn.Module]]:
@@ -618,6 +649,16 @@ def train(
             "time", "epoch", "global_step", "optim_step", "lr",
             "loss", "loss_ce", "loss_aux", "loss_z", "loss_pull",
             f"loss_ma{ma_win}", "loss_ema", "loss_ce_ema", "eval_loss", "eval_ppl",
+            "router_score_mean", "router_score_std", "router_score_min", "router_score_max",
+            "router_weight_row_sum_mean", "router_weight_row_sum_abs_err",
+            "router_weight_entropy", "router_weight_top1_mass",
+            "router_output_mean", "router_output_std", "router_output_min", "router_output_max",
+            "route_prob_min", "route_prob_has_neg", "route_prob_row_sum_mean", "route_prob_row_sum_abs_err",
+            "dispatch_avg_selected_count", "dispatch_dead_expert_ratio", "dispatch_top1_top2_margin",
+            "dispatch_top_p_pre_mass_mean", "dispatch_top_p_post_sum_mean", "dispatch_top_p_post_sum_abs_err",
+            "dispatch_soft_load", "dispatch_hard_load",
+            "ema_active_expert_count", "ema_proto_count_mean", "ema_proto_count_min", "ema_proto_count_max",
+            "ema_proto_update_cosine", "ema_proto_delta_norm", "ema_proto_counts",
         ]) + "\n")
         metrics_f.flush()
 
@@ -727,6 +768,9 @@ def train(
                     ema_ce_loss = ema_momentum * ema_ce_loss + (1.0 - ema_momentum) * ce_loss_real
 
                 cur_lr = scheduler.get_last_lr()[0]
+                router_forward_stats = _get_moe_stat_dict(model, "last_router_forward_stats")
+                router_dispatch_stats = _get_moe_stat_dict(model, "last_router_dispatch_stats")
+                router_ema_stats = _get_moe_stat_dict(model, "last_router_ema_stats")
                 should_eval = eval_dl is not None and (optim_step % eval_every == 0)
                 eval_loss_real = None
                 eval_ppl_real = None
@@ -745,6 +789,9 @@ def train(
                             f"ma{ma_win}": f"{loss_ma:.4f}",
                             "ema": f"{ema_loss:.4f}",
                             "ce_ema": f"{ema_ce_loss:.4f}",
+                            "sel": f"{float(router_dispatch_stats.get('avg_selected_expert_count', 0.0)):.2f}",
+                            "dead": f"{float(router_dispatch_stats.get('dead_expert_ratio', 0.0)):.2f}",
+                            "neg": f"{float(router_forward_stats.get('route_prob_has_neg', 0.0)):.0f}",
                             "lr": f"{cur_lr:.2e}",
                         }, refresh=False)
 
@@ -765,6 +812,37 @@ def train(
                             f"{ema_ce_loss:.6f}",
                             "" if eval_loss_real is None else f"{eval_loss_real:.6f}",
                             "" if eval_ppl_real is None else f"{eval_ppl_real:.6f}",
+                            _metric_cell(router_forward_stats.get("attn_scores_mean")),
+                            _metric_cell(router_forward_stats.get("attn_scores_std")),
+                            _metric_cell(router_forward_stats.get("attn_scores_min")),
+                            _metric_cell(router_forward_stats.get("attn_scores_max")),
+                            _metric_cell(router_forward_stats.get("attn_weights_row_sum_mean")),
+                            _metric_cell(router_forward_stats.get("attn_weights_row_sum_abs_err")),
+                            _metric_cell(router_forward_stats.get("attn_weights_entropy")),
+                            _metric_cell(router_forward_stats.get("attn_weights_top1_mass")),
+                            _metric_cell(router_forward_stats.get("attn_output_mean")),
+                            _metric_cell(router_forward_stats.get("attn_output_std")),
+                            _metric_cell(router_forward_stats.get("attn_output_min")),
+                            _metric_cell(router_forward_stats.get("attn_output_max")),
+                            _metric_cell(router_forward_stats.get("route_prob_min")),
+                            _metric_cell(router_forward_stats.get("route_prob_has_neg")),
+                            _metric_cell(router_forward_stats.get("route_prob_row_sum_mean")),
+                            _metric_cell(router_forward_stats.get("route_prob_row_sum_abs_err")),
+                            _metric_cell(router_dispatch_stats.get("avg_selected_expert_count")),
+                            _metric_cell(router_dispatch_stats.get("dead_expert_ratio")),
+                            _metric_cell(router_dispatch_stats.get("top1_top2_margin")),
+                            _metric_cell(router_dispatch_stats.get("top_p_pre_mass_mean")),
+                            _metric_cell(router_dispatch_stats.get("top_p_post_sum_mean")),
+                            _metric_cell(router_dispatch_stats.get("top_p_post_sum_abs_err")),
+                            _metric_cell(router_dispatch_stats.get("soft_load")),
+                            _metric_cell(router_dispatch_stats.get("hard_load")),
+                            _metric_cell(router_ema_stats.get("active_expert_count")),
+                            _metric_cell(router_ema_stats.get("proto_count_mean")),
+                            _metric_cell(router_ema_stats.get("proto_count_min")),
+                            _metric_cell(router_ema_stats.get("proto_count_max")),
+                            _metric_cell(router_ema_stats.get("proto_update_cosine")),
+                            _metric_cell(router_ema_stats.get("proto_delta_norm")),
+                            _metric_cell(router_ema_stats.get("proto_counts")),
                         ]) + "\n")
                         metrics_f.flush()
 
@@ -1232,11 +1310,33 @@ def stage1_train_cross_attention_router(
     global_step = 0
     optim_step = 0
     t0 = time.time()
+    stage1_metrics_f = None
 
     def _normalize_logits(logits: torch.Tensor) -> torch.Tensor:
         mean = logits.mean(dim=-1, keepdim=True)
         std = logits.std(dim=-1, keepdim=True).clamp_min(1e-6)
         return (logits - mean) / std
+
+    if is_main_process():
+        records_dir = Path(__file__).resolve().parent / "records"
+        records_dir.mkdir(parents=True, exist_ok=True)
+        run_ts = time.strftime("%Y%m%d_%H%M%S", time.localtime())
+        stage1_metrics_path = records_dir / f"{run_ts}_stage1_router.tsv"
+        stage1_metrics_f = open(stage1_metrics_path, "w", encoding="utf-8")
+        stage1_metrics_f.write(f"# run_started_at\t{run_ts}\n")
+        for key, value in sorted(vars(run_args).items()):
+            stage1_metrics_f.write("\t".join([
+                "# arg",
+                key,
+                json.dumps(value, ensure_ascii=False, default=str),
+            ]) + "\n")
+        stage1_metrics_f.write("\t".join([
+            "time", "epoch", "global_step", "optim_step", "layer_idx",
+            "layer_loss", "kl_loss", "logit_loss",
+            "teacher_entropy", "student_entropy",
+            "top1_agreement", "topk_overlap", "logits_cosine",
+        ]) + "\n")
+        stage1_metrics_f.flush()
 
     try:
         for epoch in range(int(run_args.stage1_epochs)):
@@ -1266,6 +1366,12 @@ def stage1_train_cross_attention_router(
                 total_loss = input_ids.new_zeros((), dtype=torch.float32)
                 kl_acc = input_ids.new_zeros((), dtype=torch.float32)
                 logit_acc = input_ids.new_zeros((), dtype=torch.float32)
+                teacher_entropy_acc = input_ids.new_zeros((), dtype=torch.float32)
+                student_entropy_acc = input_ids.new_zeros((), dtype=torch.float32)
+                top1_agreement_acc = input_ids.new_zeros((), dtype=torch.float32)
+                topk_overlap_acc = input_ids.new_zeros((), dtype=torch.float32)
+                logits_cosine_acc = input_ids.new_zeros((), dtype=torch.float32)
+                layer_metric_rows = []
                 layer_count = 0
 
                 for layer_idx, mlp, hidden_states in captured:
@@ -1303,6 +1409,25 @@ def stage1_train_cross_attention_router(
                     denom = mask_f.sum().clamp_min(1.0)
                     kl_loss = (kl_token * mask_f).sum() / denom
                     logit_loss = (logit_token * mask_f).sum() / denom
+                    teacher_probs_raw = torch.softmax(teacher_logits, dim=-1)
+                    student_probs_raw = torch.softmax(student_logits, dim=-1)
+                    teacher_entropy_token = -(teacher_probs_raw.clamp_min(1e-9) * teacher_probs_raw.clamp_min(1e-9).log()).sum(dim=-1)
+                    student_entropy_token = -(student_probs_raw.clamp_min(1e-9) * student_probs_raw.clamp_min(1e-9).log()).sum(dim=-1)
+                    teacher_top1 = teacher_logits.argmax(dim=-1)
+                    student_top1 = student_logits.argmax(dim=-1)
+                    top1_agreement_token = teacher_top1.eq(student_top1).to(mask_f.dtype)
+                    topk_k = min(max(1, int(getattr(run_args, "router_top_k", 1))), teacher_logits.size(-1))
+                    teacher_topk = torch.topk(teacher_logits, k=topk_k, dim=-1).indices
+                    student_topk = torch.topk(student_logits, k=topk_k, dim=-1).indices
+                    topk_overlap_token = (
+                        teacher_topk.unsqueeze(-1) == student_topk.unsqueeze(-2)
+                    ).any(dim=-1).to(mask_f.dtype).mean(dim=-1)
+                    logits_cosine_token = F.cosine_similarity(teacher_logits, student_logits, dim=-1)
+                    teacher_entropy = (teacher_entropy_token * mask_f).sum() / denom
+                    student_entropy = (student_entropy_token * mask_f).sum() / denom
+                    top1_agreement = (top1_agreement_token * mask_f).sum() / denom
+                    topk_overlap = (topk_overlap_token * mask_f).sum() / denom
+                    logits_cosine = (logits_cosine_token * mask_f).sum() / denom
                     layer_loss = (
                         float(run_args.stage1_kl_coef) * kl_loss
                         + float(run_args.stage1_logit_coef) * logit_loss
@@ -1311,6 +1436,22 @@ def stage1_train_cross_attention_router(
                     total_loss = total_loss + layer_loss
                     kl_acc = kl_acc + kl_loss.detach()
                     logit_acc = logit_acc + logit_loss.detach()
+                    teacher_entropy_acc = teacher_entropy_acc + teacher_entropy.detach()
+                    student_entropy_acc = student_entropy_acc + student_entropy.detach()
+                    top1_agreement_acc = top1_agreement_acc + top1_agreement.detach()
+                    topk_overlap_acc = topk_overlap_acc + topk_overlap.detach()
+                    logits_cosine_acc = logits_cosine_acc + logits_cosine.detach()
+                    layer_metric_rows.append({
+                        "layer_idx": layer_idx,
+                        "layer_loss": float(layer_loss.detach().item()),
+                        "kl_loss": float(kl_loss.detach().item()),
+                        "logit_loss": float(logit_loss.detach().item()),
+                        "teacher_entropy": float(teacher_entropy.detach().item()),
+                        "student_entropy": float(student_entropy.detach().item()),
+                        "top1_agreement": float(top1_agreement.detach().item()),
+                        "topk_overlap": float(topk_overlap.detach().item()),
+                        "logits_cosine": float(logits_cosine.detach().item()),
+                    })
                     layer_count += 1
 
                 if layer_count == 0:
@@ -1333,9 +1474,23 @@ def stage1_train_cross_attention_router(
 
                 mean_kl = kl_acc / float(layer_count)
                 mean_logit = logit_acc / float(layer_count)
+                mean_teacher_entropy = teacher_entropy_acc / float(layer_count)
+                mean_student_entropy = student_entropy_acc / float(layer_count)
+                mean_top1_agreement = top1_agreement_acc / float(layer_count)
+                mean_topk_overlap = topk_overlap_acc / float(layer_count)
+                mean_logits_cosine = logits_cosine_acc / float(layer_count)
 
                 if dist.is_initialized():
-                    for tensor in (total_loss, mean_kl, mean_logit):
+                    for tensor in (
+                        total_loss,
+                        mean_kl,
+                        mean_logit,
+                        mean_teacher_entropy,
+                        mean_student_entropy,
+                        mean_top1_agreement,
+                        mean_topk_overlap,
+                        mean_logits_cosine,
+                    ):
                         dist.all_reduce(tensor, op=dist.ReduceOp.AVG)
 
                 if is_main_process() and (optim_step % max(1, int(run_args.stage1_log_every)) == 0):
@@ -1345,8 +1500,31 @@ def stage1_train_cross_attention_router(
                         f"step={optim_step} loss={float(total_loss.item()):.6f} "
                         f"kl={float(mean_kl.item()):.6f} "
                         f"logit={float(mean_logit.item()):.6f} "
+                        f"t_ent={float(mean_teacher_entropy.item()):.4f} "
+                        f"s_ent={float(mean_student_entropy.item()):.4f} "
+                        f"top1={float(mean_top1_agreement.item()):.4f} "
+                        f"topk={float(mean_topk_overlap.item()):.4f} "
+                        f"cos={float(mean_logits_cosine.item()):.4f} "
                         f"elapsed={elapsed / 60:.1f}m"
                     )
+                    if stage1_metrics_f is not None:
+                        for row in layer_metric_rows:
+                            stage1_metrics_f.write("\t".join([
+                                f"{time.time():.3f}",
+                                str(epoch),
+                                str(global_step),
+                                str(optim_step),
+                                str(row["layer_idx"]),
+                                f"{row['layer_loss']:.6f}",
+                                f"{row['kl_loss']:.6f}",
+                                f"{row['logit_loss']:.6f}",
+                                f"{row['teacher_entropy']:.6f}",
+                                f"{row['student_entropy']:.6f}",
+                                f"{row['top1_agreement']:.6f}",
+                                f"{row['topk_overlap']:.6f}",
+                                f"{row['logits_cosine']:.6f}",
+                            ]) + "\n")
+                        stage1_metrics_f.flush()
 
             if global_step % int(run_args.stage1_grad_accum) != 0:
                 if float(run_args.stage1_max_grad_norm) > 0:
@@ -1357,6 +1535,8 @@ def stage1_train_cross_attention_router(
     finally:
         for handle in hook_handles:
             handle.remove()
+        if stage1_metrics_f is not None:
+            stage1_metrics_f.close()
 
 
 def build_dataloaders(train_ds, eval_ds, args, world_size: int, is_distributed: bool):
@@ -1388,7 +1568,7 @@ def build_dataloaders(train_ds, eval_ds, args, world_size: int, is_distributed: 
         sampler=train_sampler,
         shuffle=train_sampler is None,
         drop_last=True,
-        num_workers=8,
+        num_workers=2,
         pin_memory=True,
         collate_fn=collator,
     )
@@ -1401,7 +1581,7 @@ def build_dataloaders(train_ds, eval_ds, args, world_size: int, is_distributed: 
             sampler=eval_sampler,
             shuffle=False,
             drop_last=False,
-            num_workers=8,
+            num_workers=2,
             pin_memory=True,
             collate_fn=collator,
         )

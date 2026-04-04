@@ -1,5 +1,4 @@
 /logs/
-/records/
 /.vscode/
 /__pycache__/
 *.pyc
