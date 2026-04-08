@@ -11,13 +11,30 @@ CONFIGS=(
   # "configs/finetune_dm_hard_lr1_dylr_exp_lrmult125_minlr03_4e.json"
   # "configs/finetune_dm_hard_lr1_dylr_exp_lrmult10_minlr03_4e.json"
   # "configs/finetune_dm_hard_lr1_dylr_CB_load8.json"
-  "configs/finetune_dm_hard_lr1_dylr_CB_withV_pull0.json"
-  "configs/finetune_dm_hard_lr1_dylr_CB_withV_stage1strong.json"
-  "configs/finetune_dm_hard_lr1_dylr_CB_withV_stage1strong_pull0.json"
+  # "configs/finetune_dm_hard_lr1_dylr_CB_withV_pull0.json"
+  # "configs/finetune_dm_hard_lr1_dylr_CB_withV_stage1strong.json"
+  # "configs/finetune_dm_hard_lr1_dylr_CB_withV_stage1strong_pull0.json" # 69.91
+  # "configs/finetune_dm_hard_lr1_dylr_CB_withV_stage1strong_pull0_lrmult10_temp15_kl15_logit05_eval200.json" # 68.50
+  # "configs/finetune_dm_hard_lr1_dylr_CB_withV_stage1strong_pull0_temp20_kl20_logit025_eval200.json" 68.39
+  # "configs/finetune_dm_hard_lr1_dylr_CB_withV_stage1strong_pull0_temp15_kl15_logit05_eval200.json" 68.39
+  # "configs/finetune_dm_hard_lr1_dylr_CB_withV_stage1strong_pull0_lrmult10_eval200.json" # 68.93
+  # "configs/finetune_dm_hard_lr1_dylr_CB_withV_stage1strong_pull0_lrmult075_eval200.json" 
   # "configs/finetune_dm_hard.json"
   # "configs/finetune_dm_hard_lr1.json"
   # "configs/finetune_dm_hard_lr1_dl.json"
   # "configs/finetune_dm_lr1_dl.json"
+  # "configs/dm_cb_r150.json" 68.28
+  # "configs/dm_cb_r125.json" 68.88
+  # "configs/dm_cb_r175.json" 69.21
+  # "configs/dm_cb_t20_z02.json" 69.26
+  # "configs/dm_cb_t20_za02.json" 69.80
+  # "configs/dm_cb_t20_z05.json" 68.66
+  # "configs/dm_cb_e15.json" 67.46
+  # "configs/dm_cb_za015.json" 69.75
+  # "configs/dm_cb_za025.json" 68.88
+  # "configs/dm_cb_za02_r175.json" 70.02
+  # "configs/dm_cb_za02_r225.json" 68.61
+  # "configs/dm_cb_za02_m04.json" 69.42
 )
 
 LOGDIR="$SCRIPT_DIR/logs/sweep_$(date +%Y%m%d_%H%M%S)"

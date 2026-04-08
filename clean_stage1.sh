@@ -1,0 +1,1 @@
+find /data/cyx/models -type d -name "ckpt_after_stage1" -exec rm -rf {} +
