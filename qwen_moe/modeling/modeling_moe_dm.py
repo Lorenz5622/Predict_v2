@@ -365,7 +365,8 @@ class CrossAttentionRouter(nn.Module):
         # q-k routing space is now reused directly for pull/EMA updates.
         self.token_couple_proj = nn.Linear(self.hidden_size, self.d_router, bias=False)
 
-        self.value = nn.Linear(self.d_router, self.num_experts, bias=False)
+        # self.value = nn.Linear(self.d_router, self.num_experts, bias=False)
+        # `value` path is disabled. Router output depends only on q-k scores.
 
         self.expert_embed = nn.Parameter(torch.randn(self.num_experts, self.d_router))
         self._shared_expert_embed_ref = None
@@ -432,13 +433,13 @@ class CrossAttentionRouter(nn.Module):
 
         q = self.query(router_in).float()                  # (b, s, d)
         k = self.key(expert_embed.to(self.key.weight.dtype)).float()    # (e, d)
-        v = self.value(expert_embed.to(self.value.weight.dtype)).float()  # (e, e)
+        # v = self.value(expert_embed.to(self.value.weight.dtype)).float()  # (e, e)
         attn_scores = torch.matmul(q, k.transpose(0, 1)) / math.sqrt(self.d_router)  # (b, s, e)
         if self.use_entmax:
             attn_weights = entmax_bisect(attn_scores, alpha=self.alpha, dim=-1)
         else:
             attn_weights = F.softmax(attn_scores, dim=-1, dtype=torch.float32)
-        attn_output = torch.matmul(attn_weights, v)        # (b, s, e)
+        # attn_output = torch.matmul(attn_weights, v)        # (b, s, e)
 
         # Keep routing semantics aligned with the dense router: scores are q-k
         # logits, probabilities are their normalized attention weights.
@@ -446,7 +447,7 @@ class CrossAttentionRouter(nn.Module):
         route_probs = attn_weights
         attn_scores_f = attn_scores.detach().float()
         route_probs_f = route_probs.detach().float()
-        attn_output_f = attn_output.detach().float()
+        # attn_output_f = attn_output.detach().float()
         row_sums = route_probs_f.sum(dim=-1)
         probs_clamped = route_probs_f.clamp_min(1e-9)
         attn_entropy = -(probs_clamped * probs_clamped.log()).sum(dim=-1)
@@ -460,10 +461,14 @@ class CrossAttentionRouter(nn.Module):
             "attn_weights_row_sum_abs_err": float((row_sums - 1.0).abs().mean().item()),
             "attn_weights_entropy": float(attn_entropy.mean().item()),
             "attn_weights_top1_mass": float(attn_top1_mass.mean().item()),
-            "attn_output_mean": float(attn_output_f.mean().item()),
-            "attn_output_std": float(attn_output_f.std().item()),
-            "attn_output_min": float(attn_output_f.min().item()),
-            "attn_output_max": float(attn_output_f.max().item()),
+            # "attn_output_mean": float(attn_output_f.mean().item()),
+            # "attn_output_std": float(attn_output_f.std().item()),
+            # "attn_output_min": float(attn_output_f.min().item()),
+            # "attn_output_max": float(attn_output_f.max().item()),
+            "attn_output_mean": None,
+            "attn_output_std": None,
+            "attn_output_min": None,
+            "attn_output_max": None,
             "route_prob_min": float(route_probs_f.min().item()),
             "route_prob_has_neg": float(route_probs_f.lt(0).any().item()),
             "route_prob_row_sum_mean": float(row_sums.mean().item()),

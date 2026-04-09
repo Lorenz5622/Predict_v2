@@ -155,7 +155,8 @@ def _init_cross_attention_router_from_legacy_dense(
     - query: partial copy from legacy dense router weight
     - expert_embed: initialized from the matching legacy dense router weight
     - shared_expert_embed: initialized from the mean of all compatible legacy dense router weights
-    - key/value: small-variance random init
+    - key: small-variance random init
+      value init is disabled together with the q-k-only router path
     """
     num_inited = 0
     base_std = float(getattr(config, "initializer_range", 0.02))
@@ -199,11 +200,10 @@ def _init_cross_attention_router_from_legacy_dense(
                     dense_w[:rows, :cols].to(dtype=query.weight.dtype, device=query.weight.device)
                 )
 
-            # Keep initializing the active q-k routing path only. The legacy
-            # value projection is retained for checkpoint compatibility but does
-            # not participate in dispatch anymore.
+            # Keep initializing the active q-k routing path only.
             for proj_name in (
                 "key",
+                # "value",  # Disabled: router output depends only on q-k scores.
             ):
                 proj = getattr(router, proj_name, None)
                 if proj is None or not hasattr(proj, "weight"):
@@ -248,7 +248,7 @@ def _enable_new_router_params_trainable(model: nn.Module) -> int:
         "router.query",
         "router.key",
         "router.token_couple_proj",
-        "router.value",
+        # "router.value",  # Disabled together with the q-k-only router path.
         "router.expert_embed",
         "shared_expert_embed",
         # Legacy (unused in current simplified router):
