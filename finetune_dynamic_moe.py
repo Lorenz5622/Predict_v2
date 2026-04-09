@@ -461,6 +461,45 @@ def _apply_pending_router_ema_updates(model: nn.Module) -> None:
         if callable(apply_fn):
             apply_fn()
 
+
+def _get_runtime_router_top_p(model: nn.Module) -> Optional[float]:
+    switch_layers = get_switch_layers(model)
+    if not switch_layers:
+        return None
+    return float(getattr(switch_layers[0][1], "router_top_p"))
+
+
+def _set_runtime_router_top_p(model: nn.Module, top_p: float) -> None:
+    top_p = float(top_p)
+    if not (0.0 < top_p <= 1.0):
+        raise ValueError(f"router top-p must be in (0, 1], got {top_p}")
+
+    base_model = _unwrap_base_model(model)
+    if hasattr(base_model, "config"):
+        setattr(base_model.config, "top_p_threshold", top_p)
+
+    moe_model = getattr(base_model, "model", None)
+    if moe_model is not None and hasattr(moe_model, "config"):
+        setattr(moe_model.config, "top_p_threshold", top_p)
+
+    for _layer_idx, mlp in get_switch_layers(model):
+        setattr(mlp, "router_top_p", top_p)
+
+
+def _schedule_alpha(progress: float, start_ratio: float, end_ratio: float) -> float:
+    progress = min(max(float(progress), 0.0), 1.0)
+    start_ratio = min(max(float(start_ratio), 0.0), 1.0)
+    end_ratio = min(max(float(end_ratio), 0.0), 1.0)
+    if end_ratio < start_ratio:
+        start_ratio, end_ratio = end_ratio, start_ratio
+    if progress <= start_ratio:
+        return 0.0
+    if progress >= end_ratio:
+        return 1.0
+    if end_ratio == start_ratio:
+        return 1.0
+    return (progress - start_ratio) / (end_ratio - start_ratio)
+
 def guess_lora_targets(model: nn.Module) -> List[str]:
     candidates = [
         "q_proj",
@@ -606,6 +645,11 @@ def train(
         desc="train",
     )
 
+    initial_router_top_p = _get_runtime_router_top_p(model)
+    if initial_router_top_p is None:
+        initial_router_top_p = float(getattr(run_args, "top_p_threshold", 0.4) or 0.4)
+    _set_runtime_router_top_p(model, initial_router_top_p)
+
     def lr_lambda(step: int):
         if step < warmup_steps:
             return float(step + 1) / float(max(1, warmup_steps))
@@ -647,14 +691,15 @@ def train(
             ]) + "\n")
         metrics_f.write("\t".join([
             "time", "epoch", "global_step", "optim_step", "lr",
-            "loss", "loss_ce", "loss_aux", "loss_z", "loss_pull",
+            "loss", "loss_ce", "loss_aux", "loss_z", "loss_pull", "loss_budget",
             f"loss_ma{ma_win}", "loss_ema", "loss_ce_ema", "eval_loss", "eval_ppl",
+            "router_top_p_threshold", "router_budget_loss_scale",
             "router_score_mean", "router_score_std", "router_score_min", "router_score_max",
             "router_weight_row_sum_mean", "router_weight_row_sum_abs_err",
             "router_weight_entropy", "router_weight_top1_mass",
             "router_output_mean", "router_output_std", "router_output_min", "router_output_max",
             "route_prob_min", "route_prob_has_neg", "route_prob_row_sum_mean", "route_prob_row_sum_abs_err",
-            "dispatch_avg_selected_count", "dispatch_dead_expert_ratio", "dispatch_top1_top2_margin",
+            "dispatch_avg_selected_count", "dispatch_soft_selected_count", "dispatch_dead_expert_ratio", "dispatch_top1_top2_margin",
             "dispatch_top_p_pre_mass_mean", "dispatch_top_p_post_sum_mean", "dispatch_top_p_post_sum_abs_err",
             "dispatch_soft_load", "dispatch_hard_load",
             "ema_active_expert_count", "ema_proto_count_mean", "ema_proto_count_min", "ema_proto_count_max",
@@ -673,6 +718,30 @@ def train(
             it = tqdm(it, total=len(train_dl), desc=f"epoch {epoch+1}/{epochs}", dynamic_ncols=True)
 
         for step, batch in it:
+            step_progress = float(optim_step) / float(max(1, total_optim_steps - 1))
+            top_p_alpha = _schedule_alpha(
+                step_progress,
+                float(getattr(run_args, "router_top_p_schedule_start_ratio", 0.5)),
+                float(getattr(run_args, "router_top_p_schedule_end_ratio", 1.0)),
+            )
+            target_router_top_p = getattr(run_args, "router_top_p_final", None)
+            if target_router_top_p is None:
+                current_router_top_p = initial_router_top_p
+            else:
+                current_router_top_p = (
+                    (1.0 - top_p_alpha) * initial_router_top_p
+                    + top_p_alpha * float(target_router_top_p)
+                )
+            _set_runtime_router_top_p(model, current_router_top_p)
+
+            budget_loss_scale = 0.0
+            if float(getattr(run_args, "router_budget_loss_coef", 0.0)) > 0.0:
+                budget_loss_scale = _schedule_alpha(
+                    step_progress,
+                    float(getattr(run_args, "router_budget_start_ratio", 0.5)),
+                    float(getattr(run_args, "router_budget_end_ratio", 1.0)),
+                )
+
             batch = {k: v.to(device, non_blocking=True) for k, v in batch.items()}
 
             if amp_dtype is not None and device.type == "cuda":
@@ -700,12 +769,19 @@ def train(
             else:
                 pull_loss = pull_loss.to(device=raw_loss.device, dtype=raw_loss.dtype)
 
+            budget_loss = getattr(out, "router_budget_loss", None)
+            if budget_loss is None:
+                budget_loss = raw_loss.new_zeros(())
+            else:
+                budget_loss = budget_loss.to(device=raw_loss.device, dtype=raw_loss.dtype)
+
             ce_loss = raw_loss
             total_loss = (
                 ce_loss
                 + float(run_args.router_aux_loss_coef) * aux_loss
                 + float(run_args.router_z_loss_coef) * z_loss
                 + float(run_args.router_pull_loss_coef) * pull_loss
+                + float(getattr(run_args, "router_budget_loss_coef", 0.0)) * budget_loss_scale * budget_loss
             )
             loss = total_loss / max(1, grad_accum)
 
@@ -751,6 +827,7 @@ def train(
                 aux_loss_real = float(aux_loss.detach().float().item())
                 z_loss_real = float(z_loss.detach().float().item())
                 pull_loss_real = float(pull_loss.detach().float().item())
+                budget_loss_real = float(budget_loss.detach().float().item())
 
                 if len(ma_loss_buf) == ma_loss_buf.maxlen:
                     ma_loss_sum -= ma_loss_buf[0]
@@ -786,10 +863,12 @@ def train(
                             "aux": f"{aux_loss_real:.4f}",
                             "z": f"{z_loss_real:.4f}",
                             "pull": f"{pull_loss_real:.4f}",
+                            "budget": f"{budget_loss_real:.4f}",
                             f"ma{ma_win}": f"{loss_ma:.4f}",
                             "ema": f"{ema_loss:.4f}",
                             "ce_ema": f"{ema_ce_loss:.4f}",
                             "sel": f"{float(router_dispatch_stats.get('avg_selected_expert_count', 0.0)):.2f}",
+                            "top_p": f"{current_router_top_p:.2f}",
                             "dead": f"{float(router_dispatch_stats.get('dead_expert_ratio', 0.0)):.2f}",
                             "neg": f"{float(router_forward_stats.get('route_prob_has_neg', 0.0)):.0f}",
                             "lr": f"{cur_lr:.2e}",
@@ -807,11 +886,14 @@ def train(
                             f"{aux_loss_real:.6f}",
                             f"{z_loss_real:.6f}",
                             f"{pull_loss_real:.6f}",
+                            f"{budget_loss_real:.6f}",
                             f"{loss_ma:.6f}",
                             f"{ema_loss:.6f}",
                             f"{ema_ce_loss:.6f}",
                             "" if eval_loss_real is None else f"{eval_loss_real:.6f}",
                             "" if eval_ppl_real is None else f"{eval_ppl_real:.6f}",
+                            f"{current_router_top_p:.6f}",
+                            f"{budget_loss_scale:.6f}",
                             _metric_cell(router_forward_stats.get("attn_scores_mean")),
                             _metric_cell(router_forward_stats.get("attn_scores_std")),
                             _metric_cell(router_forward_stats.get("attn_scores_min")),
@@ -829,6 +911,7 @@ def train(
                             _metric_cell(router_forward_stats.get("route_prob_row_sum_mean")),
                             _metric_cell(router_forward_stats.get("route_prob_row_sum_abs_err")),
                             _metric_cell(router_dispatch_stats.get("avg_selected_expert_count")),
+                            _metric_cell(router_dispatch_stats.get("soft_selected_expert_count")),
                             _metric_cell(router_dispatch_stats.get("dead_expert_ratio")),
                             _metric_cell(router_dispatch_stats.get("top1_top2_margin")),
                             _metric_cell(router_dispatch_stats.get("top_p_pre_mass_mean")),
@@ -852,7 +935,9 @@ def train(
                     "ce": f"{ce_loss_real:.4f}",
                     "aux": f"{aux_loss_real:.4f}",
                     "z": f"{z_loss_real:.4f}",
+                    "budget": f"{budget_loss_real:.4f}",
                     "ce_ema": f"{ema_ce_loss:.4f}",
+                    "top_p": f"{current_router_top_p:.2f}",
                     "lr": f"{scheduler.get_last_lr()[0]:.3e}",
                 }, refresh=False)
 
@@ -861,7 +946,8 @@ def train(
                     print(
                         f"[train] epoch={epoch+1}/{epochs} step={optim_step}/{total_optim_steps} "
                         f"loss={loss_real:.4f} ce={ce_loss_real:.4f} ce_ema={ema_ce_loss:.4f} "
-                        f"aux={aux_loss_real:.4f} z={z_loss_real:.4f} "
+                        f"aux={aux_loss_real:.4f} z={z_loss_real:.4f} budget={budget_loss_real:.4f} "
+                        f"top_p={current_router_top_p:.3f} budget_scale={budget_loss_scale:.3f} "
                         f"lr={cur_lr:.3e} elapsed={elapsed/60:.1f}m"
                     )
 
@@ -888,6 +974,9 @@ def train(
 
     if is_main_process():
         model_to_save = model.module if hasattr(model, "module") else model
+        final_router_top_p = _get_runtime_router_top_p(model_to_save)
+        if final_router_top_p is not None:
+            _set_runtime_router_top_p(model_to_save, final_router_top_p)
         was_quantized = is_quantized_model(model_to_save)
         try:
             merged = model_to_save.merge_and_unload()
@@ -923,6 +1012,10 @@ def train(
             print(f"[save] merged + dequantized + fp32 full model -> {output_dir}")
         else:
             print(f"[save] merged + fp32 full model -> {output_dir}")
+
+        if final_router_top_p is not None:
+            _set_runtime_router_top_p(merged, final_router_top_p)
+            print(f"[save] final router top_p_threshold -> {final_router_top_p:.6f}")
 
         merged.save_pretrained(output_dir, state_dict=state_dict, safe_serialization=True)
 
@@ -1100,6 +1193,11 @@ def configure_model_config(config, args) -> None:
         config.router_entmax_alpha = float(args.router_entmax_alpha)
     if int(args.share_router_expert_embedding) >= 0:
         config.share_router_expert_embedding = bool(args.share_router_expert_embedding)
+    if args.top_p_threshold is not None:
+        config.top_p_threshold = float(args.top_p_threshold)
+
+    config.router_budget_target_count = float(args.router_budget_target_count)
+    config.router_budget_tau = float(args.router_budget_tau)
 
     if hasattr(config, "ensure_model_attributes"):
         config.ensure_model_attributes()
@@ -1739,6 +1837,30 @@ def parse_args():
     ap.add_argument("--device", type=str, default="cuda")
     ap.add_argument("--router_top_k", type=int, default=0)
     ap.add_argument("--router_topk", type=int, default=0)
+    ap.add_argument(
+        "--top_p_threshold",
+        type=float,
+        default=None,
+        help="Override config.top_p_threshold when provided.",
+    )
+    ap.add_argument(
+        "--router_top_p_final",
+        type=float,
+        default=None,
+        help="Target top-p threshold reached by the runtime schedule; unset keeps top-p fixed.",
+    )
+    ap.add_argument(
+        "--router_top_p_schedule_start_ratio",
+        type=float,
+        default=0.5,
+        help="Training progress ratio to start annealing router top-p toward --router_top_p_final.",
+    )
+    ap.add_argument(
+        "--router_top_p_schedule_end_ratio",
+        type=float,
+        default=1.0,
+        help="Training progress ratio to finish annealing router top-p toward --router_top_p_final.",
+    )
     ap.add_argument("--init_new_router_from_legacy", type=int, default=1)
     ap.add_argument(
         "--router_use_entmax",
@@ -1759,6 +1881,36 @@ def parse_args():
         default=-1,
         choices=[-1, 0, 1],
         help="Set -1 to keep config value, 0 for per-layer expert embeddings, 1 for one global expert embedding shared across layers.",
+    )
+    ap.add_argument(
+        "--router_budget_loss_coef",
+        type=float,
+        default=0.0,
+        help="Coefficient for the soft selected-expert-count budget loss. Default disables it.",
+    )
+    ap.add_argument(
+        "--router_budget_target_count",
+        type=float,
+        default=0.0,
+        help="Target average expert count per token for the budget loss. <=0 disables the loss.",
+    )
+    ap.add_argument(
+        "--router_budget_tau",
+        type=float,
+        default=0.05,
+        help="Temperature for the differentiable expert-count surrogate used by the budget loss.",
+    )
+    ap.add_argument(
+        "--router_budget_start_ratio",
+        type=float,
+        default=0.5,
+        help="Training progress ratio to start ramping in the router budget loss.",
+    )
+    ap.add_argument(
+        "--router_budget_end_ratio",
+        type=float,
+        default=1.0,
+        help="Training progress ratio to fully ramp in the router budget loss.",
     )
 
     ap.add_argument("--bbh_task", type=str, default="boolean_expressions")
@@ -1782,6 +1934,33 @@ def main():
         raise ValueError("Only one of --load_in_4bit and --load_in_8bit can be enabled.")
     if not (0.0 < float(args.stage1_data_ratio) < 1.0):
         raise ValueError(f"--stage1_data_ratio must be in (0, 1), got {args.stage1_data_ratio}")
+    for name in (
+        "router_top_p_schedule_start_ratio",
+        "router_top_p_schedule_end_ratio",
+        "router_budget_start_ratio",
+        "router_budget_end_ratio",
+    ):
+        value = float(getattr(args, name))
+        if not (0.0 <= value <= 1.0):
+            raise ValueError(f"--{name} must be in [0, 1], got {value}")
+    if args.top_p_threshold is not None and not (0.0 < float(args.top_p_threshold) <= 1.0):
+        raise ValueError(f"--top_p_threshold must be in (0, 1], got {args.top_p_threshold}")
+    if args.router_top_p_final is not None and not (0.0 < float(args.router_top_p_final) <= 1.0):
+        raise ValueError(f"--router_top_p_final must be in (0, 1], got {args.router_top_p_final}")
+    if float(args.router_budget_loss_coef) < 0.0:
+        raise ValueError(
+            f"--router_budget_loss_coef must be >= 0, got {args.router_budget_loss_coef}"
+        )
+    if float(args.router_budget_target_count) < 0.0:
+        raise ValueError(
+            f"--router_budget_target_count must be >= 0, got {args.router_budget_target_count}"
+        )
+    if float(args.router_budget_tau) <= 0.0:
+        raise ValueError(f"--router_budget_tau must be > 0, got {args.router_budget_tau}")
+    if float(args.router_budget_loss_coef) > 0.0 and float(args.router_budget_target_count) <= 0.0:
+        raise ValueError(
+            "--router_budget_target_count must be > 0 when --router_budget_loss_coef is enabled."
+        )
 
     local_rank, world_size, is_distributed = setup_distributed_safe()
     set_seed(args.seed + (local_rank if is_distributed else 0))

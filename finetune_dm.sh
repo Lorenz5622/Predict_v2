@@ -35,6 +35,11 @@ CONFIGS=(
   # "configs/dm_cb_za02_r175.json" 70.02
   # "configs/dm_cb_za02_r225.json" 68.61
   # "configs/dm_cb_za02_m04.json" 69.42
+  # "configs/dm_cb_za02_r175_tp028_b22.json" 69.48
+  "configs/dm_cb_za02_r175_tp032_b22_late.json" 69.70
+  "configs/dm_cb_za02_r175_tp030_b22_later.json" 69.53
+  "configs/dm_cb_za02_r175_tp040_b22_highstart.json" 68.50
+  "configs/dm_cb_za02_r175_tp032_b22.json" 68.88
 )
 
 LOGDIR="$SCRIPT_DIR/logs/sweep_$(date +%Y%m%d_%H%M%S)"

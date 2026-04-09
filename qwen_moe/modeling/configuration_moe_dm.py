@@ -329,6 +329,8 @@ class MoEConfig(PretrainedConfig):
         router_entmax_alpha: float = 1.7,
         router_pull_loss_type: str = "soft",
         router_top_p: float = 0.4,
+        router_budget_target_count: float = 0.0,
+        router_budget_tau: float = 0.05,
         # -------- legacy router params (unused by current simplified router) --------
         # These are intentionally kept as comments for backward compatibility context.
         # experts_topk=2,
@@ -372,6 +374,8 @@ class MoEConfig(PretrainedConfig):
         self.router_use_entmax = bool(router_use_entmax)
         self.router_entmax_alpha = float(router_entmax_alpha)
         self.router_pull_loss_type = str(router_pull_loss_type)
+        self.router_budget_target_count = float(router_budget_target_count)
+        self.router_budget_tau = float(router_budget_tau)
 
         # Legacy compatibility: old checkpoints may only have `use_low_rank_router`.
         legacy_use_low_rank_router = bool(kwargs.get("use_low_rank_router", False))
@@ -380,7 +384,7 @@ class MoEConfig(PretrainedConfig):
 
         # -------- legacy router params (unused by current simplified router) --------
         self.experts_topk = int(kwargs.get("experts_topk", 2))
-        self.top_p_threshold = float(kwargs.get("top_p_threshold", 0.4))
+        self.top_p_threshold = float(kwargs.get("top_p_threshold", router_top_p))
 
         self.ensure_model_attributes()
 
@@ -416,6 +420,9 @@ class MoEConfig(PretrainedConfig):
         self.router_use_entmax = bool(getattr(self, "router_use_entmax", False))
         self.router_entmax_alpha = float(getattr(self, "router_entmax_alpha", 1.5))
         self.router_pull_loss_type = str(getattr(self, "router_pull_loss_type", "soft"))
+        self.router_budget_target_count = float(getattr(self, "router_budget_target_count", 0.0))
+        self.router_budget_tau = float(getattr(self, "router_budget_tau", 0.05))
+        self.top_p_threshold = float(getattr(self, "top_p_threshold", 0.4))
 
         legacy_use_low_rank_router = bool(getattr(self, "use_low_rank_router", False))
         self.use_cross_attention_router = bool(
@@ -437,11 +444,19 @@ class MoEConfig(PretrainedConfig):
                 f"`router_entmax_alpha` must be in (1, 2] when `router_use_entmax=True`, "
                 f"got {self.router_entmax_alpha}"
             )
+        if not (0.0 < self.top_p_threshold <= 1.0):
+            raise ValueError(f"`top_p_threshold` must be in (0, 1], got {self.top_p_threshold}")
         if self.router_pull_loss_type not in {"soft", "hard_ce"}:
             raise ValueError(
                 f"`router_pull_loss_type` must be one of {{'soft', 'hard_ce'}}, "
                 f"got {self.router_pull_loss_type!r}"
             )
+        if self.router_budget_target_count < 0.0:
+            raise ValueError(
+                f"`router_budget_target_count` must be >= 0, got {self.router_budget_target_count}"
+            )
+        if self.router_budget_tau <= 0.0:
+            raise ValueError(f"`router_budget_tau` must be > 0, got {self.router_budget_tau}")
 
         # Legacy params kept for checkpoint compatibility (unused by current simplified router):
         # router_rank, router_dim, router_value_dim, router_temperature_init, router_normalize_q,

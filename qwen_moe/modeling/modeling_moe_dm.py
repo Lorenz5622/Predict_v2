@@ -64,10 +64,14 @@ class MoECausalLMOutputWithPast(CausalLMOutputWithPast):
             Router z-loss regularizer.
         router_pull_loss (`torch.FloatTensor`, *optional*):
             Prototype pull loss for expert embeddings.
+        router_budget_loss (`torch.FloatTensor`, *optional*):
+            Soft budget loss encouraging the top-p dispatch to keep each token's
+            selected expert count near a target.
     """
     router_aux_loss: Optional[torch.FloatTensor] = None
     router_z_loss: Optional[torch.FloatTensor] = None
     router_pull_loss: Optional[torch.FloatTensor] = None
+    router_budget_loss: Optional[torch.FloatTensor] = None
 
 
 # Copied from transformers.models.bart.modeling_bart._make_causal_mask
@@ -482,6 +486,7 @@ class SwitchMLP(nn.Module):
 
         # [新增]
         self.last_router_pull_loss = None
+        self.last_router_budget_loss = None
         self.last_router_forward_stats = {}
         self.last_router_dispatch_stats = {}
         self.last_router_ema_stats = {}
@@ -489,6 +494,8 @@ class SwitchMLP(nn.Module):
         self.router_pull_loss_type = str(getattr(config, "router_pull_loss_type", "soft"))
         self.router_ema_momentum = float(getattr(config, "router_ema_momentum", 0.99))
         self.router_use_ema_update = bool(getattr(config, "router_use_ema_update", False))
+        self.router_budget_target_count = float(getattr(config, "router_budget_target_count", 0.0))
+        self.router_budget_tau = float(getattr(config, "router_budget_tau", 0.05))
         self._pending_router_ema_token_q = None
         self._pending_router_ema_selected_probs = None
 
@@ -672,6 +679,7 @@ class SwitchMLP(nn.Module):
             self.last_router_aux_loss = None
             self.last_router_z_loss = None
             self.last_router_pull_loss = None
+            self.last_router_budget_loss = None
             self.last_router_forward_stats = {}
             self.last_router_dispatch_stats = {}
             self.last_router_ema_stats = {}
@@ -741,8 +749,20 @@ class SwitchMLP(nn.Module):
         gathered_route_probs = route_probs_for_stats.gather(-1, topk_ind.clamp_min(0))
         top_p_pre_mass = (gathered_route_probs * selected_mask.to(gathered_route_probs.dtype)).sum(dim=-1)
         top_p_post_sum = topk_weights.sum(dim=-1)
+
+        sorted_route_probs = torch.sort(route_probs, dim=-1, descending=True).values
+        if sorted_route_probs.size(-1) > 1:
+            prev_cum = torch.cumsum(sorted_route_probs, dim=-1)[..., :-1]
+            soft_extra_selected = torch.sigmoid(
+                (self.router_top_p - prev_cum) / max(self.router_budget_tau, 1e-6)
+            )
+            soft_selected_expert_count = 1.0 + soft_extra_selected.sum(dim=-1)
+        else:
+            soft_selected_expert_count = torch.ones_like(sorted_route_probs[..., 0])
+
         self.last_router_dispatch_stats = {
             "avg_selected_expert_count": float(selected_expert_count_per_token.float().mean().item()),
+            "soft_selected_expert_count": float(soft_selected_expert_count.detach().float().mean().item()),
             "soft_load": soft_load.detach().float(),
             "hard_load": hard_load.detach().float(),
             "dead_expert_ratio": float((hard_load <= 0).float().mean().item()),
@@ -750,7 +770,15 @@ class SwitchMLP(nn.Module):
             "top_p_pre_mass_mean": float(top_p_pre_mass.mean().item()),
             "top_p_post_sum_mean": float(top_p_post_sum.mean().item()),
             "top_p_post_sum_abs_err": float((top_p_post_sum - 1.0).abs().mean().item()),
+            "router_top_p": float(self.router_top_p),
         }
+
+        if self.training and self.router_budget_target_count > 0.0:
+            self.last_router_budget_loss = (
+                soft_selected_expert_count.mean() - self.router_budget_target_count
+            ).pow(2)
+        else:
+            self.last_router_budget_loss = None
 
         # [新增] Prototype Pull Loss
         if self.training and self.use_cross_attention_router:
@@ -1092,6 +1120,7 @@ class MoEModel(MoEPreTrainedModel):
         self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size, self.padding_idx)
         self.shared_expert_embed = None
         self.last_router_pull_loss = None
+        self.last_router_budget_loss = None
         self.last_router_forward_stats = {}
         self.last_router_dispatch_stats = {}
         self.last_router_ema_stats = {}
@@ -1121,6 +1150,7 @@ class MoEModel(MoEPreTrainedModel):
         self.norm = LlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.last_router_aux_loss = None
         self.last_router_z_loss = None
+        self.last_router_budget_loss = None
 
         self.gradient_checkpointing = False
         # Initialize weights and apply final processing
@@ -1230,6 +1260,7 @@ class MoEModel(MoEPreTrainedModel):
         self.last_router_aux_loss = None
         self.last_router_z_loss = None
         self.last_router_pull_loss = None
+        self.last_router_budget_loss = None
         self.last_router_forward_stats = {}
         self.last_router_dispatch_stats = {}
         self.last_router_ema_stats = {}
@@ -1283,6 +1314,7 @@ class MoEModel(MoEPreTrainedModel):
             aux_terms = []
             z_terms = []
             pull_terms = []
+            budget_terms = []
             forward_stat_terms = []
             dispatch_stat_terms = []
             ema_stat_terms = []
@@ -1300,6 +1332,9 @@ class MoEModel(MoEPreTrainedModel):
                 pull_loss = getattr(mlp, "last_router_pull_loss", None)
                 if pull_loss is not None:
                     pull_terms.append(pull_loss)
+                budget_loss = getattr(mlp, "last_router_budget_loss", None)
+                if budget_loss is not None:
+                    budget_terms.append(budget_loss)
                 forward_stats = getattr(mlp, "last_router_forward_stats", None)
                 if forward_stats:
                     forward_stat_terms.append(forward_stats)
@@ -1324,6 +1359,11 @@ class MoEModel(MoEPreTrainedModel):
                 self.last_router_pull_loss = torch.stack(pull_terms).mean()
             else:
                 self.last_router_pull_loss = hidden_states.new_zeros(())
+
+            if budget_terms:
+                self.last_router_budget_loss = torch.stack(budget_terms).mean()
+            else:
+                self.last_router_budget_loss = hidden_states.new_zeros(())
 
             forward_scalar_keys = (
                 "attn_scores_mean",
@@ -1350,11 +1390,13 @@ class MoEModel(MoEPreTrainedModel):
 
             dispatch_scalar_keys = (
                 "avg_selected_expert_count",
+                "soft_selected_expert_count",
                 "dead_expert_ratio",
                 "top1_top2_margin",
                 "top_p_pre_mass_mean",
                 "top_p_post_sum_mean",
                 "top_p_post_sum_abs_err",
+                "router_top_p",
             )
             self.last_router_dispatch_stats = (
                 {key: _mean_scalar_stat(dispatch_stat_terms, key) for key in dispatch_scalar_keys}
@@ -1501,10 +1543,11 @@ class MoEForCausalLM(MoEPreTrainedModel):
         router_aux_loss = getattr(self.model, "last_router_aux_loss", None)
         router_z_loss = getattr(self.model, "last_router_z_loss", None)
         router_pull_loss = getattr(self.model, "last_router_pull_loss", None)
+        router_budget_loss = getattr(self.model, "last_router_budget_loss", None)
 
         if not return_dict:
             output = (logits,) + outputs[1:]
-            router_terms = (router_aux_loss, router_z_loss, router_pull_loss)
+            router_terms = (router_aux_loss, router_z_loss, router_pull_loss, router_budget_loss)
             return ((loss,) + output + router_terms) if loss is not None else (output + router_terms)
 
         return MoECausalLMOutputWithPast(
@@ -1516,6 +1559,7 @@ class MoEForCausalLM(MoEPreTrainedModel):
             router_aux_loss=router_aux_loss,
             router_z_loss=router_z_loss,
             router_pull_loss=router_pull_loss,
+            router_budget_loss=router_budget_loss,
         )
 
     def prepare_inputs_for_generation(
