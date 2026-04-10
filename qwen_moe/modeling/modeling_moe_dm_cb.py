@@ -331,6 +331,8 @@ class CrossAttentionRouter(nn.Module):
         d_router: Optional[int] = None,
         use_entmax: bool = False,
         alpha: float = 1.5,
+        use_softmax_temperature: bool = False,
+        softmax_temperature: float = 1.0,
     ):
         super().__init__()
         self.hidden_size = int(hidden_size)
@@ -338,6 +340,8 @@ class CrossAttentionRouter(nn.Module):
         self.d_router = int(d_router if d_router is not None else hidden_size)
         self.use_entmax = bool(use_entmax)
         self.alpha = alpha
+        self.use_softmax_temperature = bool(use_softmax_temperature)
+        self.softmax_temperature = float(softmax_temperature)
 
         self.query = nn.Linear(self.hidden_size, self.d_router, bias=False)
         self.key = nn.Linear(self.d_router, self.d_router, bias=False)
@@ -414,7 +418,10 @@ class CrossAttentionRouter(nn.Module):
         if self.use_entmax:
             attn_weights = entmax_bisect(attn_scores, alpha=self.alpha, dim=-1)
         else:
-            attn_weights = F.softmax(attn_scores, dim=-1, dtype=torch.float32)
+            softmax_scores = attn_scores
+            if self.use_softmax_temperature:
+                softmax_scores = softmax_scores / max(self.softmax_temperature, 1e-6)
+            attn_weights = F.softmax(softmax_scores, dim=-1, dtype=torch.float32)
 
         route_scores = attn_scores
         route_probs = attn_weights
@@ -475,6 +482,8 @@ class SwitchMLP(nn.Module):
                     d_router=getattr(config, "router_dim", config.hidden_size),
                     use_entmax=self.router_use_entmax,
                     alpha=self.router_entmax_alpha,
+                    use_softmax_temperature=bool(getattr(config, "router_use_softmax_temperature", False)),
+                    softmax_temperature=float(getattr(config, "router_softmax_temperature", 1.0)),
                 )
             else:
                 self.router = nn.Linear(

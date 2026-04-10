@@ -155,8 +155,7 @@ def _init_cross_attention_router_from_legacy_dense(
     - query: partial copy from legacy dense router weight
     - expert_embed: initialized from the matching legacy dense router weight
     - shared_expert_embed: initialized from the mean of all compatible legacy dense router weights
-    - key: small-variance random init
-      value init is disabled together with the q-k-only router path
+    - key/value: small-variance random init
     """
     num_inited = 0
     base_std = float(getattr(config, "initializer_range", 0.02))
@@ -200,10 +199,12 @@ def _init_cross_attention_router_from_legacy_dense(
                     dense_w[:rows, :cols].to(dtype=query.weight.dtype, device=query.weight.device)
                 )
 
-            # Keep initializing the active q-k routing path only.
+            # Keep initializing the active q-k routing path only. The legacy
+            # value projection is retained for checkpoint compatibility but does
+            # not participate in dispatch anymore.
             for proj_name in (
                 "key",
-                # "value",  # Disabled: router output depends only on q-k scores.
+                "value",
             ):
                 proj = getattr(router, proj_name, None)
                 if proj is None or not hasattr(proj, "weight"):
@@ -248,7 +249,7 @@ def _enable_new_router_params_trainable(model: nn.Module) -> int:
         "router.query",
         "router.key",
         "router.token_couple_proj",
-        # "router.value",  # Disabled together with the q-k-only router path.
+        "router.value",
         "router.expert_embed",
         "shared_expert_embed",
         # Legacy (unused in current simplified router):
@@ -1191,6 +1192,10 @@ def configure_model_config(config, args) -> None:
         config.router_use_entmax = bool(args.router_use_entmax)
     if args.router_entmax_alpha is not None:
         config.router_entmax_alpha = float(args.router_entmax_alpha)
+    if int(args.router_use_softmax_temperature) >= 0:
+        config.router_use_softmax_temperature = bool(args.router_use_softmax_temperature)
+    if args.router_softmax_temperature is not None:
+        config.router_softmax_temperature = float(args.router_softmax_temperature)
     if int(args.share_router_expert_embedding) >= 0:
         config.share_router_expert_embedding = bool(args.share_router_expert_embedding)
     if args.top_p_threshold is not None:
@@ -1874,6 +1879,18 @@ def parse_args():
         type=float,
         default=None,
         help="Override config.router_entmax_alpha when provided.",
+    )
+    ap.add_argument(
+        "--router_use_softmax_temperature",
+        type=int,
+        default=-1,
+        help="Enable temperature scaling for CrossAttentionRouter softmax when set to 0/1.",
+    )
+    ap.add_argument(
+        "--router_softmax_temperature",
+        type=float,
+        default=None,
+        help="Softmax temperature for CrossAttentionRouter; smaller is sharper.",
     )
     ap.add_argument(
         "--share_router_expert_embedding",

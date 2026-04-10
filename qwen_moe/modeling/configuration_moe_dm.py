@@ -327,6 +327,8 @@ class MoEConfig(PretrainedConfig):
         share_router_expert_embedding: bool = False,
         router_use_entmax: bool = False,
         router_entmax_alpha: float = 1.7,
+        router_use_softmax_temperature: bool = False,
+        router_softmax_temperature: float = 1.0,
         router_pull_loss_type: str = "soft",
         router_top_p: float = 0.4,
         router_budget_target_count: float = 0.0,
@@ -373,6 +375,8 @@ class MoEConfig(PretrainedConfig):
         self.share_router_expert_embedding = bool(share_router_expert_embedding)
         self.router_use_entmax = bool(router_use_entmax)
         self.router_entmax_alpha = float(router_entmax_alpha)
+        self.router_use_softmax_temperature = bool(router_use_softmax_temperature)
+        self.router_softmax_temperature = float(router_softmax_temperature)
         self.router_pull_loss_type = str(router_pull_loss_type)
         self.router_budget_target_count = float(router_budget_target_count)
         self.router_budget_tau = float(router_budget_tau)
@@ -419,6 +423,8 @@ class MoEConfig(PretrainedConfig):
         self.share_router_expert_embedding = bool(getattr(self, "share_router_expert_embedding", False))
         self.router_use_entmax = bool(getattr(self, "router_use_entmax", False))
         self.router_entmax_alpha = float(getattr(self, "router_entmax_alpha", 1.5))
+        self.router_use_softmax_temperature = bool(getattr(self, "router_use_softmax_temperature", False))
+        self.router_softmax_temperature = float(getattr(self, "router_softmax_temperature", 1.0))
         self.router_pull_loss_type = str(getattr(self, "router_pull_loss_type", "soft"))
         self.router_budget_target_count = float(getattr(self, "router_budget_target_count", 0.0))
         self.router_budget_tau = float(getattr(self, "router_budget_tau", 0.05))
@@ -443,6 +449,10 @@ class MoEConfig(PretrainedConfig):
             raise ValueError(
                 f"`router_entmax_alpha` must be in (1, 2] when `router_use_entmax=True`, "
                 f"got {self.router_entmax_alpha}"
+            )
+        if self.router_softmax_temperature <= 0.0:
+            raise ValueError(
+                f"`router_softmax_temperature` must be > 0, got {self.router_softmax_temperature}"
             )
         if not (0.0 < self.top_p_threshold <= 1.0):
             raise ValueError(f"`top_p_threshold` must be in (0, 1], got {self.top_p_threshold}")
