@@ -199,17 +199,12 @@ def _init_cross_attention_router_from_legacy_dense(
                     dense_w[:rows, :cols].to(dtype=query.weight.dtype, device=query.weight.device)
                 )
 
-            # Keep initializing the active q-k routing path only. The legacy
-            # value projection is retained for checkpoint compatibility but does
-            # not participate in dispatch anymore.
-            for proj_name in (
-                "key",
-                "value",
-            ):
-                proj = getattr(router, proj_name, None)
-                if proj is None or not hasattr(proj, "weight"):
-                    continue
-                proj.weight.normal_(mean=0.0, std=kv_std)
+            # Match the f9f3f85 behavior: reinitialize only the active q-k
+            # routing path here and leave router.value at its module default
+            # initialization.
+            key_proj = getattr(router, "key", None)
+            if key_proj is not None and hasattr(key_proj, "weight"):
+                key_proj.weight.normal_(mean=0.0, std=kv_std)
 
             if hasattr(router, "_reshape_legacy_router_weight"):
                 target_embed = router.get_expert_embed()
