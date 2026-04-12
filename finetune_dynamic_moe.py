@@ -482,6 +482,32 @@ def _set_runtime_router_top_p(model: nn.Module, top_p: float) -> None:
         setattr(mlp, "router_top_p", top_p)
 
 
+def _get_runtime_router_pull_loss_type(model: nn.Module) -> Optional[str]:
+    switch_layers = get_switch_layers(model)
+    if not switch_layers:
+        return None
+    return str(getattr(switch_layers[0][1], "router_pull_loss_type"))
+
+
+def _set_runtime_router_pull_loss_type(model: nn.Module, pull_loss_type: str) -> None:
+    pull_loss_type = str(pull_loss_type)
+    if pull_loss_type not in {"soft", "hard_ce"}:
+        raise ValueError(
+            f"router pull loss type must be one of {{'soft', 'hard_ce'}}, got {pull_loss_type!r}"
+        )
+
+    base_model = _unwrap_base_model(model)
+    if hasattr(base_model, "config"):
+        setattr(base_model.config, "router_pull_loss_type", pull_loss_type)
+
+    moe_model = getattr(base_model, "model", None)
+    if moe_model is not None and hasattr(moe_model, "config"):
+        setattr(moe_model.config, "router_pull_loss_type", pull_loss_type)
+
+    for _layer_idx, mlp in get_switch_layers(model):
+        setattr(mlp, "router_pull_loss_type", pull_loss_type)
+
+
 def _schedule_alpha(progress: float, start_ratio: float, end_ratio: float) -> float:
     progress = min(max(float(progress), 0.0), 1.0)
     start_ratio = min(max(float(start_ratio), 0.0), 1.0)
@@ -495,6 +521,21 @@ def _schedule_alpha(progress: float, start_ratio: float, end_ratio: float) -> fl
     if end_ratio == start_ratio:
         return 1.0
     return (progress - start_ratio) / (end_ratio - start_ratio)
+
+
+def _scheduled_float(
+    progress: float,
+    initial_value: float,
+    final_value: Optional[float],
+    start_ratio: float,
+    end_ratio: float,
+) -> float:
+    initial_value = float(initial_value)
+    if final_value is None:
+        return initial_value
+    alpha = _schedule_alpha(progress, start_ratio, end_ratio)
+    return (1.0 - alpha) * initial_value + alpha * float(final_value)
+
 
 def guess_lora_targets(model: nn.Module) -> List[str]:
     candidates = [
@@ -646,6 +687,16 @@ def train(
         initial_router_top_p = float(getattr(run_args, "top_p_threshold", 0.4) or 0.4)
     _set_runtime_router_top_p(model, initial_router_top_p)
 
+    initial_pull_loss_type = _get_runtime_router_pull_loss_type(model)
+    if initial_pull_loss_type is None:
+        initial_pull_loss_type = str(getattr(run_args, "router_pull_loss_type", "soft"))
+    _set_runtime_router_pull_loss_type(model, initial_pull_loss_type)
+
+    target_pull_loss_coef = getattr(run_args, "router_pull_loss_coef_final", None)
+    target_pull_loss_type = str(getattr(run_args, "router_pull_loss_type_final", "")).strip().lower()
+    if not target_pull_loss_type:
+        target_pull_loss_type = initial_pull_loss_type
+
     def lr_lambda(step: int):
         if step < warmup_steps:
             return float(step + 1) / float(max(1, warmup_steps))
@@ -689,7 +740,7 @@ def train(
             "time", "epoch", "global_step", "optim_step", "lr",
             "loss", "loss_ce", "loss_aux", "loss_z", "loss_pull", "loss_budget",
             f"loss_ma{ma_win}", "loss_ema", "loss_ce_ema", "eval_loss", "eval_ppl",
-            "router_top_p_threshold", "router_budget_loss_scale",
+            "router_top_p_threshold", "router_pull_loss_coef", "router_pull_loss_type", "router_budget_loss_scale",
             "router_score_mean", "router_score_std", "router_score_min", "router_score_max",
             "router_weight_row_sum_mean", "router_weight_row_sum_abs_err",
             "router_weight_entropy", "router_weight_top1_mass",
@@ -729,6 +780,20 @@ def train(
                     + top_p_alpha * float(target_router_top_p)
                 )
             _set_runtime_router_top_p(model, current_router_top_p)
+
+            current_pull_loss_coef = _scheduled_float(
+                step_progress,
+                initial_value=float(run_args.router_pull_loss_coef),
+                final_value=target_pull_loss_coef,
+                start_ratio=float(getattr(run_args, "router_pull_loss_schedule_start_ratio", 0.5)),
+                end_ratio=float(getattr(run_args, "router_pull_loss_schedule_end_ratio", 1.0)),
+            )
+            pull_loss_type_switch_ratio = float(getattr(run_args, "router_pull_loss_type_switch_ratio", 0.5))
+            if step_progress >= pull_loss_type_switch_ratio:
+                current_pull_loss_type = target_pull_loss_type
+            else:
+                current_pull_loss_type = initial_pull_loss_type
+            _set_runtime_router_pull_loss_type(model, current_pull_loss_type)
 
             budget_loss_scale = 0.0
             if float(getattr(run_args, "router_budget_loss_coef", 0.0)) > 0.0:
@@ -776,7 +841,7 @@ def train(
                 ce_loss
                 + float(run_args.router_aux_loss_coef) * aux_loss
                 + float(run_args.router_z_loss_coef) * z_loss
-                + float(run_args.router_pull_loss_coef) * pull_loss
+                + current_pull_loss_coef * pull_loss
                 + float(getattr(run_args, "router_budget_loss_coef", 0.0)) * budget_loss_scale * budget_loss
             )
             loss = total_loss / max(1, grad_accum)
@@ -859,6 +924,7 @@ def train(
                             "aux": f"{aux_loss_real:.4f}",
                             "z": f"{z_loss_real:.4f}",
                             "pull": f"{pull_loss_real:.4f}",
+                            "pullc": f"{current_pull_loss_coef:.3f}",
                             "budget": f"{budget_loss_real:.4f}",
                             f"ma{ma_win}": f"{loss_ma:.4f}",
                             "ema": f"{ema_loss:.4f}",
@@ -889,6 +955,8 @@ def train(
                             "" if eval_loss_real is None else f"{eval_loss_real:.6f}",
                             "" if eval_ppl_real is None else f"{eval_ppl_real:.6f}",
                             f"{current_router_top_p:.6f}",
+                            f"{current_pull_loss_coef:.6f}",
+                            current_pull_loss_type,
                             f"{budget_loss_scale:.6f}",
                             _metric_cell(router_forward_stats.get("attn_scores_mean")),
                             _metric_cell(router_forward_stats.get("attn_scores_std")),
@@ -931,6 +999,7 @@ def train(
                     "ce": f"{ce_loss_real:.4f}",
                     "aux": f"{aux_loss_real:.4f}",
                     "z": f"{z_loss_real:.4f}",
+                    "pullc": f"{current_pull_loss_coef:.3f}",
                     "budget": f"{budget_loss_real:.4f}",
                     "ce_ema": f"{ema_ce_loss:.4f}",
                     "top_p": f"{current_router_top_p:.2f}",
@@ -942,8 +1011,10 @@ def train(
                     print(
                         f"[train] epoch={epoch+1}/{epochs} step={optim_step}/{total_optim_steps} "
                         f"loss={loss_real:.4f} ce={ce_loss_real:.4f} ce_ema={ema_ce_loss:.4f} "
-                        f"aux={aux_loss_real:.4f} z={z_loss_real:.4f} budget={budget_loss_real:.4f} "
-                        f"top_p={current_router_top_p:.3f} budget_scale={budget_loss_scale:.3f} "
+                        f"aux={aux_loss_real:.4f} z={z_loss_real:.4f} pull={pull_loss_real:.4f} "
+                        f"pull_coef={current_pull_loss_coef:.3f} pull_type={current_pull_loss_type} "
+                        f"budget={budget_loss_real:.4f} top_p={current_router_top_p:.3f} "
+                        f"budget_scale={budget_loss_scale:.3f} "
                         f"lr={cur_lr:.3e} elapsed={elapsed/60:.1f}m"
                     )
 
@@ -1784,6 +1855,24 @@ def parse_args():
         help="Coefficient for prototype pull loss.",
     )
     ap.add_argument(
+        "--router_pull_loss_coef_final",
+        type=float,
+        default=None,
+        help="Optional final coefficient for prototype pull loss; unset keeps it fixed.",
+    )
+    ap.add_argument(
+        "--router_pull_loss_schedule_start_ratio",
+        type=float,
+        default=0.5,
+        help="Training progress ratio to start ramping router pull-loss coefficient toward --router_pull_loss_coef_final.",
+    )
+    ap.add_argument(
+        "--router_pull_loss_schedule_end_ratio",
+        type=float,
+        default=1.0,
+        help="Training progress ratio to finish ramping router pull-loss coefficient toward --router_pull_loss_coef_final.",
+    )
+    ap.add_argument(
         "--router_use_ema_update",
         type=int,
         default=1,
@@ -1807,6 +1896,18 @@ def parse_args():
         default="soft",
         choices=["soft", "hard_ce"],
         help="Router pull-loss type: soft assignment pull loss or argmax pseudo-label cross-entropy.",
+    )
+    ap.add_argument(
+        "--router_pull_loss_type_final",
+        type=str,
+        default="",
+        help="Optional final router pull-loss type for stage2 runtime switching; unset keeps the initial type.",
+    )
+    ap.add_argument(
+        "--router_pull_loss_type_switch_ratio",
+        type=float,
+        default=0.5,
+        help="Training progress ratio to switch router pull-loss type to --router_pull_loss_type_final.",
     )
     ap.add_argument("--use_bnb_8bit", type=int, default=0)
     ap.add_argument("--load_in_4bit", type=int, default=0)
@@ -1949,12 +2050,30 @@ def main():
     for name in (
         "router_top_p_schedule_start_ratio",
         "router_top_p_schedule_end_ratio",
+        "router_pull_loss_schedule_start_ratio",
+        "router_pull_loss_schedule_end_ratio",
+        "router_pull_loss_type_switch_ratio",
         "router_budget_start_ratio",
         "router_budget_end_ratio",
     ):
         value = float(getattr(args, name))
         if not (0.0 <= value <= 1.0):
             raise ValueError(f"--{name} must be in [0, 1], got {value}")
+    if float(args.router_pull_loss_coef) < 0.0:
+        raise ValueError(
+            f"--router_pull_loss_coef must be >= 0, got {args.router_pull_loss_coef}"
+        )
+    if args.router_pull_loss_coef_final is not None and float(args.router_pull_loss_coef_final) < 0.0:
+        raise ValueError(
+            f"--router_pull_loss_coef_final must be >= 0, got {args.router_pull_loss_coef_final}"
+        )
+    if args.router_pull_loss_type_final:
+        args.router_pull_loss_type_final = str(args.router_pull_loss_type_final).strip().lower()
+    if args.router_pull_loss_type_final and args.router_pull_loss_type_final not in {"soft", "hard_ce"}:
+        raise ValueError(
+            "--router_pull_loss_type_final must be one of {'soft', 'hard_ce'} when provided, "
+            f"got {args.router_pull_loss_type_final!r}"
+        )
     if args.top_p_threshold is not None and not (0.0 < float(args.top_p_threshold) <= 1.0):
         raise ValueError(f"--top_p_threshold must be in (0, 1], got {args.top_p_threshold}")
     if args.router_top_p_final is not None and not (0.0 < float(args.router_top_p_final) <= 1.0):

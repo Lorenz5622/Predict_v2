@@ -36,18 +36,26 @@ CONFIGS=(
   # "configs/dm_cb_za02_r225.json" 68.61
   # "configs/dm_cb_za02_m04.json" 69.42
   # "configs/dm_cb_za02_r175_tp028_b22.json" 69.48
-  # "configs/dm_cb_za02_r175_tp032_b22_late.json" # 保留value，69.70；不保留value, 69.31
+  "configs/dm_cb_za02_r175_tp032_b22_late.json" # 保留value，69.70；不保留value, 69.31
   # "configs/dm_cb_za02_r175_tp030_b22_later.json" 69.53
   # "configs/dm_cb_za02_r175_tp040_b22_highstart.json" 68.50
   # "configs/dm_cb_za02_r175_tp032_b22.json" 68.88
-  "configs/dm_cb_za02_r175_tp031_b22_late_s80.json" # 68.28 69.86
-  "configs/dm_cb_za02_r175_tp030_b22_late_s85.json" # 68.23 69.75
-  "configs/dm_cb_za02_r175_tp032_b22_late_t09.json" # 67.63 69.42
-  "configs/dm_cb_za02_r175_tp031_b22_late_t085.json" # 68.93 68.17
-
+  # "configs/dm_cb_za02_r175_tp031_b22_late_s80.json" # 68.28 69.86
+  # "configs/dm_cb_za02_r175_tp030_b22_late_s85.json" # 68.23 69.75
+  # "configs/dm_cb_za02_r175_tp032_b22_late_t09.json" # 67.63 69.42
+  # "configs/dm_cb_za02_r175_tp031_b22_late_t085.json" # 68.93 68.17
+  # "configs/dm_cb_za02_r175_tp031_b22_late_s80_abl_aux0.json" 68.39
+  # "configs/dm_cb_za02_r175_tp031_b22_late_s80_abl_z0.json" 69.21
+  # "configs/dm_cb_za02_r175_tp031_b22_late_s80_s1t12.json" 68.88
+  # "configs/dm_cb_za02_r175_tp031_b22_late_s80_s2temp085.json" 68.72
+  # "configs/dm_cb_za02_r175_tp031_b22_late_s80_pull_sched.json" 68.50
+  # "configs/dm_cb_za02_r175_tp032_b22_late_exp1_acc_recovery.json"
+  # "configs/dm_cb_za02_r175_tp032_b22_late_exp2_slightly_stronger.json"
+  # "configs/dm_cb_za02_r175_tp032_b22_late_exp3_low_router_lr.json"
+  # "configs/dm_cb_za02_r175_tp032_b22_late_exp4_tiny_late_pull.json"
 )
 
-LOGDIR="$SCRIPT_DIR/logs/sweep_$(date +%Y%m%d_%H%M%S)"
+LOGDIR="$SCRIPT_DIR/logs/sweep_$(date +%Y%m%d_%H%M%S)" 
 mkdir -p "$LOGDIR"
 
 for cfg in "${CONFIGS[@]}"; do
