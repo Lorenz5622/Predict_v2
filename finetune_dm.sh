@@ -36,7 +36,7 @@ CONFIGS=(
   # "configs/dm_cb_za02_r225.json" 68.61
   # "configs/dm_cb_za02_m04.json" 69.42
   # "configs/dm_cb_za02_r175_tp028_b22.json" 69.48
-  "configs/dm_cb_za02_r175_tp032_b22_late.json" # 保留value，69.70；不保留value, 69.31
+  # "configs/dm_cb_za02_r175_tp032_b22_late.json" # 保留value，69.70；不保留value, 69.31
   # "configs/dm_cb_za02_r175_tp030_b22_later.json" 69.53
   # "configs/dm_cb_za02_r175_tp040_b22_highstart.json" 68.50
   # "configs/dm_cb_za02_r175_tp032_b22.json" 68.88
@@ -53,6 +53,19 @@ CONFIGS=(
   # "configs/dm_cb_za02_r175_tp032_b22_late_exp2_slightly_stronger.json"
   # "configs/dm_cb_za02_r175_tp032_b22_late_exp3_low_router_lr.json"
   # "configs/dm_cb_za02_r175_tp032_b22_late_exp4_tiny_late_pull.json"
+  # "configs/dm_cb_za02_r175_tp032_b22_late_a2_tpf0295_t205_c0012_lrm115.json" 68.50
+  # "configs/dm_cb_za02_r175_tp032_b22_late_a2_tpf0290_t200_c0012_lrm115.json" 69.70
+  # "configs/dm_cb_za02_r175_tp032_b22_late_a2_tpf0290_t200_c0014_lrm115.json" 68.55
+  # "configs/dm_cb_za02_r175_tp032_b22_late_a2_tpf0285_t195_c0014_lrm110.json" 68.28
+#   "configs/dm_cb_za02_r175_tp032_b22_late_a2_withV20.json" 71.49
+#   "configs/dm_cb_za02_r175_tp032_b22_late_a2_tpf0292_t202_c0011_lrm115.json" 68.55
+#   "configs/dm_cb_za02_r175_tp032_b22_late_a2_tpf0290_t200_c0012_lrm112.json" 68.01
+#   "configs/dm_cb_za02_r175_tp032_b22_late_a2_tpf0288_t198_c0012_lrm115.json" 68.17
+#   "configs/dm_cb_za02_r175_tp032_b22_late_a2_tpf0288_t198_c0012_lrm112.json" 67.57
+  "configs/dm_cb_za02_r175_tp031_b22_late_s80_e4.json"
+  "configs/dm_cb_za02_r175_tp032_b22_late_a2_tpf0290_t200_c0012_lrm115.json"
+  "configs/dm_cb_za02_r175_tp032_b22_late_a2_tpf0291_t201_c0012_lrm115.json"
+  "configs/dm_cb_za02_r175_tp032_b22_late_a2_tpf0289_t199_c0012_lrm115.json"
 )
 
 LOGDIR="$SCRIPT_DIR/logs/sweep_$(date +%Y%m%d_%H%M%S)" 

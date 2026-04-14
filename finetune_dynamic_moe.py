@@ -261,15 +261,27 @@ def _enable_new_router_params_trainable(model: nn.Module) -> int:
 
 def _cast_selected_trainable_params_to_fp32(model: nn.Module) -> int:
     """
-    Cast all floating-point trainable parameters to fp32.
+    Cast only the numerically sensitive router parameters to fp32.
 
     This keeps base frozen/quantized weights untouched (requires_grad=False),
-    while ensuring every trainable parameter (LoRA/router/custom) stays in fp32.
+    leaves LoRA weights in the model/autocast dtype, and promotes only:
+    - router.query
+    - router.key
+    - router.expert_embed
+    - shared_expert_embed
     """
+    fp32_keys = (
+        "router.query",
+        "router.key",
+        "router.expert_embed",
+        "shared_expert_embed",
+    )
     n_params = 0
     with torch.no_grad():
-        for _name, param in model.named_parameters():
+        for name, param in model.named_parameters():
             if not param.requires_grad:
+                continue
+            if not any(key in name for key in fp32_keys):
                 continue
             if not torch.is_floating_point(param):
                 continue
@@ -1404,6 +1416,33 @@ def make_dataset(name: str, tokenizer, args, split: str, max_samples: Optional[i
     raise ValueError(f"Unknown dataset: {name}")
 
 
+DATASETS_WITH_VALIDATION = {
+    "piqa",
+    "siqa",
+    "hellaswag",
+    "arc-e",
+    "csqa",
+    "winogrande",
+    "mmlu",
+    "arc-c",
+    "openbookqa",
+}
+
+
+def split_dataset_by_ratio(ds, ratio: float, seed: int):
+    if not 0.0 <= float(ratio) <= 1.0:
+        raise ValueError(f"ratio must be in [0, 1], got {ratio}")
+    n_total = len(ds)
+    if n_total == 0:
+        return ds, ds
+    n_first = int(round(n_total * float(ratio)))
+    n_first = max(0, min(n_total, n_first))
+    shuffled = ds.shuffle(seed=int(seed))
+    first = shuffled.select(range(n_first))
+    second = shuffled.select(range(n_first, n_total))
+    return first, second
+
+
 def build_train_eval_datasets(tokenizer, args, *, stage: str):
     if args.dataset == "mix":
         names = [x.strip() for x in args.mix_datasets.split(",") if x.strip()]
@@ -1422,12 +1461,55 @@ def build_train_eval_datasets(tokenizer, args, *, stage: str):
         )
     elif stage == "stage2":
         train_ds = train_ds_full
+        borrowed_eval_remainders = {}
+        if bool(args.stage2_include_validation_in_train):
+            val_source_names = names if args.dataset == "mix" else [args.dataset]
+            borrowed_parts = []
+            for name in val_source_names:
+                if name not in DATASETS_WITH_VALIDATION:
+                    if args.dataset == "mix":
+                        print(f"[stage2][data] skip validation augmentation for {name}: no validation split configured")
+                        continue
+                    raise ValueError(
+                        f"Dataset '{name}' does not have a validation split configured for "
+                        "--stage2_include_validation_in_train."
+                    )
+                val_ds = make_dataset(
+                    name,
+                    tokenizer,
+                    args,
+                    args.stage2_validation_train_split,
+                    None,
+                )
+                val_train_part, val_eval_part = split_dataset_by_ratio(
+                    val_ds,
+                    ratio=float(args.stage2_validation_train_ratio),
+                    seed=int(args.stage_split_seed),
+                )
+                if len(val_train_part) > 0:
+                    borrowed_parts.append(val_train_part)
+                borrowed_eval_remainders[name] = val_eval_part
+                print(
+                    f"[stage2][data] {name}: borrowed {len(val_train_part)}/{len(val_ds)} "
+                    f"from {args.stage2_validation_train_split} into train"
+                )
+            if borrowed_parts:
+                train_ds = concatenate_datasets([train_ds] + borrowed_parts)
     else:
         raise ValueError(f"Unknown stage: {stage}")
 
     eval_ds = None
     if stage == "stage2":
-        eval_ds = make_dataset(args.eval_dataset, tokenizer, args, args.eval_split, args.eval_max_samples)
+        if (
+            bool(args.stage2_include_validation_in_train)
+            and args.eval_split == args.stage2_validation_train_split
+            and args.eval_dataset in borrowed_eval_remainders
+        ):
+            eval_ds = borrowed_eval_remainders[args.eval_dataset]
+            if args.eval_max_samples is not None:
+                eval_ds = eval_ds.select(range(min(args.eval_max_samples, len(eval_ds))))
+        else:
+            eval_ds = make_dataset(args.eval_dataset, tokenizer, args, args.eval_split, args.eval_max_samples)
     return train_ds, eval_ds
 
 
@@ -1929,6 +2011,24 @@ def parse_args():
     ap.add_argument("--stage1_max_grad_norm", type=float, default=1.0)
     ap.add_argument("--stage1_data_ratio", type=float, default=0.2)
     ap.add_argument("--stage_split_seed", type=int, default=42)
+    ap.add_argument(
+        "--stage2_include_validation_in_train",
+        type=int,
+        default=0,
+        help="If set, append a slice of the training dataset validation split into the stage2 training set.",
+    )
+    ap.add_argument(
+        "--stage2_validation_train_ratio",
+        type=float,
+        default=0.2,
+        help="Fraction of validation data to borrow into the stage2 training set when enabled.",
+    )
+    ap.add_argument(
+        "--stage2_validation_train_split",
+        type=str,
+        default="validation",
+        help="Split name borrowed into the stage2 training set when validation augmentation is enabled.",
+    )
     ap.add_argument("--stage1_distill_temperature", type=float, default=1.0)
     ap.add_argument("--stage1_kl_coef", type=float, default=1.0)
     ap.add_argument("--stage1_logit_coef", type=float, default=1.0)
@@ -2047,6 +2147,10 @@ def main():
         raise ValueError("Only one of --load_in_4bit and --load_in_8bit can be enabled.")
     if not (0.0 < float(args.stage1_data_ratio) < 1.0):
         raise ValueError(f"--stage1_data_ratio must be in (0, 1), got {args.stage1_data_ratio}")
+    if not (0.0 <= float(args.stage2_validation_train_ratio) <= 1.0):
+        raise ValueError(
+            f"--stage2_validation_train_ratio must be in [0, 1], got {args.stage2_validation_train_ratio}"
+        )
     for name in (
         "router_top_p_schedule_start_ratio",
         "router_top_p_schedule_end_ratio",
@@ -2226,7 +2330,7 @@ def main():
     if is_main_process():
         trainable = sum(p.numel() for p in stage2_model.parameters() if p.requires_grad)
         total = sum(p.numel() for p in stage2_model.parameters())
-        print(f"[stage2] cast trainable params to fp32: {n_fp32}")
+        print(f"[stage2] cast selected router params to fp32: {n_fp32}")
         print(f"[stage2] trainable params: {trainable}/{total} ({trainable / total * 100:.2f}%)")
         try:
             stage2_model.print_trainable_parameters()
