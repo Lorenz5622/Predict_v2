@@ -352,12 +352,19 @@ class CrossAttentionRouter(nn.Module):
         # Value projection is intentionally disabled.
         # self.value = nn.Linear(self.d_router, self.num_experts, bias=False)
 
-        self.expert_embed = nn.Parameter(torch.randn(self.num_experts, self.d_router))
-        self._shared_expert_embed_ref = None
+        init_expert_state = torch.randn(self.num_experts, self.d_router)
+        self.expert_embed = nn.Parameter(init_expert_state.clone())
+        self.expert_key = nn.Parameter(init_expert_state.clone())
+        self._shared_expert_key_ref = None
+
+    def set_shared_expert_key(self, expert_key: nn.Parameter) -> None:
+        self.expert_key = None
+        self._shared_expert_key_ref = [expert_key]
 
     def set_shared_expert_embed(self, expert_embed: nn.Parameter) -> None:
-        self.expert_embed = None
-        self._shared_expert_embed_ref = [expert_embed]
+        # Backward-compatible alias: older call sites use the embed name for the
+        # shared routing state, but routing now reads from `expert_key`.
+        self.set_shared_expert_key(expert_embed)
 
     @staticmethod
     def _reshape_legacy_router_weight(
@@ -389,12 +396,28 @@ class CrossAttentionRouter(nn.Module):
             target.copy_(reshaped)
         return target
 
+    def initialize_expert_key_from_legacy_router(self, legacy_router_weight: torch.Tensor) -> torch.Tensor:
+        target = self.get_expert_key()
+        reshaped = self._reshape_legacy_router_weight(legacy_router_weight, tuple(target.shape))
+        reshaped = reshaped.to(dtype=target.dtype, device=target.device)
+        with torch.no_grad():
+            target.copy_(reshaped)
+        return target
+
     def get_expert_embed(self) -> torch.Tensor:
-        if self._shared_expert_embed_ref is not None:
-            return self._shared_expert_embed_ref[0]
-        if self.expert_embed is None:
-            raise RuntimeError("CrossAttentionRouter expert_embed is not initialized.")
         return self.expert_embed
+
+    def get_expert_key(self) -> torch.Tensor:
+        if self._shared_expert_key_ref is not None:
+            return self._shared_expert_key_ref[0]
+        if self.expert_key is None:
+            raise RuntimeError("CrossAttentionRouter expert_key is not initialized.")
+        return self.expert_key
+
+    def project_routed_expert_repr_to_key_space(self, routed_expert_repr: torch.Tensor) -> torch.Tensor:
+        key_weight_t = self.key.weight.detach().float().transpose(0, 1)
+        key_weight_t_pinv = torch.linalg.pinv(key_weight_t)
+        return routed_expert_repr.float() @ key_weight_t_pinv
 
     def forward(
         self,
@@ -403,10 +426,10 @@ class CrossAttentionRouter(nn.Module):
     ) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
         # Keep router params in fp32 while allowing upstream hidden states in fp16/bf16.
         router_in = hidden_states.to(self.query.weight.dtype)
-        expert_embed = self.get_expert_embed().to(self.key.weight.dtype)
+        expert_key = self.get_expert_key().to(self.key.weight.dtype)
 
         q = self.query(router_in).float()                  # (b, s, d)
-        k = self.key(expert_embed).float()                 # (e, d)
+        k = self.key(expert_key).float()                   # (e, d)
 
         token_proto = None
         if return_token_proto:
@@ -502,7 +525,7 @@ class SwitchMLP(nn.Module):
         self,
         token_proto: torch.Tensor,      # (b, s, d)
         route_probs: torch.Tensor,      # (b, s, e)
-        expert_embed: torch.Tensor,     # (e, d)
+        expert_key: torch.Tensor,       # (e, d)
     ) -> torch.Tensor:
         """
         Soft prototype pull loss:
@@ -510,7 +533,7 @@ class SwitchMLP(nn.Module):
         用 route_probs.detach() 做软标签，避免直接扰动主路由分布。
         """
         z = F.normalize(token_proto.float(), dim=-1)                # (b, s, d)
-        e = F.normalize(expert_embed.float(), dim=-1)               # (e, d)
+        e = F.normalize(expert_key.float(), dim=-1)                 # (e, d)
         sim = torch.matmul(z, e.transpose(0, 1))                    # (b, s, e)
 
         if self.router_pull_loss_type == "soft":
@@ -525,22 +548,22 @@ class SwitchMLP(nn.Module):
         raise ValueError(f"Unsupported router_pull_loss_type: {self.router_pull_loss_type!r}")
 
     @torch.no_grad()
-    def _ema_update_expert_embed(
+    def _ema_update_expert_key(
         self,
         token_proto: torch.Tensor,      # (b, s, d)
         topk_ind: torch.Tensor,         # (b, s, num_experts), 未选中为 -1
     ) -> None:
         """
         用当前 batch 被路由到某个 expert 的 token representation 均值，
-        对 expert_embed 做 EMA 更新。
+        对 expert_key 做 EMA 更新。
         """
         if not self.use_cross_attention_router:
             return
 
         router = self.router
-        expert_embed = router.get_expert_embed()
-        device = expert_embed.device
-        dtype = expert_embed.dtype
+        expert_key = router.get_expert_key()
+        device = expert_key.device
+        dtype = expert_key.dtype
 
         token_proto = F.normalize(token_proto.detach().float(), dim=-1)  # (b, s, d)
         flat_proto = token_proto.reshape(-1, token_proto.size(-1))       # (b*s, d)
@@ -566,12 +589,14 @@ class SwitchMLP(nn.Module):
         proto_means = proto_sums[active_mask] / proto_counts[active_mask].unsqueeze(-1)
         proto_means = F.normalize(proto_means, dim=-1)
 
-        old = expert_embed[active_mask].detach().float()
-        old = F.normalize(old, dim=-1)
+        current_routed = router.key(expert_key.to(router.key.weight.dtype)).detach().float()
+        current_routed = F.normalize(current_routed, dim=-1)
+        old = current_routed[active_mask]
 
         new = self.router_ema_momentum * old + (1.0 - self.router_ema_momentum) * proto_means
         new = F.normalize(new, dim=-1)
-        expert_embed[active_mask].copy_(new.to(device=device, dtype=dtype))
+        updated_key = router.project_routed_expert_repr_to_key_space(new)
+        expert_key[active_mask] = updated_key.to(device=device, dtype=dtype)
 
     @torch.no_grad()
     def apply_pending_router_ema_update(self) -> None:
@@ -581,7 +606,7 @@ class SwitchMLP(nn.Module):
         self._pending_router_ema_topk_ind = None
         if token_proto is None or topk_ind is None:
             return
-        self._ema_update_expert_embed(token_proto=token_proto, topk_ind=topk_ind)
+        self._ema_update_expert_key(token_proto=token_proto, topk_ind=topk_ind)
     
     def forward(self, hidden_states):
         """
@@ -645,16 +670,18 @@ class SwitchMLP(nn.Module):
 
         # [新增] Prototype Pull Loss
         if self.training and self.use_cross_attention_router:
-            expert_embed_for_loss = self.router.get_expert_embed()
+            expert_key_for_loss = self.router.key(
+                self.router.get_expert_key().to(self.router.key.weight.dtype)
+            ).float()
             self.last_router_pull_loss = self._compute_prototype_pull_loss(
                 token_proto=token_proto,
                 route_probs=route_probs,
-                expert_embed=expert_embed_for_loss,
+                expert_key=expert_key_for_loss,
             )
         else:
             self.last_router_pull_loss = None
 
-        # [新增] EMA 更新 expert_embed
+        # [新增] EMA 更新 expert_key
         if self.training and self.use_cross_attention_router and self.router_use_ema_update:
             self._pending_router_ema_token_proto = token_proto.detach()
             self._pending_router_ema_topk_ind = topk_ind.detach()
@@ -978,7 +1005,7 @@ class MoEModel(MoEPreTrainedModel):
         self.vocab_size = config.vocab_size
 
         self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size, self.padding_idx)
-        self.shared_expert_embed = None
+        self.shared_expert_key = None
         self.last_router_pull_loss = None
         print(f"share_router_expert_embedding: {getattr(config, 'share_router_expert_embedding', False)}")
         if (
@@ -987,17 +1014,17 @@ class MoEModel(MoEPreTrainedModel):
             and int(getattr(config, "num_experts", 0)) > 0
         ):
             d_router = int(getattr(config, "router_dim", config.hidden_size))
-            self.shared_expert_embed = nn.Parameter(torch.randn(config.num_experts, d_router))
+            self.shared_expert_key = nn.Parameter(torch.randn(config.num_experts, d_router))
 
         self.layers = nn.ModuleList([LlamaDecoderLayer(config, layer_idx) for layer_idx in range(config.num_hidden_layers)])
-        if self.shared_expert_embed is not None:
+        if self.shared_expert_key is not None:
             for layer in self.layers:
                 mlp = getattr(layer, "mlp", None)
                 if not getattr(mlp, "use_switch", False):
                     continue
                 if not getattr(mlp, "use_cross_attention_router", False):
                     continue
-                mlp.router.set_shared_expert_embed(self.shared_expert_embed)
+                mlp.router.set_shared_expert_key(self.shared_expert_key)
 
         self.norm = LlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.last_router_aux_loss = None

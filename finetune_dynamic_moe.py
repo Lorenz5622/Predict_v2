@@ -154,7 +154,8 @@ def _init_cross_attention_router_from_legacy_dense(
     Rules:
     - query: partial copy from legacy dense router weight
     - expert_embed: initialized from the matching legacy dense router weight
-    - shared_expert_embed: initialized from the mean of all compatible legacy dense router weights
+    - expert_key: initialized from the matching legacy dense router weight
+    - shared_expert_key: initialized from the mean of all compatible legacy dense router weights
     - key/value: small-variance random init
     """
     num_inited = 0
@@ -164,7 +165,7 @@ def _init_cross_attention_router_from_legacy_dense(
     per_layer_init_messages = []
 
     with torch.no_grad():
-        shared_expert_embed = getattr(model.model, "shared_expert_embed", None)
+        shared_expert_key = getattr(model.model, "shared_expert_key", None)
 
         for layer_idx, layer in enumerate(model.model.layers):
             mlp = layer.mlp
@@ -178,9 +179,13 @@ def _init_cross_attention_router_from_legacy_dense(
             router = mlp.router
             dense_w = legacy_sd.get(f"model.layers.{layer_idx}.mlp.router.weight")
             if dense_w is None:
-                if getattr(router, "_shared_expert_embed_ref", None) is None and getattr(router, "expert_embed", None) is not None:
+                if getattr(router, "expert_embed", None) is not None:
                     per_layer_init_messages.append(
                         f"[init] layer {layer_idx} expert_embed kept random init (legacy router.weight not found)"
+                    )
+                if getattr(router, "_shared_expert_key_ref", None) is None and getattr(router, "expert_key", None) is not None:
+                    per_layer_init_messages.append(
+                        f"[init] layer {layer_idx} expert_key kept random init (legacy router.weight not found)"
                     )
                 continue
 
@@ -209,29 +214,34 @@ def _init_cross_attention_router_from_legacy_dense(
             if hasattr(router, "_reshape_legacy_router_weight"):
                 target_embed = router.get_expert_embed()
                 reshaped_dense = router._reshape_legacy_router_weight(dense_w, tuple(target_embed.shape))
-                if getattr(router, "_shared_expert_embed_ref", None) is None and getattr(router, "expert_embed", None) is not None:
+                if getattr(router, "expert_embed", None) is not None:
                     router.initialize_expert_embed_from_legacy_router(dense_w)
                     per_layer_init_messages.append(
                         f"[init] layer {layer_idx} expert_embed initialized from legacy router.weight"
                     )
-                elif shared_expert_embed is not None:
+                if getattr(router, "_shared_expert_key_ref", None) is None and getattr(router, "expert_key", None) is not None:
+                    router.initialize_expert_key_from_legacy_router(dense_w)
+                    per_layer_init_messages.append(
+                        f"[init] layer {layer_idx} expert_key initialized from legacy router.weight"
+                    )
+                elif shared_expert_key is not None:
                     shared_router_inits.append(reshaped_dense.to(dtype=torch.float32))
 
             num_inited += 1
 
-        if shared_expert_embed is not None:
+        if shared_expert_key is not None:
             if shared_router_inits:
                 shared_init = torch.stack(shared_router_inits, dim=0).mean(dim=0)
-                shared_expert_embed.copy_(
-                    shared_init.to(dtype=shared_expert_embed.dtype, device=shared_expert_embed.device)
+                shared_expert_key.copy_(
+                    shared_init.to(dtype=shared_expert_key.dtype, device=shared_expert_key.device)
                 )
                 print(
-                    f"[init] shared_expert_embed initialized from legacy router.weight "
+                    f"[init] shared_expert_key initialized from legacy router.weight "
                     f"(mean over {len(shared_router_inits)} layers)"
                 )
             else:
-                shared_expert_embed.normal_(mean=0.0, std=base_std)
-                print("[init] shared_expert_embed kept random init (no compatible legacy router.weight)")
+                shared_expert_key.normal_(mean=0.0, std=base_std)
+                print("[init] shared_expert_key kept random init (no compatible legacy router.weight)")
 
         for msg in per_layer_init_messages:
             print(msg)
@@ -245,8 +255,8 @@ def _enable_new_router_params_trainable(model: nn.Module) -> int:
         "router.key",
         "router.token_couple_proj",
         "router.value",
-        "router.expert_embed",
-        "shared_expert_embed",
+        "router.expert_key",
+        "shared_expert_key",
         # Legacy (unused in current simplified router):
         # "router.q_proj", "expert_keys", "expert_values", "log_router_temperature",
         # "router_value_proj", "router_context_gate_proj",
@@ -267,14 +277,14 @@ def _cast_selected_trainable_params_to_fp32(model: nn.Module) -> int:
     leaves LoRA weights in the model/autocast dtype, and promotes only:
     - router.query
     - router.key
-    - router.expert_embed
-    - shared_expert_embed
+    - router.expert_key
+    - shared_expert_key
     """
     fp32_keys = (
         "router.query",
         "router.key",
-        "router.expert_embed",
-        "shared_expert_embed",
+        "router.expert_key",
+        "shared_expert_key",
     )
     n_params = 0
     with torch.no_grad():
@@ -354,12 +364,14 @@ def enable_cross_attention_router_only(model: nn.Module) -> int:
         router = getattr(mlp, "router", None)
         if router is None:
             continue
-        for param in router.parameters():
+        for name, param in router.named_parameters():
+            if not any(key in name for key in ("query", "key", "token_couple_proj", "value", "expert_key")):
+                continue
             param.requires_grad = True
             n_params += param.numel()
 
     for name, param in model.named_parameters():
-        if "shared_expert_embed" in name:
+        if "shared_expert_key" in name:
             param.requires_grad = True
             n_params += param.numel()
     return n_params
@@ -374,7 +386,7 @@ def prepare_stage1_router_trainables(model: nn.Module) -> int:
     return n_router_params
 
 
-def split_train_dataset_for_stage(ds, stage1_ratio: float, seed: int, stage: str):
+def build_stage1_subset_dataset(ds, stage1_ratio: float, seed: int):
     if not (0.0 < float(stage1_ratio) < 1.0):
         raise ValueError(f"stage1_ratio must be in (0, 1), got {stage1_ratio}")
 
@@ -385,12 +397,7 @@ def split_train_dataset_for_stage(ds, stage1_ratio: float, seed: int, stage: str
     ds_shuf = ds.shuffle(seed=int(seed))
     n_stage1 = int(n_total * float(stage1_ratio))
     n_stage1 = max(1, min(n_stage1, n_total - 1))
-
-    if stage == "stage1":
-        return ds_shuf.select(range(0, n_stage1))
-    if stage == "stage2":
-        return ds_shuf.select(range(n_stage1, n_total))
-    raise ValueError(f"stage must be 'stage1' or 'stage2', got {stage}")
+    return ds_shuf.select(range(0, n_stage1))
 
 
 def _align_legacy_router_weight(weight: torch.Tensor, hidden_size: int, num_experts: int) -> torch.Tensor:
@@ -598,8 +605,8 @@ def _is_stage2_router_param(name: str) -> bool:
         "router.query",
         "router.key",
         "router.token_couple_proj",
-        "router.expert_embed",
-        "shared_expert_embed",
+        "router.expert_key",
+        "shared_expert_key",
     )
     return any(key in name for key in router_keys)
 
@@ -1453,11 +1460,10 @@ def build_train_eval_datasets(tokenizer, args, *, stage: str):
         train_ds_full = make_dataset(args.dataset, tokenizer, args, args.train_split, args.train_max_samples)
 
     if stage == "stage1":
-        train_ds = split_train_dataset_for_stage(
+        train_ds = build_stage1_subset_dataset(
             train_ds_full,
             stage1_ratio=float(args.stage1_data_ratio),
             seed=int(args.stage_split_seed),
-            stage="stage1",
         )
     elif stage == "stage2":
         train_ds = train_ds_full
@@ -1958,13 +1964,13 @@ def parse_args():
         "--router_use_ema_update",
         type=int,
         default=1,
-        help="Whether to update expert_embed with EMA from assigned token prototypes.",
+        help="Whether to update expert_key with EMA from assigned token prototypes.",
     )
     ap.add_argument(
         "--router_ema_momentum",
         type=float,
         default=0.99,
-        help="EMA momentum for expert_embed update.",
+        help="EMA momentum for expert_key update.",
     )
     ap.add_argument(
         "--router_pull_temperature",
