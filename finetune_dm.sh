@@ -2,7 +2,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-NPROC=2
+NPROC=4
 LAUNCHER="$SCRIPT_DIR/launch_two_stage_torchrun.py"
 
 CONFIGS=(
@@ -63,7 +63,8 @@ CONFIGS=(
 #   "configs/dm_cb_za02_r175_tp032_b22_late_a2_tpf0288_t198_c0012_lrm115.json" 68.17
 #   "configs/dm_cb_za02_r175_tp032_b22_late_a2_tpf0288_t198_c0012_lrm112.json" 67.57
   # "configs/dm_cb_za02_r175_tp031_b22_late_s80_e4.json"
-  "configs/CB_test.json"
+  # "configs/CB.json"
+  "configs/CB_v1.json"
   # "configs/dm_cb_za02_r175_tp032_b22_late_a2_tpf0291_t201_c0012_lrm115.json"
   # "configs/dm_cb_za02_r175_tp032_b22_late_a2_tpf0289_t199_c0012_lrm115.json"
 )
