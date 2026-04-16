@@ -758,11 +758,14 @@ def train(
             "router_weight_entropy", "router_weight_top1_mass",
             "router_output_mean", "router_output_std", "router_output_min", "router_output_max",
             "route_prob_min", "route_prob_has_neg", "route_prob_row_sum_mean", "route_prob_row_sum_abs_err",
+            "projected_value_std", "projected_value_norm_mean",
+            "expert_key_pairwise_cos_mean", "expert_key_pairwise_cos_max",
+            "token_q_norm_mean", "token_q_norm_std",
             "dispatch_avg_selected_count", "dispatch_soft_selected_count", "dispatch_dead_expert_ratio", "dispatch_top1_top2_margin",
-            "dispatch_top_p_pre_mass_mean", "dispatch_top_p_post_sum_mean", "dispatch_top_p_post_sum_abs_err",
+            "dispatch_top_p_pre_mass_mean", "dispatch_top_p_post_sum_mean", "dispatch_top_p_post_sum_abs_err", "expert_token_count_cv",
             "dispatch_soft_load", "dispatch_hard_load",
             "ema_active_expert_count", "ema_proto_count_mean", "ema_proto_count_min", "ema_proto_count_max",
-            "ema_proto_update_cosine", "ema_proto_delta_norm", "ema_proto_counts",
+            "ema_proto_update_cosine", "ema_proto_delta_norm", "ema_update_ratio", "ema_proto_counts",
         ]) + "\n")
         metrics_f.flush()
 
@@ -986,6 +989,12 @@ def train(
                             _metric_cell(router_forward_stats.get("route_prob_has_neg")),
                             _metric_cell(router_forward_stats.get("route_prob_row_sum_mean")),
                             _metric_cell(router_forward_stats.get("route_prob_row_sum_abs_err")),
+                            _metric_cell(router_forward_stats.get("projected_value_std")),
+                            _metric_cell(router_forward_stats.get("projected_value_norm_mean")),
+                            _metric_cell(router_forward_stats.get("expert_key_pairwise_cos_mean")),
+                            _metric_cell(router_forward_stats.get("expert_key_pairwise_cos_max")),
+                            _metric_cell(router_forward_stats.get("token_q_norm_mean")),
+                            _metric_cell(router_forward_stats.get("token_q_norm_std")),
                             _metric_cell(router_dispatch_stats.get("avg_selected_expert_count")),
                             _metric_cell(router_dispatch_stats.get("soft_selected_expert_count")),
                             _metric_cell(router_dispatch_stats.get("dead_expert_ratio")),
@@ -993,6 +1002,7 @@ def train(
                             _metric_cell(router_dispatch_stats.get("top_p_pre_mass_mean")),
                             _metric_cell(router_dispatch_stats.get("top_p_post_sum_mean")),
                             _metric_cell(router_dispatch_stats.get("top_p_post_sum_abs_err")),
+                            _metric_cell(router_dispatch_stats.get("expert_token_count_cv")),
                             _metric_cell(router_dispatch_stats.get("soft_load")),
                             _metric_cell(router_dispatch_stats.get("hard_load")),
                             _metric_cell(router_ema_stats.get("active_expert_count")),
@@ -1001,6 +1011,7 @@ def train(
                             _metric_cell(router_ema_stats.get("proto_count_max")),
                             _metric_cell(router_ema_stats.get("proto_update_cosine")),
                             _metric_cell(router_ema_stats.get("proto_delta_norm")),
+                            _metric_cell(router_ema_stats.get("ema_update_ratio")),
                             _metric_cell(router_ema_stats.get("proto_counts")),
                         ]) + "\n")
                         metrics_f.flush()

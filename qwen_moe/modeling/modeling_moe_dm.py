@@ -331,6 +331,20 @@ def _mean_tensor_stat(stat_dicts, key: str):
         return None
     return torch.stack(values, dim=0).mean(dim=0)
 
+
+def _pairwise_cosine_stats(vectors: torch.Tensor) -> Tuple[Optional[float], Optional[float]]:
+    vectors = vectors.detach().float()
+    num_vectors = int(vectors.size(0))
+    if num_vectors < 2:
+        return None, None
+    vectors = F.normalize(vectors, dim=-1)
+    cosine = torch.matmul(vectors, vectors.transpose(0, 1))
+    mask = ~torch.eye(num_vectors, dtype=torch.bool, device=cosine.device)
+    pairwise = cosine[mask]
+    if pairwise.numel() == 0:
+        return None, None
+    return float(pairwise.mean().item()), float(pairwise.max().item())
+
 class CrossAttentionRouter(nn.Module):
     """
     Router that scores experts by cross attention from token queries to learnable
@@ -454,6 +468,10 @@ class CrossAttentionRouter(nn.Module):
         attn_scores_f = attn_scores.detach().float()
         route_probs_f = route_probs.detach().float()
         attn_output_f = attn_output.detach().float()
+        projected_value_f = v.detach().float()
+        projected_value_norms = projected_value_f.norm(dim=-1)
+        token_q_norms = q.detach().float().norm(dim=-1)
+        expert_key_pairwise_cos_mean, expert_key_pairwise_cos_max = _pairwise_cosine_stats(expert_embed)
         row_sums = route_probs_f.sum(dim=-1)
         probs_clamped = route_probs_f.clamp_min(1e-9)
         attn_entropy = -(probs_clamped * probs_clamped.log()).sum(dim=-1)
@@ -475,6 +493,12 @@ class CrossAttentionRouter(nn.Module):
             "route_prob_has_neg": float(route_probs_f.lt(0).any().item()),
             "route_prob_row_sum_mean": float(row_sums.mean().item()),
             "route_prob_row_sum_abs_err": float((row_sums - 1.0).abs().mean().item()),
+            "projected_value_std": float(projected_value_f.std(unbiased=False).item()),
+            "projected_value_norm_mean": float(projected_value_norms.mean().item()),
+            "expert_key_pairwise_cos_mean": expert_key_pairwise_cos_mean,
+            "expert_key_pairwise_cos_max": expert_key_pairwise_cos_max,
+            "token_q_norm_mean": float(token_q_norms.mean().item()),
+            "token_q_norm_std": float(token_q_norms.std(unbiased=False).item()),
         }
         router_repr = (q, k) if return_router_repr else None
         return route_scores, route_probs, router_repr
@@ -628,10 +652,12 @@ class SwitchMLP(nn.Module):
         flat_selected_probs = expert_axis_probs.detach().float().reshape(-1, expert_axis_probs.size(-1))  # (b*s, e)
         proto_sums = flat_selected_probs.transpose(0, 1) @ flat_q                                 # (e, d)
         proto_counts = flat_selected_probs.sum(dim=0)                                             # (e,)
+        token_counts = (flat_selected_probs > 0).sum(dim=0).to(torch.float32)
 
         if dist.is_available() and dist.is_initialized():
             dist.all_reduce(proto_sums, op=dist.ReduceOp.SUM)
             dist.all_reduce(proto_counts, op=dist.ReduceOp.SUM)
+            dist.all_reduce(token_counts, op=dist.ReduceOp.SUM)
 
         active_mask = proto_counts > 0
         if not torch.any(active_mask):
@@ -643,6 +669,10 @@ class SwitchMLP(nn.Module):
                 "proto_count_max": float(proto_counts.max().item()),
                 "proto_update_cosine": None,
                 "proto_delta_norm": None,
+                "ema_update_ratio": None,
+                "expert_token_count_cv": float(
+                    (token_counts.std(unbiased=False) / token_counts.mean().clamp_min(1e-12)).item()
+                ) if token_counts.numel() > 0 else None,
             }
             return
 
@@ -657,8 +687,13 @@ class SwitchMLP(nn.Module):
         new_routed = F.normalize(new_routed, dim=-1)
         proto_update_cosine = F.cosine_similarity(old, new_routed, dim=-1)
         proto_delta_norm = (new_routed - old).norm(dim=-1)
-
+        old_embed_param = expert_embed[active_mask].detach().float()
         updated_embed = router.project_routed_expert_repr_to_embed_space(new_routed)
+        ema_update_ratio = (
+            (updated_embed - old_embed_param).norm(dim=-1)
+            / old_embed_param.norm(dim=-1).clamp_min(1e-12)
+        )
+
         expert_embed[active_mask].copy_(updated_embed.to(device=device, dtype=dtype))
         self.last_router_ema_stats = {
             "proto_counts": proto_counts.detach().float(),
@@ -668,6 +703,10 @@ class SwitchMLP(nn.Module):
             "proto_count_max": float(proto_counts.max().item()),
             "proto_update_cosine": float(proto_update_cosine.mean().item()),
             "proto_delta_norm": float(proto_delta_norm.mean().item()),
+            "ema_update_ratio": float(ema_update_ratio.mean().item()),
+            "expert_token_count_cv": float(
+                (token_counts.std(unbiased=False) / token_counts.mean().clamp_min(1e-12)).item()
+            ) if token_counts.numel() > 0 else None,
         }
 
     @torch.no_grad()
@@ -758,6 +797,10 @@ class SwitchMLP(nn.Module):
         gathered_route_probs = route_probs_for_stats.gather(-1, topk_ind.clamp_min(0))
         top_p_pre_mass = (gathered_route_probs * selected_mask.to(gathered_route_probs.dtype)).sum(dim=-1)
         top_p_post_sum = topk_weights.sum(dim=-1)
+        hard_counts = torch.bincount(
+            topk_ind.reshape(-1)[topk_ind.reshape(-1) >= 0],
+            minlength=self.num_experts,
+        ).to(torch.float32)
 
         sorted_route_probs = torch.sort(route_probs, dim=-1, descending=True).values
         if sorted_route_probs.size(-1) > 1:
@@ -780,6 +823,9 @@ class SwitchMLP(nn.Module):
             "top_p_post_sum_mean": float(top_p_post_sum.mean().item()),
             "top_p_post_sum_abs_err": float((top_p_post_sum - 1.0).abs().mean().item()),
             "router_top_p": float(self.router_top_p),
+            "expert_token_count_cv": float(
+                (hard_counts.std(unbiased=False) / hard_counts.mean().clamp_min(1e-12)).item()
+            ),
         }
 
         if self.training and self.router_budget_target_count > 0.0:
@@ -1391,6 +1437,12 @@ class MoEModel(MoEPreTrainedModel):
                 "route_prob_has_neg",
                 "route_prob_row_sum_mean",
                 "route_prob_row_sum_abs_err",
+                "projected_value_std",
+                "projected_value_norm_mean",
+                "expert_key_pairwise_cos_mean",
+                "expert_key_pairwise_cos_max",
+                "token_q_norm_mean",
+                "token_q_norm_std",
             )
             self.last_router_forward_stats = (
                 {key: _mean_scalar_stat(forward_stat_terms, key) for key in forward_scalar_keys}
@@ -1406,6 +1458,7 @@ class MoEModel(MoEPreTrainedModel):
                 "top_p_post_sum_mean",
                 "top_p_post_sum_abs_err",
                 "router_top_p",
+                "expert_token_count_cv",
             )
             self.last_router_dispatch_stats = (
                 {key: _mean_scalar_stat(dispatch_stat_terms, key) for key in dispatch_scalar_keys}
@@ -1422,6 +1475,8 @@ class MoEModel(MoEPreTrainedModel):
                 "proto_count_max",
                 "proto_update_cosine",
                 "proto_delta_norm",
+                "ema_update_ratio",
+                "expert_token_count_cv",
             )
             self.last_router_ema_stats = (
                 {key: _mean_scalar_stat(ema_stat_terms, key) for key in ema_scalar_keys}
