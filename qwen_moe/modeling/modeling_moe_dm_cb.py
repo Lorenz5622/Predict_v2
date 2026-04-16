@@ -339,7 +339,6 @@ def entmax_bisect(
     probs = torch.clamp(alpha_m1 * (x - tau_star), min=0.0) ** inv_alpha_m1
     probs = probs / probs.sum(dim=dim, keepdim=True).clamp_min(eps)
     return probs
-
 class CrossAttentionRouter(nn.Module):
     """
     Router that scores experts by cross attention from token queries to learnable

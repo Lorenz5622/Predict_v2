@@ -334,12 +334,13 @@ def _mean_tensor_stat(stat_dicts, key: str):
 
 def _pairwise_cosine_stats(vectors: torch.Tensor) -> Tuple[Optional[float], Optional[float]]:
     vectors = vectors.detach().float()
-    if vectors.dim() != 2 or vectors.size(0) <= 1:
+    num_vectors = int(vectors.size(0))
+    if num_vectors < 2:
         return None, None
     vectors = F.normalize(vectors, dim=-1)
-    cos_mat = torch.matmul(vectors, vectors.transpose(0, 1))
-    upper = torch.triu_indices(cos_mat.size(0), cos_mat.size(1), offset=1, device=cos_mat.device)
-    pairwise = cos_mat[upper[0], upper[1]]
+    cosine = torch.matmul(vectors, vectors.transpose(0, 1))
+    mask = ~torch.eye(num_vectors, dtype=torch.bool, device=cosine.device)
+    pairwise = cosine[mask]
     if pairwise.numel() == 0:
         return None, None
     return float(pairwise.mean().item()), float(pairwise.max().item())
@@ -487,8 +488,9 @@ class CrossAttentionRouter(nn.Module):
         route_probs_f = route_probs.detach().float()
         attn_output_f = attn_output.detach().float()
         projected_value_f = v.detach().float()
+        projected_value_norms = projected_value_f.norm(dim=-1)
         token_q_norms = q.detach().float().norm(dim=-1)
-        expert_key_pairwise_cos_mean, expert_key_pairwise_cos_max = _pairwise_cosine_stats(expert_key)
+        expert_key_pairwise_cos_mean, expert_key_pairwise_cos_max = _pairwise_cosine_stats(expert_embed)
         row_sums = route_probs_f.sum(dim=-1)
         probs_clamped = route_probs_f.clamp_min(1e-9)
         attn_entropy = -(probs_clamped * probs_clamped.log()).sum(dim=-1)
@@ -706,13 +708,14 @@ class SwitchMLP(nn.Module):
         new_routed = F.normalize(new_routed, dim=-1)
         proto_update_cosine = F.cosine_similarity(old, new_routed, dim=-1)
         proto_delta_norm = (new_routed - old).norm(dim=-1)
-
-        updated_key = router.project_routed_expert_repr_to_key_space(new_routed)
+        old_embed_param = expert_embed[active_mask].detach().float()
+        updated_embed = router.project_routed_expert_repr_to_embed_space(new_routed)
         ema_update_ratio = (
-            (updated_key - old_key_param).norm(dim=-1)
-            / old_key_param.norm(dim=-1).clamp_min(1e-12)
+            (updated_embed - old_embed_param).norm(dim=-1)
+            / old_embed_param.norm(dim=-1).clamp_min(1e-12)
         )
-        expert_key[active_mask] = updated_key.to(device=device, dtype=dtype)
+
+        expert_embed[active_mask].copy_(updated_embed.to(device=device, dtype=dtype))
         self.last_router_ema_stats = {
             "proto_counts": proto_counts.detach().float(),
             "active_expert_count": float(active_mask.sum().item()),
@@ -815,6 +818,10 @@ class SwitchMLP(nn.Module):
         gathered_route_probs = route_probs_for_stats.gather(-1, topk_ind.clamp_min(0))
         top_p_pre_mass = (gathered_route_probs * selected_mask.to(gathered_route_probs.dtype)).sum(dim=-1)
         top_p_post_sum = topk_weights.sum(dim=-1)
+        hard_counts = torch.bincount(
+            topk_ind.reshape(-1)[topk_ind.reshape(-1) >= 0],
+            minlength=self.num_experts,
+        ).to(torch.float32)
 
         sorted_route_probs = torch.sort(route_probs, dim=-1, descending=True).values
         if sorted_route_probs.size(-1) > 1:
@@ -838,16 +845,7 @@ class SwitchMLP(nn.Module):
             "top_p_post_sum_abs_err": float((top_p_post_sum - 1.0).abs().mean().item()),
             "router_top_p": float(self.router_top_p),
             "expert_token_count_cv": float(
-                (
-                    torch.bincount(
-                        topk_ind.reshape(-1)[topk_ind.reshape(-1) >= 0],
-                        minlength=self.num_experts,
-                    ).to(torch.float32).std(unbiased=False)
-                    / torch.bincount(
-                        topk_ind.reshape(-1)[topk_ind.reshape(-1) >= 0],
-                        minlength=self.num_experts,
-                    ).to(torch.float32).mean().clamp_min(1e-12)
-                ).item()
+                (hard_counts.std(unbiased=False) / hard_counts.mean().clamp_min(1e-12)).item()
             ),
         }
 
