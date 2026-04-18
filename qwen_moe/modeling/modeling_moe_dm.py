@@ -383,13 +383,16 @@ class CrossAttentionRouter(nn.Module):
         # q-k routing space is now reused directly for pull/EMA updates.
         self.token_couple_proj = nn.Linear(self.hidden_size, self.d_router, bias=False)
 
-        self.value = nn.Linear(self.d_router, self.num_experts, bias=False)
+        self.value = nn.Linear(self.d_router, self.d_router, bias=False)
+        self.router_context_proj = nn.Linear(self.d_router, self.hidden_size, bias=False)
 
         init_expert_state = torch.randn(self.num_experts, self.d_router)
         self.expert_embed = nn.Parameter(init_expert_state.clone())
         self.expert_key = nn.Parameter(init_expert_state.clone())
+        self.expert_value = nn.Parameter(init_expert_state.clone())
         self._shared_expert_key_ref = None
         self.last_router_forward_stats = {}
+        nn.init.zeros_(self.router_context_proj.weight)
 
     def set_shared_expert_key(self, expert_key: nn.Parameter) -> None:
         self.expert_key = None
@@ -448,6 +451,9 @@ class CrossAttentionRouter(nn.Module):
             raise RuntimeError("CrossAttentionRouter expert_key is not initialized.")
         return self.expert_key
 
+    def get_expert_value(self) -> torch.Tensor:
+        return self.expert_value
+
     def project_routed_expert_repr_to_embed_space(self, routed_expert_repr: torch.Tensor) -> torch.Tensor:
         """
         Map routed expert representations back to the stored expert state
@@ -466,15 +472,15 @@ class CrossAttentionRouter(nn.Module):
         self,
         hidden_states: torch.Tensor,
         return_router_repr: bool = False,
-    ) -> Tuple[torch.Tensor, torch.Tensor, Optional[Tuple[torch.Tensor, torch.Tensor]]]:
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, Optional[Tuple[torch.Tensor, torch.Tensor]]]:
         # Keep router params in fp32 while allowing upstream hidden states in fp16/bf16.
         router_in = hidden_states.to(self.query.weight.dtype)
-        expert_embed = self.get_expert_embed()
         expert_key = self.get_expert_key()
+        expert_value = self.get_expert_value()
 
         q = self.query(router_in).float()                  # (b, s, d)
         k = self.key(expert_key.to(self.key.weight.dtype)).float()      # (e, d)
-        v = self.value(expert_embed.to(self.value.weight.dtype)).float()  # (e, e)
+        v = self.value(expert_value.to(self.value.weight.dtype)).float()  # (e, d)
         attn_scores = torch.matmul(q, k.transpose(0, 1)) / math.sqrt(self.d_router)  # (b, s, e)
         if self.use_entmax:
             attn_weights = entmax_bisect(attn_scores, alpha=self.alpha, dim=-1)
@@ -483,7 +489,10 @@ class CrossAttentionRouter(nn.Module):
             if self.use_softmax_temperature:
                 softmax_scores = softmax_scores / max(self.softmax_temperature, 1e-6)
             attn_weights = F.softmax(softmax_scores, dim=-1, dtype=torch.float32)
-        # attn_output = torch.matmul(attn_weights, v)        # (b, s, e)
+        router_context = torch.matmul(attn_weights, v)        # (b, s, d)
+        projected_context = self.router_context_proj(
+            router_context.to(self.router_context_proj.weight.dtype)
+        ).float()  # (b, s, h)
 
         # Keep routing semantics aligned with the dense router: scores are q-k
         # logits, probabilities are their normalized attention weights.
@@ -491,11 +500,17 @@ class CrossAttentionRouter(nn.Module):
         route_probs = attn_weights
         attn_scores_f = attn_scores.detach().float()
         route_probs_f = route_probs.detach().float()
-        # attn_output_f = attn_output.detach().float()
+        router_context_f = router_context.detach().float()
+        projected_context_f = projected_context.detach().float()
         projected_value_f = v.detach().float()
         projected_value_norms = projected_value_f.norm(dim=-1)
+        router_context_norms = router_context_f.norm(dim=-1)
+        projected_context_norms = projected_context_f.norm(dim=-1)
+        hidden_norms = hidden_states.detach().float().norm(dim=-1).clamp_min(1e-12)
+        router_context_delta_ratio = projected_context_norms / hidden_norms
         token_q_norms = q.detach().float().norm(dim=-1)
-        expert_key_pairwise_cos_mean, expert_key_pairwise_cos_max = _pairwise_cosine_stats(expert_embed)
+        expert_key_pairwise_cos_mean, expert_key_pairwise_cos_max = _pairwise_cosine_stats(expert_key)
+        expert_value_pairwise_cos_mean, expert_value_pairwise_cos_max = _pairwise_cosine_stats(expert_value)
         row_sums = route_probs_f.sum(dim=-1)
         probs_clamped = route_probs_f.clamp_min(1e-9)
         attn_entropy = -(probs_clamped * probs_clamped.log()).sum(dim=-1)
@@ -510,23 +525,26 @@ class CrossAttentionRouter(nn.Module):
             "attn_weights_row_sum_abs_err": float((row_sums - 1.0).abs().mean().item()),
             "attn_weights_entropy": float(attn_entropy.mean().item()),
             "attn_weights_top1_mass": float(attn_top1_mass.mean().item()),
-            # "attn_output_mean": float(attn_output_f.mean().item()),
-            # "attn_output_std": float(attn_output_f.std().item()),
-            # "attn_output_min": float(attn_output_f.min().item()),
-            # "attn_output_max": float(attn_output_f.max().item()),
             "route_prob_min": float(route_probs_f.min().item()),
             "route_prob_has_neg": float(route_probs_f.lt(0).any().item()),
             "route_prob_row_sum_mean": float(row_sums.mean().item()),
             "route_prob_row_sum_abs_err": float((row_sums - 1.0).abs().mean().item()),
             "projected_value_std": float(projected_value_f.std(unbiased=False).item()),
             "projected_value_norm_mean": float(projected_value_norms.mean().item()),
+            "router_context_norm_mean": float(router_context_norms.mean().item()),
+            "router_context_norm_std": float(router_context_norms.std(unbiased=False).item()),
+            "router_context_proj_out_mean": float(projected_context_f.mean().item()),
+            "router_context_proj_out_std": float(projected_context_f.std(unbiased=False).item()),
+            "router_context_delta_ratio": float(router_context_delta_ratio.mean().item()),
             "expert_key_pairwise_cos_mean": expert_key_pairwise_cos_mean,
             "expert_key_pairwise_cos_max": expert_key_pairwise_cos_max,
+            "expert_value_pairwise_cos_mean": expert_value_pairwise_cos_mean,
+            "expert_value_pairwise_cos_max": expert_value_pairwise_cos_max,
             "token_q_norm_mean": float(token_q_norms.mean().item()),
             "token_q_norm_std": float(token_q_norms.std(unbiased=False).item()),
         }
         router_repr = (q, k) if return_router_repr else None
-        return route_scores, route_probs, router_repr
+        return route_scores, route_probs, projected_context, router_repr
 
 
 class SwitchMLP(nn.Module):
@@ -671,9 +689,9 @@ class SwitchMLP(nn.Module):
             return
 
         router = self.router
-        expert_embed = router.get_expert_embed()
-        device = expert_embed.device
-        dtype = expert_embed.dtype
+        expert_key_param = router.get_expert_key()
+        device = expert_key_param.device
+        dtype = expert_key_param.dtype
 
         flat_q = F.normalize(token_q.detach().float(), dim=-1).reshape(-1, token_q.size(-1))     # (b*s, d)
         flat_selected_probs = expert_axis_probs.detach().float().reshape(-1, expert_axis_probs.size(-1))  # (b*s, e)
@@ -706,7 +724,7 @@ class SwitchMLP(nn.Module):
         proto_means = proto_sums[active_mask] / proto_counts[active_mask].unsqueeze(-1)
         proto_means = F.normalize(proto_means, dim=-1)
 
-        current_routed = router.key(expert_embed.to(router.key.weight.dtype)).detach().float()
+        current_routed = router.key(expert_key_param.to(router.key.weight.dtype)).detach().float()
         current_routed = F.normalize(current_routed, dim=-1)
 
         old = current_routed[active_mask]
@@ -714,14 +732,14 @@ class SwitchMLP(nn.Module):
         new_routed = F.normalize(new_routed, dim=-1)
         proto_update_cosine = F.cosine_similarity(old, new_routed, dim=-1)
         proto_delta_norm = (new_routed - old).norm(dim=-1)
-        old_embed_param = expert_embed[active_mask].detach().float()
-        updated_embed = router.project_routed_expert_repr_to_embed_space(new_routed)
+        old_key_param = expert_key_param[active_mask].detach().float()
+        updated_key = router.project_routed_expert_repr_to_key_space(new_routed)
         ema_update_ratio = (
-            (updated_embed - old_embed_param).norm(dim=-1)
-            / old_embed_param.norm(dim=-1).clamp_min(1e-12)
+            (updated_key - old_key_param).norm(dim=-1)
+            / old_key_param.norm(dim=-1).clamp_min(1e-12)
         )
 
-        expert_embed[active_mask].copy_(updated_embed.to(device=device, dtype=dtype))
+        expert_key_param[active_mask].copy_(updated_key.to(device=device, dtype=dtype))
         self.last_router_ema_stats = {
             "proto_counts": proto_counts.detach().float(),
             "active_expert_count": float(active_mask.sum().item()),
@@ -767,13 +785,15 @@ class SwitchMLP(nn.Module):
         # 1) router output -> route probabilities.
         if self.use_cross_attention_router:
             compute_router_losses = self.training
-            router_logits, route_probs, router_repr = self.router(
+            router_logits, route_probs, projected_context, router_repr = self.router(
                 hidden_states,
                 return_router_repr=compute_router_losses,
             )
             self.last_router_forward_stats = dict(getattr(self.router, "last_router_forward_stats", {}))
             router_logits = router_logits.float()
             route_probs = route_probs.float()
+            projected_context = projected_context.to(dtype=hidden_states.dtype)
+            conditioned_hidden_states = hidden_states + projected_context
             router_q = None
             expert_k = None
             if router_repr is not None:
@@ -797,6 +817,7 @@ class SwitchMLP(nn.Module):
                 route_probs = entmax_bisect(router_logits.float(), alpha=self.router_entmax_alpha, dim=-1)
             self.last_router_z_loss = None
             self.last_router_forward_stats = {}
+            conditioned_hidden_states = hidden_states
             router_q = None
             expert_k = None
 
@@ -873,7 +894,7 @@ class SwitchMLP(nn.Module):
                 self.last_router_ema_stats = {}
 
         # 3) flatten tokens then sparse expert dispatch.
-        flat_hidden = hidden_states.reshape(-1, hidden_dim)                  # (b*s, h)
+        flat_hidden = conditioned_hidden_states.reshape(-1, hidden_dim)      # (b*s, h)
         flat_topk_weights = topk_weights.reshape(-1, topk_weights.size(-1))  # (b*s, num_experts)
         flat_topk_ind = topk_ind.reshape(-1, topk_ind.size(-1))              # (b*s, num_experts)
 
@@ -1454,8 +1475,15 @@ class MoEModel(MoEPreTrainedModel):
                 "route_prob_row_sum_abs_err",
                 "projected_value_std",
                 "projected_value_norm_mean",
+                "router_context_norm_mean",
+                "router_context_norm_std",
+                "router_context_proj_out_mean",
+                "router_context_proj_out_std",
+                "router_context_delta_ratio",
                 "expert_key_pairwise_cos_mean",
                 "expert_key_pairwise_cos_max",
+                "expert_value_pairwise_cos_mean",
+                "expert_value_pairwise_cos_max",
                 "token_q_norm_mean",
                 "token_q_norm_std",
             )

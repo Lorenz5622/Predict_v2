@@ -255,6 +255,8 @@ def _enable_new_router_params_trainable(model: nn.Module) -> int:
         "router.key",
         "router.token_couple_proj",
         "router.value",
+        "router.expert_value",
+        "router.router_context_proj",
         "router.expert_key",
         "shared_expert_key",
         # Legacy (unused in current simplified router):
@@ -277,12 +279,18 @@ def _cast_selected_trainable_params_to_fp32(model: nn.Module) -> int:
     leaves LoRA weights in the model/autocast dtype, and promotes only:
     - router.query
     - router.key
+    - router.value
+    - router.expert_value
+    - router.router_context_proj
     - router.expert_key
     - shared_expert_key
     """
     fp32_keys = (
         "router.query",
         "router.key",
+        "router.value",
+        "router.expert_value",
+        "router.router_context_proj",
         "router.expert_key",
         "shared_expert_key",
     )
@@ -365,7 +373,18 @@ def enable_cross_attention_router_only(model: nn.Module) -> int:
         if router is None:
             continue
         for name, param in router.named_parameters():
-            if not any(key in name for key in ("query", "key", "token_couple_proj", "value", "expert_key")):
+            if not any(
+                key in name
+                for key in (
+                    "query",
+                    "key",
+                    "token_couple_proj",
+                    "value",
+                    "expert_value",
+                    "router_context_proj",
+                    "expert_key",
+                )
+            ):
                 continue
             param.requires_grad = True
             n_params += param.numel()
@@ -633,6 +652,9 @@ def _is_stage2_router_param(name: str) -> bool:
         "router.query",
         "router.key",
         "router.token_couple_proj",
+        "router.value",
+        "router.expert_value",
+        "router.router_context_proj",
         "router.expert_key",
         "shared_expert_key",
     )
@@ -794,10 +816,13 @@ def train(
             "router_score_mean", "router_score_std", "router_score_min", "router_score_max",
             "router_weight_row_sum_mean", "router_weight_row_sum_abs_err",
             "router_weight_entropy", "router_weight_top1_mass",
-            # "router_output_mean", "router_output_std", "router_output_min", "router_output_max",
             "route_prob_min", "route_prob_has_neg", "route_prob_row_sum_mean", "route_prob_row_sum_abs_err",
             "projected_value_std", "projected_value_norm_mean",
+            "router_context_norm_mean", "router_context_norm_std",
+            "router_context_proj_out_mean", "router_context_proj_out_std",
+            "router_context_delta_ratio",
             "expert_key_pairwise_cos_mean", "expert_key_pairwise_cos_max",
+            "expert_value_pairwise_cos_mean", "expert_value_pairwise_cos_max",
             "token_q_norm_mean", "token_q_norm_std",
             "dispatch_avg_selected_count", "dispatch_soft_selected_count", "dispatch_dead_expert_ratio", "dispatch_top1_top2_margin",
             "dispatch_topk_pre_mass_mean", "dispatch_topk_post_sum_mean", "dispatch_topk_post_sum_abs_err", "expert_token_count_cv",
@@ -1010,8 +1035,15 @@ def train(
                             _metric_cell(router_forward_stats.get("route_prob_row_sum_abs_err")),
                             _metric_cell(router_forward_stats.get("projected_value_std")),
                             _metric_cell(router_forward_stats.get("projected_value_norm_mean")),
+                            _metric_cell(router_forward_stats.get("router_context_norm_mean")),
+                            _metric_cell(router_forward_stats.get("router_context_norm_std")),
+                            _metric_cell(router_forward_stats.get("router_context_proj_out_mean")),
+                            _metric_cell(router_forward_stats.get("router_context_proj_out_std")),
+                            _metric_cell(router_forward_stats.get("router_context_delta_ratio")),
                             _metric_cell(router_forward_stats.get("expert_key_pairwise_cos_mean")),
                             _metric_cell(router_forward_stats.get("expert_key_pairwise_cos_max")),
+                            _metric_cell(router_forward_stats.get("expert_value_pairwise_cos_mean")),
+                            _metric_cell(router_forward_stats.get("expert_value_pairwise_cos_max")),
                             _metric_cell(router_forward_stats.get("token_q_norm_mean")),
                             _metric_cell(router_forward_stats.get("token_q_norm_std")),
                             _metric_cell(router_dispatch_stats.get("avg_selected_expert_count")),
@@ -1651,7 +1683,7 @@ def stage1_train_cross_attention_router(
 
                     teacher_weight = teacher_weight_cpu.to(device=device, dtype=hidden_states.dtype)
                     teacher_logits = F.linear(hidden_states.to(dtype=teacher_weight.dtype), teacher_weight).float()
-                    student_logits, _, _ = mlp.router(hidden_states)
+                    student_logits, _, _, _ = mlp.router(hidden_states)
                     student_logits = student_logits.float()
 
                     mask = valid_mask

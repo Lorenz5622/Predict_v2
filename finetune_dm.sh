@@ -69,7 +69,9 @@ CONFIGS=(
   # "configs/CB.json" 69.21
   # "configs/CB_llr.json" 69.15
   #"configs/CB_norestrict.json" 69.86
-  "configs/CB_lowlr_norestrict.json" # 70.40
+  # "configs/CB_lowlr_norestrict.json" # 70.40
+  # 新版本代码
+  "configs/CB_lowlr_norestrict.json" # 68.39
 )
 
 LOGDIR="$SCRIPT_DIR/logs/sweep_$(date +%Y%m%d_%H%M%S)" 
