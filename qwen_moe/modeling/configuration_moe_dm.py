@@ -386,7 +386,7 @@ class MoEConfig(PretrainedConfig):
         self.use_low_rank_router = legacy_use_low_rank_router
         self.use_cross_attention_router = bool(use_cross_attention_router or legacy_use_low_rank_router)
 
-        # -------- legacy router params (unused by current simplified router) --------
+        # -------- legacy router params (kept for checkpoint/config compatibility) --------
         self.experts_topk = int(kwargs.get("experts_topk", 2))
         self.top_p_threshold = float(kwargs.get("top_p_threshold", router_top_p))
 
@@ -428,6 +428,7 @@ class MoEConfig(PretrainedConfig):
         self.router_pull_loss_type = str(getattr(self, "router_pull_loss_type", "soft"))
         self.router_budget_target_count = float(getattr(self, "router_budget_target_count", 0.0))
         self.router_budget_tau = float(getattr(self, "router_budget_tau", 0.05))
+        # `top_p_threshold` is kept only so older configs/checkpoints still load.
         self.top_p_threshold = float(getattr(self, "top_p_threshold", 0.4))
 
         legacy_use_low_rank_router = bool(getattr(self, "use_low_rank_router", False))
@@ -454,8 +455,6 @@ class MoEConfig(PretrainedConfig):
             raise ValueError(
                 f"`router_softmax_temperature` must be > 0, got {self.router_softmax_temperature}"
             )
-        if not (0.0 < self.top_p_threshold <= 1.0):
-            raise ValueError(f"`top_p_threshold` must be in (0, 1], got {self.top_p_threshold}")
         if self.router_pull_loss_type not in {"soft", "hard_ce"}:
             raise ValueError(
                 f"`router_pull_loss_type` must be one of {{'soft', 'hard_ce'}}, "

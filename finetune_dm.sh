@@ -66,7 +66,10 @@ CONFIGS=(
   # "configs/dm_cb_za02_r175_tp032_b22_late_a2_tpf0290_t200_c0012_lrm115.json"
   # "configs/dm_cb_za02_r175_tp032_b22_late_a2_tpf0291_t201_c0012_lrm115.json"
   # "configs/dm_cb_za02_r175_tp032_b22_late_a2_tpf0289_t199_c0012_lrm115.json"
-  "configs/CB.json"
+  # "configs/CB.json" 69.21
+  # "configs/CB_llr.json" 69.15
+  #"configs/CB_norestrict.json" 69.86
+  "configs/CB_lowlr_norestrict.json" # 70.40
 )
 
 LOGDIR="$SCRIPT_DIR/logs/sweep_$(date +%Y%m%d_%H%M%S)" 

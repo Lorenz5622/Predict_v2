@@ -65,8 +65,8 @@ class MoECausalLMOutputWithPast(CausalLMOutputWithPast):
         router_pull_loss (`torch.FloatTensor`, *optional*):
             Prototype pull loss for expert embeddings.
         router_budget_loss (`torch.FloatTensor`, *optional*):
-            Soft budget loss encouraging the top-p dispatch to keep each token's
-            selected expert count near a target.
+            Router budget loss placeholder kept for API compatibility. Fixed
+            top-k routing disables the dynamic-count budget and returns zero.
     """
     router_aux_loss: Optional[torch.FloatTensor] = None
     router_z_loss: Optional[torch.FloatTensor] = None
@@ -448,14 +448,19 @@ class CrossAttentionRouter(nn.Module):
             raise RuntimeError("CrossAttentionRouter expert_key is not initialized.")
         return self.expert_key
 
-    def project_routed_expert_repr_to_key_space(self, routed_expert_repr: torch.Tensor) -> torch.Tensor:
+    def project_routed_expert_repr_to_embed_space(self, routed_expert_repr: torch.Tensor) -> torch.Tensor:
         """
-        Map routed expert representations back to the stored `expert_key`
-        parameter space so EMA can update the routing-only state.
+        Map routed expert representations back to the stored expert state
+        parameter space so EMA can update `expert_embed`.
         """
         key_weight_t = self.key.weight.detach().float().transpose(0, 1)
         key_weight_t_pinv = torch.linalg.pinv(key_weight_t)
         return routed_expert_repr.float() @ key_weight_t_pinv
+
+    def project_routed_expert_repr_to_key_space(self, routed_expert_repr: torch.Tensor) -> torch.Tensor:
+        # Backward-compatible alias for older call sites that still use the
+        # key-space name for the stored expert state.
+        return self.project_routed_expert_repr_to_embed_space(routed_expert_repr)
 
     def forward(
         self,
@@ -478,7 +483,7 @@ class CrossAttentionRouter(nn.Module):
             if self.use_softmax_temperature:
                 softmax_scores = softmax_scores / max(self.softmax_temperature, 1e-6)
             attn_weights = F.softmax(softmax_scores, dim=-1, dtype=torch.float32)
-        attn_output = torch.matmul(attn_weights, v)        # (b, s, e)
+        # attn_output = torch.matmul(attn_weights, v)        # (b, s, e)
 
         # Keep routing semantics aligned with the dense router: scores are q-k
         # logits, probabilities are their normalized attention weights.
@@ -486,7 +491,7 @@ class CrossAttentionRouter(nn.Module):
         route_probs = attn_weights
         attn_scores_f = attn_scores.detach().float()
         route_probs_f = route_probs.detach().float()
-        attn_output_f = attn_output.detach().float()
+        # attn_output_f = attn_output.detach().float()
         projected_value_f = v.detach().float()
         projected_value_norms = projected_value_f.norm(dim=-1)
         token_q_norms = q.detach().float().norm(dim=-1)
@@ -505,10 +510,10 @@ class CrossAttentionRouter(nn.Module):
             "attn_weights_row_sum_abs_err": float((row_sums - 1.0).abs().mean().item()),
             "attn_weights_entropy": float(attn_entropy.mean().item()),
             "attn_weights_top1_mass": float(attn_top1_mass.mean().item()),
-            "attn_output_mean": float(attn_output_f.mean().item()),
-            "attn_output_std": float(attn_output_f.std().item()),
-            "attn_output_min": float(attn_output_f.min().item()),
-            "attn_output_max": float(attn_output_f.max().item()),
+            # "attn_output_mean": float(attn_output_f.mean().item()),
+            # "attn_output_std": float(attn_output_f.std().item()),
+            # "attn_output_min": float(attn_output_f.min().item()),
+            # "attn_output_max": float(attn_output_f.max().item()),
             "route_prob_min": float(route_probs_f.min().item()),
             "route_prob_has_neg": float(route_probs_f.lt(0).any().item()),
             "route_prob_row_sum_mean": float(row_sums.mean().item()),
@@ -531,7 +536,7 @@ class SwitchMLP(nn.Module):
         super(SwitchMLP, self).__init__()
         self.layer_num = layer_idx
         self.use_switch = (layer_idx % config.expert_frequency) == 0
-        self.last_top_p_active_expert_count = 0
+        self.last_topk_active_expert_count = 0
         self.last_router_aux_loss = None
         self.last_router_z_loss = None
 
@@ -562,10 +567,10 @@ class SwitchMLP(nn.Module):
                     )
                 )
 
-            self.router_top_p = float(getattr(config, "top_p_threshold", 0.7))
-            if not (0.0 < self.router_top_p <= 1.0):
+            self.router_top_k = int(getattr(config, "router_top_k", 2))
+            if self.router_top_k <= 0:
                 raise ValueError(
-                    f"top_p_threshold must be in (0, 1], got {self.router_top_p}"
+                    f"router_top_k must be >= 1, got {self.router_top_k}"
                 )
 
             self.use_cross_attention_router = getattr(config, "use_cross_attention_router", True)
@@ -603,12 +608,12 @@ class SwitchMLP(nn.Module):
     def _compute_prototype_pull_loss(
         self,
         token_q: torch.Tensor,          # (b, s, d)
-        expert_axis_probs: torch.Tensor,   # (b, s, e), top-p renormalized weights on expert axis
+        expert_axis_probs: torch.Tensor,   # (b, s, e), top-k renormalized weights on expert axis
         expert_k: torch.Tensor,         # (e, d)
     ) -> torch.Tensor:
         """
         Pull loss in the actual q-k routing space.
-        The top-p-selected probabilities are treated as detached soft labels so
+        The top-k-selected probabilities are treated as detached soft labels so
         the prototype alignment follows real dispatch decisions.
         """
         q = F.normalize(token_q.float(), dim=-1)                    # (b, s, d)
@@ -629,15 +634,17 @@ class SwitchMLP(nn.Module):
 
     def _scatter_selected_probs_to_expert_axis(
         self,
-        selected_probs: torch.Tensor,   # (b, s, e), weights laid out on sorted top-p slots
+        selected_probs: torch.Tensor,   # (b, s, k), weights laid out on selected top-k slots
         selected_indices: torch.Tensor, # (b, s, e), expert ids or -1
     ) -> torch.Tensor:
         """
-        top_p_sampling_batched_all_sequence returns weights aligned to the sorted
-        slot order rather than the original expert axis. Scatter them back so
+        Routing returns weights aligned to selected top-k slots rather than the
+        original expert axis. Scatter them back so
         EMA/pull computations operate on true expert ids.
         """
-        expert_axis_probs = selected_probs.new_zeros(selected_probs.shape)
+        expert_axis_probs = selected_probs.new_zeros(
+            selected_probs.shape[:-1] + (self.num_experts,)
+        )
         valid_mask = selected_indices >= 0
         if not torch.any(valid_mask):
             return expert_axis_probs
@@ -653,20 +660,20 @@ class SwitchMLP(nn.Module):
     def _ema_update_expert_key(
         self,
         token_q: torch.Tensor,          # (b, s, d)
-        expert_axis_probs: torch.Tensor,   # (b, s, e), top-p renormalized weights on expert axis
+        expert_axis_probs: torch.Tensor,   # (b, s, e), top-k renormalized weights on expert axis
     ) -> None:
         """
-        Compute expert prototypes in q-space with top-p weights, smooth them in
-        routed k-space, then map them back to the stored `expert_key`.
+        Compute expert prototypes in q-space with top-k weights, smooth them in
+        routed k-space, then map them back to the stored `expert_embed`.
         """
         if not self.use_cross_attention_router:
             self.last_router_ema_stats = {}
             return
 
         router = self.router
-        expert_key = router.get_expert_key()
-        device = expert_key.device
-        dtype = expert_key.dtype
+        expert_embed = router.get_expert_embed()
+        device = expert_embed.device
+        dtype = expert_embed.dtype
 
         flat_q = F.normalize(token_q.detach().float(), dim=-1).reshape(-1, token_q.size(-1))     # (b*s, d)
         flat_selected_probs = expert_axis_probs.detach().float().reshape(-1, expert_axis_probs.size(-1))  # (b*s, e)
@@ -699,8 +706,7 @@ class SwitchMLP(nn.Module):
         proto_means = proto_sums[active_mask] / proto_counts[active_mask].unsqueeze(-1)
         proto_means = F.normalize(proto_means, dim=-1)
 
-        old_key_param = expert_key[active_mask].detach().float()
-        current_routed = router.key(expert_key.to(router.key.weight.dtype)).detach().float()
+        current_routed = router.key(expert_embed.to(router.key.weight.dtype)).detach().float()
         current_routed = F.normalize(current_routed, dim=-1)
 
         old = current_routed[active_mask]
@@ -803,56 +809,44 @@ class SwitchMLP(nn.Module):
         else:
             self.last_router_aux_loss = None
 
-        # 2) top-p routing.
-        topk_weights, topk_ind = top_p_sampling_batched_all_sequence(
+        # 2) fixed top-k routing.
+        topk_weights, topk_ind = top_k_routing_batched_all_sequence(
             route_probs,
-            self.router_top_p,
-        )  # both: (b, s, num_experts), masked indices are -1
+            min(self.router_top_k, route_probs.size(-1)),
+        )  # both: (b, s, k)
         expert_axis_topk_weights = self._scatter_selected_probs_to_expert_axis(topk_weights, topk_ind)
         selected_expert_count_per_token = (topk_ind >= 0).sum(dim=-1)  # (b, s)
-        self.last_top_p_avg_expert_count = selected_expert_count_per_token.float().mean().item()
+        self.last_topk_avg_expert_count = selected_expert_count_per_token.float().mean().item()
         top2_k = min(2, route_probs_for_stats.size(-1))
         top2_values = torch.topk(route_probs_for_stats, k=top2_k, dim=-1).values
         top1_top2_margin = top2_values[..., 0] - top2_values[..., 1] if top2_k == 2 else top2_values[..., 0]
         selected_mask = topk_ind >= 0
         gathered_route_probs = route_probs_for_stats.gather(-1, topk_ind.clamp_min(0))
-        top_p_pre_mass = (gathered_route_probs * selected_mask.to(gathered_route_probs.dtype)).sum(dim=-1)
-        top_p_post_sum = topk_weights.sum(dim=-1)
+        topk_pre_mass = (gathered_route_probs * selected_mask.to(gathered_route_probs.dtype)).sum(dim=-1)
+        topk_post_sum = topk_weights.sum(dim=-1)
         hard_counts = torch.bincount(
             topk_ind.reshape(-1)[topk_ind.reshape(-1) >= 0],
             minlength=self.num_experts,
         ).to(torch.float32)
 
-        sorted_route_probs = torch.sort(route_probs, dim=-1, descending=True).values
-        if sorted_route_probs.size(-1) > 1:
-            prev_cum = torch.cumsum(sorted_route_probs, dim=-1)[..., :-1]
-            soft_extra_selected = torch.sigmoid(
-                (self.router_top_p - prev_cum) / max(self.router_budget_tau, 1e-6)
-            )
-            soft_selected_expert_count = 1.0 + soft_extra_selected.sum(dim=-1)
-        else:
-            soft_selected_expert_count = torch.ones_like(sorted_route_probs[..., 0])
-
         self.last_router_dispatch_stats = {
             "avg_selected_expert_count": float(selected_expert_count_per_token.float().mean().item()),
-            "soft_selected_expert_count": float(soft_selected_expert_count.detach().float().mean().item()),
+            "soft_selected_expert_count": float(selected_expert_count_per_token.float().mean().item()),
             "soft_load": soft_load.detach().float(),
             "hard_load": hard_load.detach().float(),
             "dead_expert_ratio": float((hard_load <= 0).float().mean().item()),
             "top1_top2_margin": float(top1_top2_margin.mean().item()),
-            "top_p_pre_mass_mean": float(top_p_pre_mass.mean().item()),
-            "top_p_post_sum_mean": float(top_p_post_sum.mean().item()),
-            "top_p_post_sum_abs_err": float((top_p_post_sum - 1.0).abs().mean().item()),
-            "router_top_p": float(self.router_top_p),
+            "topk_pre_mass_mean": float(topk_pre_mass.mean().item()),
+            "topk_post_sum_mean": float(topk_post_sum.mean().item()),
+            "topk_post_sum_abs_err": float((topk_post_sum - 1.0).abs().mean().item()),
+            "router_top_k": float(self.router_top_k),
             "expert_token_count_cv": float(
                 (hard_counts.std(unbiased=False) / hard_counts.mean().clamp_min(1e-12)).item()
             ),
         }
 
-        if self.training and self.router_budget_target_count > 0.0:
-            self.last_router_budget_loss = (
-                soft_selected_expert_count.mean() - self.router_budget_target_count
-            ).pow(2)
+        if self.training:
+            self.last_router_budget_loss = hidden_states.new_zeros(())
         else:
             self.last_router_budget_loss = None
 
@@ -1475,10 +1469,10 @@ class MoEModel(MoEPreTrainedModel):
                 "soft_selected_expert_count",
                 "dead_expert_ratio",
                 "top1_top2_margin",
-                "top_p_pre_mass_mean",
-                "top_p_post_sum_mean",
-                "top_p_post_sum_abs_err",
-                "router_top_p",
+                "topk_pre_mass_mean",
+                "topk_post_sum_mean",
+                "topk_post_sum_abs_err",
+                "router_top_k",
                 "expert_token_count_cv",
             )
             self.last_router_dispatch_stats = (
