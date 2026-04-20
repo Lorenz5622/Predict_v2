@@ -3,10 +3,10 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NPROC=2
-LAUNCHER="$SCRIPT_DIR/launch_two_stage_qwen_torchrun.py"
+ENTRYPOINT="$SCRIPT_DIR/finetune_qwen_dynamic_moe.py"
 
 CONFIGS=(
-  "configs/finetune_qw_cb.json"
+  "configs/qw_cb_lowlr_norestrict_abl_newlr01_ctx03.json"
 )
 
 LOGDIR="$SCRIPT_DIR/logs/qwen_sweep_$(date +%Y%m%d_%H%M%S)"
@@ -17,9 +17,9 @@ for cfg in "${CONFIGS[@]}"; do
   name="$(basename "$cfg" .json)"
   echo "==== Running $name ($cfg_path) ===="
 
-  python "$LAUNCHER" \
+  torchrun \
     --nproc_per_node "$NPROC" \
-    -- \
+    "$ENTRYPOINT" \
     --config "$cfg_path" \
     1> >(tee "$LOGDIR/${name}.out.log") \
     2> >(tee "$LOGDIR/${name}.err.log" >&2)

@@ -219,17 +219,30 @@ def _mean_tensor_stat(stat_dicts, key: str):
 
 
 def _pairwise_cosine_stats(vectors: torch.Tensor) -> Tuple[Optional[float], Optional[float]]:
+    # Router stats are only used for logging. Fake/Meta tensors can appear in
+    # PT2-style tracing paths, where boolean indexing would route through
+    # `nonzero()` and fail due to missing fake kernels.
+    if getattr(vectors, "is_meta", False):
+        return None, None
     vectors = vectors.detach().float()
     num_vectors = int(vectors.size(0))
     if num_vectors < 2:
         return None, None
     vectors = F.normalize(vectors, dim=-1)
     cosine = torch.matmul(vectors, vectors.transpose(0, 1))
-    mask = ~torch.eye(num_vectors, dtype=torch.bool, device=cosine.device)
-    pairwise = cosine[mask]
-    if pairwise.numel() == 0:
+    diag = torch.diagonal(cosine, offset=0)
+    denom = num_vectors * (num_vectors - 1)
+    if denom <= 0:
         return None, None
-    return float(pairwise.mean().item()), float(pairwise.max().item())
+
+    off_diag_mean = (cosine.sum() - diag.sum()) / float(denom)
+    masked_cosine = cosine.masked_fill(
+        torch.eye(num_vectors, dtype=torch.bool, device=cosine.device),
+        float("-inf"),
+    )
+    off_diag_max = masked_cosine.max()
+    max_value = None if torch.isinf(off_diag_max) else float(off_diag_max.item())
+    return float(off_diag_mean.item()), max_value
 
 
 # Copied from transformers.models.llama.modeling_llama.LlamaRMSNorm with Llama->Qwen2Moe

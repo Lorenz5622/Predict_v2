@@ -308,6 +308,129 @@ def _cast_selected_trainable_params_to_fp32(model: nn.Module) -> int:
     return n_params
 
 
+def _router_debug_rank_prefix() -> str:
+    rank = dist.get_rank() if dist.is_available() and dist.is_initialized() else 0
+    return f"[router-meta][rank{rank}]"
+
+
+def _format_tensor_debug(name: str, tensor: Optional[torch.Tensor]) -> str:
+    if tensor is None:
+        return f"{name}=None"
+    shape = tuple(tensor.shape)
+    requires_grad = getattr(tensor, "requires_grad", False)
+    is_meta = bool(getattr(tensor, "is_meta", False))
+    device = getattr(tensor, "device", None)
+    dtype = getattr(tensor, "dtype", None)
+    return (
+        f"{name}: shape={shape} device={device} dtype={dtype} "
+        f"requires_grad={requires_grad} is_meta={is_meta} type={type(tensor).__name__}"
+    )
+
+
+def _is_router_debug_param(name: str) -> bool:
+    keys = (
+        "router.query",
+        "router.key",
+        "router.value",
+        "router.expert_value",
+        "router.router_context_proj",
+        "router.expert_key",
+        "shared_expert_key",
+    )
+    return any(key in name for key in keys)
+
+
+def _debug_dump_router_param_states(model: nn.Module, where: str) -> None:
+    prefix = _router_debug_rank_prefix()
+    print(f"{prefix} parameter snapshot at {where}", flush=True)
+    found_any = False
+    for name, param in model.named_parameters():
+        if not _is_router_debug_param(name):
+            continue
+        found_any = True
+        print(f"{prefix} {_format_tensor_debug(name, param)}", flush=True)
+    if not found_any:
+        print(f"{prefix} no router parameters matched debug filter at {where}", flush=True)
+
+
+def _debug_dump_router_module_states(model: nn.Module, where: str) -> None:
+    prefix = _router_debug_rank_prefix()
+    print(f"{prefix} module snapshot at {where}", flush=True)
+    found_any = False
+    for name, module in model.named_modules():
+        if module.__class__.__name__ != "CrossAttentionRouter":
+            continue
+        found_any = True
+        expert_key = None
+        expert_value = None
+        try:
+            expert_key = module.get_expert_key()
+        except Exception as exc:
+            print(f"{prefix} {name}.get_expert_key() failed: {exc!r}", flush=True)
+        try:
+            expert_value = module.get_expert_value()
+        except Exception as exc:
+            print(f"{prefix} {name}.get_expert_value() failed: {exc!r}", flush=True)
+
+        print(f"{prefix} module={name} shared_expert_key={bool(getattr(module, '_shared_expert_key_ref', None) is not None)}", flush=True)
+        print(f"{prefix} {_format_tensor_debug(name + '.query.weight', getattr(module.query, 'weight', None))}", flush=True)
+        print(f"{prefix} {_format_tensor_debug(name + '.key.weight', getattr(module.key, 'weight', None))}", flush=True)
+        print(f"{prefix} {_format_tensor_debug(name + '.value.weight', getattr(module.value, 'weight', None))}", flush=True)
+        print(
+            f"{prefix} {_format_tensor_debug(name + '.router_context_proj.weight', getattr(module.router_context_proj, 'weight', None))}",
+            flush=True,
+        )
+        print(f"{prefix} {_format_tensor_debug(name + '.expert_key', expert_key)}", flush=True)
+        print(f"{prefix} {_format_tensor_debug(name + '.expert_value', expert_value)}", flush=True)
+    if not found_any:
+        print(f"{prefix} no CrossAttentionRouter modules found at {where}", flush=True)
+
+
+def _attach_router_runtime_debug_hooks(model: nn.Module) -> List[Any]:
+    prefix = _router_debug_rank_prefix()
+    handles: List[Any] = []
+
+    def make_hook(module_name: str):
+        fired = {"done": False}
+
+        def _hook(module: nn.Module, inputs: tuple[Any, ...]) -> None:
+            if fired["done"]:
+                return
+            fired["done"] = True
+            print(f"{prefix} first forward of {module_name}", flush=True)
+            input0 = inputs[0] if inputs else None
+            print(f"{prefix} {_format_tensor_debug(module_name + '.input0', input0)}", flush=True)
+            print(f"{prefix} {_format_tensor_debug(module_name + '.query.weight', getattr(module.query, 'weight', None))}", flush=True)
+            print(f"{prefix} {_format_tensor_debug(module_name + '.key.weight', getattr(module.key, 'weight', None))}", flush=True)
+            print(f"{prefix} {_format_tensor_debug(module_name + '.value.weight', getattr(module.value, 'weight', None))}", flush=True)
+            print(
+                f"{prefix} {_format_tensor_debug(module_name + '.router_context_proj.weight', getattr(module.router_context_proj, 'weight', None))}",
+                flush=True,
+            )
+            try:
+                expert_key = module.get_expert_key()
+            except Exception as exc:
+                expert_key = None
+                print(f"{prefix} {module_name}.get_expert_key() failed during hook: {exc!r}", flush=True)
+            try:
+                expert_value = module.get_expert_value()
+            except Exception as exc:
+                expert_value = None
+                print(f"{prefix} {module_name}.get_expert_value() failed during hook: {exc!r}", flush=True)
+            print(f"{prefix} {_format_tensor_debug(module_name + '.expert_key', expert_key)}", flush=True)
+            print(f"{prefix} {_format_tensor_debug(module_name + '.expert_value', expert_value)}", flush=True)
+
+        return _hook
+
+    for name, module in model.named_modules():
+        if module.__class__.__name__ != "CrossAttentionRouter":
+            continue
+        handles.append(module.register_forward_pre_hook(make_hook(name)))
+
+    print(f"{prefix} attached {len(handles)} CrossAttentionRouter forward hooks", flush=True)
+    return handles
+
+
 def _unwrap_base_model(model: nn.Module) -> nn.Module:
     model_for_ops = model.module if hasattr(model, "module") else model
     return model_for_ops.get_base_model() if hasattr(model_for_ops, "get_base_model") else model_for_ops
@@ -545,6 +668,56 @@ def _warn_ignored_legacy_router_settings(args) -> None:
             "[router] fixed top-k routing ignores legacy top-p/budget settings: "
             + ", ".join(sorted(set(ignored)))
         )
+
+
+def _warn_ignored_stage1_settings(args) -> None:
+    ignored = []
+    if int(getattr(args, "stage", 0)) != 0:
+        ignored.append("stage")
+    if getattr(args, "stage2_init_path", ""):
+        ignored.append("stage2_init_path")
+    if getattr(args, "stage1_teacher_path", ""):
+        ignored.append("stage1_teacher_path")
+
+    default_pairs = {
+        "stage1_epochs": 1,
+        "stage1_lr": 2e-4,
+        "stage1_grad_accum": 1,
+        "stage1_log_every": 50,
+        "stage1_max_grad_norm": 1.0,
+        "stage1_data_ratio": 0.2,
+        "stage_split_seed": 42,
+        "stage1_distill_temperature": 1.0,
+        "stage1_kl_coef": 1.0,
+        "stage1_logit_coef": 1.0,
+        "stage1_use_logit_loss": 1,
+        "stage1_logit_loss_type": "huber",
+    }
+    for key, default in default_pairs.items():
+        if getattr(args, key) != default:
+            ignored.append(key)
+
+    if ignored and is_main_process():
+        print(
+            "[train] single-stage qw finetune ignores stage1/two-stage compatibility settings: "
+            + ", ".join(sorted(set(ignored)))
+        )
+
+
+def _load_config_defaults(config_path: str) -> Dict[str, Any]:
+    path = Path(config_path).expanduser()
+    if not path.is_absolute():
+        path = (Path.cwd() / path).resolve()
+    cfg = json.loads(path.read_text(encoding="utf-8"))
+
+    defaults: Dict[str, Any] = {}
+    for section in ("common_args", "stage1_args", "stage2_args"):
+        for key, value in cfg.get(section, {}).items():
+            defaults[key] = value
+    run_cfg = cfg.get("run", {})
+    if "output_dir" in run_cfg and "output_dir" not in defaults:
+        defaults["output_dir"] = run_cfg["output_dir"]
+    return defaults
 
 
 def _get_runtime_router_pull_loss_type(model: nn.Module) -> Optional[str]:
@@ -904,10 +1077,20 @@ def train(
             )
             loss = total_loss / max(1, grad_accum)
 
-            if scaler.is_enabled():
-                scaler.scale(loss).backward()
-            else:
-                loss.backward()
+            try:
+                if scaler.is_enabled():
+                    scaler.scale(loss).backward()
+                else:
+                    loss.backward()
+            except RuntimeError as exc:
+                if bool(getattr(run_args, "debug_router_meta", 0)):
+                    print(
+                        f"{_router_debug_rank_prefix()} backward failed with {exc.__class__.__name__}: {exc}",
+                        flush=True,
+                    )
+                    _debug_dump_router_param_states(model, "backward failure")
+                    _debug_dump_router_module_states(model, "backward failure")
+                raise
 
             _apply_pending_router_ema_updates(model)
 
@@ -1206,6 +1389,21 @@ def _patch_safe_initialize_missing_keys(model_cls):
     model_cls._bnb_safe_initialize_missing_keys_patched = True
 
 
+def _ensure_no_meta_tensors(model: nn.Module, where: str) -> None:
+    meta_params = [name for name, param in model.named_parameters() if getattr(param, "is_meta", False)]
+    meta_buffers = [name for name, buf in model.named_buffers() if getattr(buf, "is_meta", False)]
+    if meta_params or meta_buffers:
+        details = []
+        if meta_params:
+            details.append("meta params: " + ", ".join(meta_params[:20]))
+        if meta_buffers:
+            details.append("meta buffers: " + ", ".join(meta_buffers[:20]))
+        raise RuntimeError(
+            f"Found unmaterialized meta tensors after {where}. "
+            + " | ".join(details)
+        )
+
+
 def build_quantization_config(args):
     if bool(args.load_in_4bit):
         dtype_map = {
@@ -1264,8 +1462,9 @@ def build_model_with_router_compat(
     if is_kbit and device.type != "cuda":
         raise RuntimeError("bitsandbytes k-bit loading requires CUDA.")
 
-    if bool(args.load_in_8bit):
+    if is_kbit:
         _patch_safe_initialize_missing_keys(model_cls)
+    if bool(args.load_in_8bit):
         for attr_name in ["_keys_to_ignore_on_load_missing", "_keys_to_ignore_on_load_unexpected"]:
             patterns = list(getattr(model_cls, attr_name, []) or [])
             for pat in [r".*\.SCB$", r".*\.weight_format$"]:
@@ -1317,6 +1516,7 @@ def build_model_with_router_compat(
         if is_main_process():
             print(f"[init] initialized new router modules from legacy dense router for {inited} layers")
 
+    _ensure_no_meta_tensors(model, "quantized from_pretrained + router init")
     return model
 
 
@@ -2023,27 +2223,33 @@ def maybe_prepare_kbit_model_for_training(model: nn.Module, args, quantization_c
 
 
 def parse_args():
+    pre = argparse.ArgumentParser(add_help=False)
+    pre.add_argument("--config", type=str, default="")
+    pre_args, _ = pre.parse_known_args()
+    config_defaults = _load_config_defaults(pre_args.config) if pre_args.config else {}
+
     ap = argparse.ArgumentParser()
-    ap.add_argument("--model_path", type=str, required=True)
-    ap.add_argument("--output_dir", type=str, required=True)
+    ap.add_argument("--config", type=str, default="")
+    ap.add_argument("--model_path", type=str, required=False, default="")
+    ap.add_argument("--output_dir", type=str, required=False, default="")
     ap.add_argument(
         "--stage",
         type=int,
         default=0,
         choices=[0, 1, 2],
-        help="0: run stage1+stage2, 1: run stage1 only, 2: run stage2 only",
+        help="Backward-compatibility flag from the old two-stage workflow. Ignored in single-stage Qwen finetune.",
     )
     ap.add_argument(
         "--stage2_init_path",
         type=str,
         default="",
-        help="Optional initialization path for stage2. Defaults to output_dir/ckpt_after_stage1 when available.",
+        help="Backward-compatibility flag from the old two-stage workflow. Ignored in single-stage Qwen finetune.",
     )
     ap.add_argument(
         "--stage1_teacher_path",
         type=str,
         default="",
-        help="Checkpoint path that provides legacy dense router weights for stage1 teacher. Defaults to model_path.",
+        help="Backward-compatibility flag from the old two-stage workflow. Ignored in single-stage Qwen finetune.",
     )
 
     ap.add_argument(
@@ -2305,16 +2511,26 @@ def parse_args():
         default=1,
         help="Cast LoRA/new-router floating trainable params to fp32. Recommended for k-bit training.",
     )
+    ap.add_argument(
+        "--debug_router_meta",
+        type=int,
+        default=0,
+        help="Debug CrossAttentionRouter parameter materialization and print detailed meta/device states.",
+    )
+    ap.set_defaults(**config_defaults)
     return ap.parse_args()
 
 
 def main():
     args = parse_args()
+    router_debug_handles: List[Any] = []
 
+    if not args.model_path:
+        raise ValueError("--model_path is required (or provide it via --config).")
+    if not args.output_dir:
+        raise ValueError("--output_dir is required (or provide it via --config).")
     if bool(args.load_in_4bit) and bool(args.load_in_8bit):
         raise ValueError("Only one of --load_in_4bit and --load_in_8bit can be enabled.")
-    if not (0.0 < float(args.stage1_data_ratio) < 1.0):
-        raise ValueError(f"--stage1_data_ratio must be in (0, 1), got {args.stage1_data_ratio}")
     if not (0.0 <= float(args.stage2_validation_train_ratio) <= 1.0):
         raise ValueError(
             f"--stage2_validation_train_ratio must be in [0, 1], got {args.stage2_validation_train_ratio}"
@@ -2351,8 +2567,7 @@ def main():
     use_fp16 = bool(args.fp16) and device.type == "cuda" and not bool(args.bf16)
     use_bf16 = bool(args.bf16) and device.type == "cuda"
     _warn_ignored_legacy_router_settings(args)
-    if not args.stage1_teacher_path:
-        args.stage1_teacher_path = args.model_path
+    _warn_ignored_stage1_settings(args)
 
     if is_main_process():
         print("[load] tokenizer from model_path:", args.model_path)
@@ -2365,96 +2580,31 @@ def main():
         if bool(args.load_in_4bit) and stage2_quantization_config is not None:
             print(f"[load] 4bit compute_dtype={stage2_quantization_config.bnb_4bit_compute_dtype}")
         print(f"[train] mixed precision: fp16={use_fp16} bf16={use_bf16}")
-
-    stage1_ckpt_dir = os.path.join(args.output_dir, "ckpt_after_stage1")
-
-    if args.stage in (0, 1):
-        if is_main_process():
-            print("[stage1] loading base model for router distillation")
-
-        stage1_config = config_cls.from_pretrained(args.model_path)
-        configure_model_config(stage1_config, args)
-        stage1_model = build_model_with_router_compat(
-            args=args,
-            model_cls=model_cls,
-            config=stage1_config,
-            model_path=args.model_path,
-            device=device,
-            quantization_config=None,
-            local_rank=local_rank,
-            is_distributed=is_distributed,
-            init_from_legacy=True,
-        )
-        n_stage1_router_params = prepare_stage1_router_trainables(stage1_model)
-        if is_main_process():
-            print(f"[stage1] trainable cross-attention router params: {n_stage1_router_params}")
-
-        stage1_train_ds, _ = build_train_eval_datasets(tokenizer, args, stage="stage1")
-        stage1_train_dl, _ = build_dataloaders(stage1_train_ds, None, args, world_size, is_distributed)
-        if is_main_process():
-            print(
-                f"[stage1][data] train={len(stage1_train_ds)} "
-                f"(ratio={float(args.stage1_data_ratio):.3f}, seed={int(args.stage_split_seed)})"
-            )
-
-        stage1_switch_layers = get_switch_layers(stage1_model)
-        teacher_router_weights = load_legacy_router_teacher_weights(args.stage1_teacher_path, stage1_switch_layers)
-
-        if is_distributed:
-            stage1_model = torch.nn.parallel.DistributedDataParallel(
-                stage1_model,
-                device_ids=[local_rank],
-                output_device=local_rank,
-                find_unused_parameters=True,
-            )
-
-        stage1_train_cross_attention_router(
-            model=stage1_model,
-            train_dl=stage1_train_dl,
-            run_args=args,
-            device=device,
-            teacher_router_weights=teacher_router_weights,
-        )
-
-        if is_main_process():
-            print(f"[stage1] saving full checkpoint to {stage1_ckpt_dir}")
-            save_full_model_checkpoint(stage1_model, stage1_ckpt_dir, tokenizer, stage1_config)
-        if is_distributed:
-            dist.barrier()
-
-        del stage1_model, stage1_train_dl, stage1_train_ds, teacher_router_weights, stage1_switch_layers
-        gc.collect()
-        if device.type == "cuda":
-            torch.cuda.empty_cache()
-
-        if args.stage == 1:
-            cleanup_distributed()
-            return
-
-    if args.stage2_init_path:
-        stage2_model_path = args.stage2_init_path
-    elif os.path.isdir(stage1_ckpt_dir):
-        stage2_model_path = stage1_ckpt_dir
-    else:
-        stage2_model_path = args.model_path
+        print("[train] single-stage path: initialize CrossAttentionRouter from dense gate, then fine-tune directly")
 
     if is_main_process():
-        print(f"[stage2] loading model from {stage2_model_path}")
+        print(f"[train] loading training model from {args.model_path}")
 
-    stage2_config = config_cls.from_pretrained(stage2_model_path)
+    stage2_config = config_cls.from_pretrained(args.model_path)
     configure_model_config(stage2_config, args)
     stage2_model = build_model_with_router_compat(
         args=args,
         model_cls=model_cls,
         config=stage2_config,
-        model_path=stage2_model_path,
+        model_path=args.model_path,
         device=device,
         quantization_config=stage2_quantization_config,
         local_rank=local_rank,
         is_distributed=is_distributed,
-        init_from_legacy=os.path.realpath(stage2_model_path) == os.path.realpath(args.model_path),
+        init_from_legacy=True,
     )
+    if bool(args.debug_router_meta):
+        _debug_dump_router_param_states(stage2_model, "after build_model_with_router_compat")
+        _debug_dump_router_module_states(stage2_model, "after build_model_with_router_compat")
     stage2_model = maybe_prepare_kbit_model_for_training(stage2_model, args, stage2_quantization_config)
+    if bool(args.debug_router_meta):
+        _debug_dump_router_param_states(stage2_model, "after maybe_prepare_kbit_model_for_training")
+        _debug_dump_router_module_states(stage2_model, "after maybe_prepare_kbit_model_for_training")
 
     targets = [t.strip() for t in args.lora_target_modules.split(",") if t.strip()] if args.lora_target_modules else None
     stage2_model = apply_lora(
@@ -2464,15 +2614,25 @@ def main():
         dropout=args.lora_dropout,
         target_modules=targets,
     )
+    if bool(args.debug_router_meta):
+        _debug_dump_router_param_states(stage2_model, "after apply_lora")
+        _debug_dump_router_module_states(stage2_model, "after apply_lora")
 
     if bool(args.train_new_router_params):
         n_router = _enable_new_router_params_trainable(stage2_model)
         if is_main_process():
             print(f"[stage2] extra trainable new-router params: {n_router}")
+    if bool(args.debug_router_meta):
+        _debug_dump_router_param_states(stage2_model, "after _enable_new_router_params_trainable")
+        _debug_dump_router_module_states(stage2_model, "after _enable_new_router_params_trainable")
 
     n_fp32 = 0
     if bool(args.train_extra_params_in_fp32):
         n_fp32 = _cast_selected_trainable_params_to_fp32(stage2_model)
+    if bool(args.debug_router_meta):
+        _debug_dump_router_param_states(stage2_model, "after _cast_selected_trainable_params_to_fp32")
+        _debug_dump_router_module_states(stage2_model, "after _cast_selected_trainable_params_to_fp32")
+        router_debug_handles = _attach_router_runtime_debug_hooks(stage2_model)
     if is_main_process():
         trainable = sum(p.numel() for p in stage2_model.parameters() if p.requires_grad)
         total = sum(p.numel() for p in stage2_model.parameters())
@@ -2521,6 +2681,12 @@ def main():
     if is_main_process():
         try:
             tokenizer.save_pretrained(args.output_dir)
+        except Exception:
+            pass
+
+    for handle in router_debug_handles:
+        try:
+            handle.remove()
         except Exception:
             pass
 
