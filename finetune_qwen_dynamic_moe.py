@@ -29,7 +29,7 @@ import torch
 import torch.distributed as dist
 import torch.nn as nn
 import torch.nn.functional as F
-from datasets import concatenate_datasets
+from datasets import Dataset, concatenate_datasets
 from peft import LoraConfig, TaskType, get_peft_model, prepare_model_for_kbit_training
 from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
@@ -1354,10 +1354,124 @@ def configure_model_config(config, args) -> None:
     config.router_pull_loss_type = str(args.router_pull_loss_type)
 
 
+def _resolve_local_piqa_files(piqa_local_dir: str, split: str) -> tuple[Path, Path]:
+    root = Path(piqa_local_dir).expanduser()
+    if not root.exists():
+        raise FileNotFoundError(f"piqa_local_dir not found: {root}")
+
+    split_key = str(split).strip().lower()
+    if split_key == "train":
+        stem = "train"
+    elif split_key in {"validation", "valid", "dev"}:
+        stem = "dev"
+    else:
+        raise ValueError(
+            f"Unsupported PIQA local split: {split!r}. Expected one of "
+            "{'train', 'validation', 'valid', 'dev'}."
+        )
+
+    data_fp = root / f"{stem}.jsonl"
+    label_fp = root / f"{stem}-labels.lst"
+    if not data_fp.exists():
+        raise FileNotFoundError(f"Missing PIQA local data file: {data_fp}")
+    if not label_fp.exists():
+        raise FileNotFoundError(f"Missing PIQA local labels file: {label_fp}")
+    return data_fp, label_fp
+
+
+def load_and_pack_piqa_local(
+    tokenizer,
+    block_size: int,
+    piqa_local_dir: str,
+    split: str = "train",
+    max_samples: Optional[int] = None,
+    use_label: bool = True,
+):
+    data_fp, label_fp = _resolve_local_piqa_files(piqa_local_dir, split)
+
+    with data_fp.open("r", encoding="utf-8") as f_data:
+        data_lines = f_data.readlines()
+    with label_fp.open("r", encoding="utf-8") as f_labels:
+        label_lines = f_labels.readlines()
+
+    if len(data_lines) != len(label_lines):
+        raise ValueError(
+            f"PIQA local data/label length mismatch: {data_fp} has {len(data_lines)} rows "
+            f"but {label_fp} has {len(label_lines)} rows."
+        )
+
+    records = []
+    for data_line, label_line in zip(data_lines, label_lines):
+        item = json.loads(data_line)
+        label_text = label_line.strip()
+        label = int(label_text) if label_text != "" else None
+        records.append(
+            {
+                "goal": (item.get("goal") or "").strip(),
+                "sol1": (item.get("sol1") or "").strip(),
+                "sol2": (item.get("sol2") or "").strip(),
+                "label": label,
+            }
+        )
+        if max_samples is not None and len(records) >= int(max_samples):
+            break
+
+    ds = Dataset.from_list(records)
+    bos_id = tokenizer.bos_token_id
+    pad_id = 0
+
+    def _pad_to_block(input_ids: List[int], labels: List[int]) -> Dict[str, List[int]]:
+        input_ids = input_ids[:block_size]
+        labels = labels[:block_size]
+        pad_len = block_size - len(input_ids)
+        if pad_len > 0:
+            input_ids = input_ids + [pad_id] * pad_len
+            labels = labels + [-100] * pad_len
+        return {"input_ids": input_ids, "labels": labels}
+
+    def build(ex):
+        goal = ex["goal"]
+        sol1 = ex["sol1"]
+        sol2 = ex["sol2"]
+        label = ex.get("label")
+
+        if label is None or not use_label:
+            sol = sol1
+        else:
+            sol = sol1 if int(label) == 0 else sol2
+
+        prompt = (
+            "The following makes sense:\n"
+            f"Q: {goal}\n"
+            "A:"
+        )
+        prompt_ids = tokenizer(prompt, add_special_tokens=False)["input_ids"]
+        ans_ids = tokenizer(" " + sol, add_special_tokens=False)["input_ids"]
+        input_ids = prompt_ids + ans_ids
+        labels = ([-100] * len(prompt_ids)) + ans_ids
+        if bos_id is not None:
+            input_ids = [bos_id] + input_ids
+            labels = [-100] + labels
+        return _pad_to_block(input_ids, labels)
+
+    ds = ds.map(build, remove_columns=ds.column_names)
+    ds.set_format(type="torch", columns=["input_ids", "labels"])
+    return ds
+
+
 def make_dataset(name: str, tokenizer, args, split: str, max_samples: Optional[int]):
     use_label = bool(args.use_label)
 
     if name == "piqa":
+        if args.piqa_local_dir:
+            return load_and_pack_piqa_local(
+                tokenizer=tokenizer,
+                block_size=args.block_size,
+                piqa_local_dir=args.piqa_local_dir,
+                split=split,
+                max_samples=max_samples,
+                use_label=use_label,
+            )
         return load_and_pack_piqa_ppl_opencompass(
             tokenizer=tokenizer,
             block_size=args.block_size,
@@ -1945,6 +2059,7 @@ def parse_args():
         choices=["piqa", "siqa", "hellaswag", "arc-e", "csqa", "bbh", "winogrande", "mmlu", "arc-c", "openbookqa"],
     )
     ap.add_argument("--mix_datasets", type=str, default="piqa,siqa")
+    ap.add_argument("--piqa_local_dir", type=str, default="")
     ap.add_argument("--train_split", type=str, default="train")
     ap.add_argument("--eval_split", type=str, default="validation")
     ap.add_argument("--block_size", type=int, default=64)

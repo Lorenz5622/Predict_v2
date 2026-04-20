@@ -62,6 +62,20 @@ logger = logging.get_logger(__name__)
 
 @dataclass
 class Qwen2MoeCausalLMOutputWithPast(MoeCausalLMOutputWithPast):
+    """
+    Base class for Qwen2MoE causal language model outputs with additional
+    router-side regularization terms.
+
+    Parameters:
+        router_aux_loss (`torch.FloatTensor`, *optional*):
+            Router load-balancing auxiliary loss aggregated across MoE layers.
+        router_z_loss (`torch.FloatTensor`, *optional*):
+            Router z-loss regularizer aggregated across MoE layers.
+        router_pull_loss (`torch.FloatTensor`, *optional*):
+            Prototype pull loss used by the cross-attention router.
+        router_budget_loss (`torch.FloatTensor`, *optional*):
+            Router budget loss placeholder kept for API compatibility.
+    """
     router_aux_loss: Optional[torch.FloatTensor] = None
     router_z_loss: Optional[torch.FloatTensor] = None
     router_pull_loss: Optional[torch.FloatTensor] = None
