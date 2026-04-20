@@ -218,6 +218,18 @@ class Qwen2MoeConfig(PretrainedConfig):
         router_normalize_q=True,
         router_normalize_k=True,
         router_eps=1e-6,
+        router_top_k=2,
+        use_cross_attention_router=False,
+        share_router_expert_embedding=False,
+        router_dim=None,
+        router_use_entmax=False,
+        router_entmax_alpha=1.5,
+        router_use_softmax_temperature=True,
+        router_softmax_temperature=1.0,
+        router_pull_temperature=1.0,
+        router_pull_loss_type="soft",
+        router_use_ema_update=False,
+        router_ema_momentum=0.99,
         **kwargs,
     ):
         self.vocab_size = vocab_size
@@ -260,6 +272,18 @@ class Qwen2MoeConfig(PretrainedConfig):
         self.router_normalize_q = router_normalize_q
         self.router_normalize_k = router_normalize_k
         self.router_eps = router_eps
+        self.router_top_k = int(router_top_k)
+        self.use_cross_attention_router = bool(use_cross_attention_router)
+        self.share_router_expert_embedding = bool(share_router_expert_embedding)
+        self.router_dim = int(router_dim) if router_dim is not None else int(hidden_size)
+        self.router_use_entmax = bool(router_use_entmax)
+        self.router_entmax_alpha = float(router_entmax_alpha)
+        self.router_use_softmax_temperature = bool(router_use_softmax_temperature)
+        self.router_softmax_temperature = float(router_softmax_temperature)
+        self.router_pull_temperature = float(router_pull_temperature)
+        self.router_pull_loss_type = str(router_pull_loss_type)
+        self.router_use_ema_update = bool(router_use_ema_update)
+        self.router_ema_momentum = float(router_ema_momentum)
         self.mlp_only_layers = [] if mlp_only_layers is None else mlp_only_layers
         self.qkv_bias = qkv_bias
 
@@ -267,6 +291,22 @@ class Qwen2MoeConfig(PretrainedConfig):
             tie_word_embeddings=tie_word_embeddings,
             **kwargs,
         )
+
+    def ensure_model_attributes(self):
+        self.router_top_k = int(getattr(self, "router_top_k", 2))
+        if self.router_top_k <= 0:
+            raise ValueError(f"`router_top_k` must be >= 1, got {self.router_top_k}")
+        self.use_cross_attention_router = bool(getattr(self, "use_cross_attention_router", False))
+        self.share_router_expert_embedding = bool(getattr(self, "share_router_expert_embedding", False))
+        self.router_dim = int(getattr(self, "router_dim", self.hidden_size))
+        self.router_use_entmax = bool(getattr(self, "router_use_entmax", False))
+        self.router_entmax_alpha = float(getattr(self, "router_entmax_alpha", 1.5))
+        self.router_use_softmax_temperature = bool(getattr(self, "router_use_softmax_temperature", True))
+        self.router_softmax_temperature = float(getattr(self, "router_softmax_temperature", 1.0))
+        self.router_pull_temperature = float(getattr(self, "router_pull_temperature", 1.0))
+        self.router_pull_loss_type = str(getattr(self, "router_pull_loss_type", "soft"))
+        self.router_use_ema_update = bool(getattr(self, "router_use_ema_update", False))
+        self.router_ema_momentum = float(getattr(self, "router_ema_momentum", 0.99))
 
 
 __all__ = ["Qwen2MoeConfig"]

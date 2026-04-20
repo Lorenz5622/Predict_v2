@@ -71,6 +71,8 @@ CONFIGS=(
   #"configs/CB_norestrict.json" 69.86
   # "configs/CB_lowlr_norestrict.json" # 70.40
   # 新版本代码
+  # "configs/CB_lowlr_norestrict_abl_newlr01.json" # 69.26
+  # "configs/CB_lowlr_norestrict_abl_newlr01_ctx03.json" # 69.64
   "configs/CB_lowlr_norestrict.json" # 68.39
 )
 

@@ -19,8 +19,9 @@
 # limitations under the License.
 """PyTorch Qwen2MoE model."""
 
+from dataclasses import dataclass
 import math
-from typing import Optional, Union
+from typing import List, Optional, Tuple, Union
 
 import torch
 import torch.nn.functional as F
@@ -57,6 +58,14 @@ if is_torch_flex_attn_available():
     from transformers.integrations.flex_attention import make_flex_block_causal_mask
 
 logger = logging.get_logger(__name__)
+
+
+@dataclass
+class Qwen2MoeCausalLMOutputWithPast(MoeCausalLMOutputWithPast):
+    router_aux_loss: Optional[torch.FloatTensor] = None
+    router_z_loss: Optional[torch.FloatTensor] = None
+    router_pull_loss: Optional[torch.FloatTensor] = None
+    router_budget_loss: Optional[torch.FloatTensor] = None
 
 
 def load_balancing_loss_func(
@@ -143,6 +152,70 @@ def load_balancing_loss_func(
         tokens_per_expert[:, rank : rank + routing_weights.shape[1]] * router_prob_per_expert.unsqueeze(0)
     )
     return overall_loss * num_experts
+
+
+def top_k_routing_batched_all_sequence(probs: torch.Tensor, top_k: int):
+    topk_probs, topk_idx = torch.topk(probs, k=top_k, dim=-1)
+    denom = topk_probs.sum(dim=-1, keepdim=True).clamp_min(1e-9)
+    topk_probs = topk_probs / denom
+    return topk_probs, topk_idx
+
+
+def entmax_bisect(
+    inputs: torch.Tensor,
+    alpha: float = 1.5,
+    dim: int = -1,
+    n_iter: int = 32,
+    eps: float = 1e-12,
+) -> torch.Tensor:
+    if not (1.0 < alpha <= 2.0):
+        raise ValueError(f"alpha must be in (1, 2], got {alpha}")
+
+    alpha_m1 = alpha - 1.0
+    inv_alpha_m1 = 1.0 / alpha_m1
+    x = inputs - inputs.max(dim=dim, keepdim=True).values
+    tau_lo = x.min(dim=dim, keepdim=True).values - 1.0
+    tau_hi = x.max(dim=dim, keepdim=True).values
+
+    for _ in range(n_iter):
+        tau_mid = (tau_lo + tau_hi) * 0.5
+        p_mid = torch.clamp(alpha_m1 * (x - tau_mid), min=0.0) ** inv_alpha_m1
+        sum_p = p_mid.sum(dim=dim, keepdim=True)
+        tau_lo = torch.where(sum_p > 1.0, tau_mid, tau_lo)
+        tau_hi = torch.where(sum_p <= 1.0, tau_mid, tau_hi)
+
+    tau_star = (tau_lo + tau_hi) * 0.5
+    probs = torch.clamp(alpha_m1 * (x - tau_star), min=0.0) ** inv_alpha_m1
+    probs = probs / probs.sum(dim=dim, keepdim=True).clamp_min(eps)
+    return probs
+
+
+def _mean_scalar_stat(stat_dicts, key: str):
+    values = [float(stats[key]) for stats in stat_dicts if stats and stats.get(key) is not None]
+    if not values:
+        return None
+    return sum(values) / float(len(values))
+
+
+def _mean_tensor_stat(stat_dicts, key: str):
+    values = [stats[key].detach().float() for stats in stat_dicts if stats and torch.is_tensor(stats.get(key))]
+    if not values:
+        return None
+    return torch.stack(values, dim=0).mean(dim=0)
+
+
+def _pairwise_cosine_stats(vectors: torch.Tensor) -> Tuple[Optional[float], Optional[float]]:
+    vectors = vectors.detach().float()
+    num_vectors = int(vectors.size(0))
+    if num_vectors < 2:
+        return None, None
+    vectors = F.normalize(vectors, dim=-1)
+    cosine = torch.matmul(vectors, vectors.transpose(0, 1))
+    mask = ~torch.eye(num_vectors, dtype=torch.bool, device=cosine.device)
+    pairwise = cosine[mask]
+    if pairwise.numel() == 0:
+        return None, None
+    return float(pairwise.mean().item()), float(pairwise.max().item())
 
 
 # Copied from transformers.models.llama.modeling_llama.LlamaRMSNorm with Llama->Qwen2Moe
@@ -295,6 +368,176 @@ class LowRankRouter(nn.Module):
 
         router_logits = torch.matmul(q, k.transpose(0, 1))
         return self.router_temperature * router_logits
+
+
+class CrossAttentionRouter(nn.Module):
+    def __init__(
+        self,
+        hidden_size: int,
+        num_experts: int,
+        d_router: Optional[int] = None,
+        use_entmax: bool = False,
+        alpha: float = 1.5,
+        use_softmax_temperature: bool = True,
+        softmax_temperature: float = 1.0,
+    ):
+        super().__init__()
+        self.hidden_size = int(hidden_size)
+        self.num_experts = int(num_experts)
+        self.d_router = int(d_router if d_router is not None else hidden_size)
+        self.use_entmax = bool(use_entmax)
+        self.alpha = float(alpha)
+        self.use_softmax_temperature = bool(use_softmax_temperature)
+        self.softmax_temperature = float(softmax_temperature)
+
+        self.query = nn.Linear(self.hidden_size, self.d_router, bias=False)
+        self.key = nn.Linear(self.d_router, self.d_router, bias=False)
+        self.token_couple_proj = nn.Linear(self.hidden_size, self.d_router, bias=False)
+        self.value = nn.Linear(self.d_router, self.d_router, bias=False)
+        self.router_context_proj = nn.Linear(self.d_router, self.hidden_size, bias=False)
+
+        init_expert_state = torch.randn(self.num_experts, self.d_router)
+        self.expert_embed = nn.Parameter(init_expert_state.clone())
+        self.expert_key = nn.Parameter(init_expert_state.clone())
+        self.expert_value = nn.Parameter(init_expert_state.clone())
+        self._shared_expert_key_ref = None
+        self.last_router_forward_stats = {}
+        nn.init.zeros_(self.router_context_proj.weight)
+
+    def set_shared_expert_key(self, expert_key: nn.Parameter) -> None:
+        self.expert_key = None
+        self._shared_expert_key_ref = [expert_key]
+
+    def set_shared_expert_embed(self, expert_embed: nn.Parameter) -> None:
+        self.set_shared_expert_key(expert_embed)
+
+    @staticmethod
+    def _reshape_legacy_router_weight(
+        legacy_router_weight: torch.Tensor,
+        target_shape: Tuple[int, int],
+    ) -> torch.Tensor:
+        source = legacy_router_weight.detach().float()
+        candidates = (source, source.transpose(0, 1))
+
+        def _score(candidate: torch.Tensor) -> Tuple[int, int, int]:
+            return (
+                int(candidate.shape == target_shape),
+                int(candidate.shape[0] == target_shape[0]) + int(candidate.shape[1] == target_shape[1]),
+                min(candidate.shape[0], target_shape[0]) * min(candidate.shape[1], target_shape[1]),
+            )
+
+        best = max(candidates, key=_score)
+        reshaped = best.new_zeros(target_shape)
+        rows = min(best.shape[0], target_shape[0])
+        cols = min(best.shape[1], target_shape[1])
+        reshaped[:rows, :cols] = best[:rows, :cols]
+        return reshaped
+
+    def initialize_expert_embed_from_legacy_router(self, legacy_router_weight: torch.Tensor) -> torch.Tensor:
+        target = self.get_expert_embed()
+        reshaped = self._reshape_legacy_router_weight(legacy_router_weight, tuple(target.shape))
+        reshaped = reshaped.to(dtype=target.dtype, device=target.device)
+        with torch.no_grad():
+            target.copy_(reshaped)
+        return target
+
+    def initialize_expert_key_from_legacy_router(self, legacy_router_weight: torch.Tensor) -> torch.Tensor:
+        target = self.get_expert_key()
+        reshaped = self._reshape_legacy_router_weight(legacy_router_weight, tuple(target.shape))
+        reshaped = reshaped.to(dtype=target.dtype, device=target.device)
+        with torch.no_grad():
+            target.copy_(reshaped)
+        return target
+
+    def get_expert_embed(self) -> torch.Tensor:
+        return self.expert_embed
+
+    def get_expert_key(self) -> torch.Tensor:
+        if self._shared_expert_key_ref is not None:
+            return self._shared_expert_key_ref[0]
+        if self.expert_key is None:
+            raise RuntimeError("CrossAttentionRouter expert_key is not initialized.")
+        return self.expert_key
+
+    def get_expert_value(self) -> torch.Tensor:
+        return self.expert_value
+
+    def project_routed_expert_repr_to_key_space(self, routed_expert_repr: torch.Tensor) -> torch.Tensor:
+        key_weight_t = self.key.weight.detach().float().transpose(0, 1)
+        key_weight_t_pinv = torch.linalg.pinv(key_weight_t)
+        return routed_expert_repr.float() @ key_weight_t_pinv
+
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        return_router_repr: bool = False,
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, Optional[Tuple[torch.Tensor, torch.Tensor]]]:
+        router_in = hidden_states.to(self.query.weight.dtype)
+        expert_key = self.get_expert_key()
+        expert_value = self.get_expert_value()
+
+        q = self.query(router_in).float()
+        k = self.key(expert_key.to(self.key.weight.dtype)).float()
+        v = self.value(expert_value.to(self.value.weight.dtype)).float()
+        attn_scores = torch.matmul(q, k.transpose(0, 1)) / math.sqrt(self.d_router)
+        if self.use_entmax:
+            attn_weights = entmax_bisect(attn_scores, alpha=self.alpha, dim=-1)
+        else:
+            softmax_scores = attn_scores
+            if self.use_softmax_temperature:
+                softmax_scores = softmax_scores / max(self.softmax_temperature, 1e-6)
+            attn_weights = F.softmax(softmax_scores, dim=-1, dtype=torch.float32)
+        router_context = torch.matmul(attn_weights, v)
+        projected_context = self.router_context_proj(
+            router_context.to(self.router_context_proj.weight.dtype)
+        ).float()
+
+        attn_scores_f = attn_scores.detach().float()
+        route_probs_f = attn_weights.detach().float()
+        router_context_f = router_context.detach().float()
+        projected_context_f = projected_context.detach().float()
+        projected_value_f = v.detach().float()
+        projected_value_norms = projected_value_f.norm(dim=-1)
+        router_context_norms = router_context_f.norm(dim=-1)
+        projected_context_norms = projected_context_f.norm(dim=-1)
+        hidden_norms = hidden_states.detach().float().norm(dim=-1).clamp_min(1e-12)
+        router_context_delta_ratio = projected_context_norms / hidden_norms
+        token_q_norms = q.detach().float().norm(dim=-1)
+        expert_key_pairwise_cos_mean, expert_key_pairwise_cos_max = _pairwise_cosine_stats(expert_key)
+        expert_value_pairwise_cos_mean, expert_value_pairwise_cos_max = _pairwise_cosine_stats(expert_value)
+        row_sums = route_probs_f.sum(dim=-1)
+        probs_clamped = route_probs_f.clamp_min(1e-9)
+        attn_entropy = -(probs_clamped * probs_clamped.log()).sum(dim=-1)
+        attn_top1_mass = route_probs_f.max(dim=-1).values
+        self.last_router_forward_stats = {
+            "attn_scores_mean": float(attn_scores_f.mean().item()),
+            "attn_scores_std": float(attn_scores_f.std().item()),
+            "attn_scores_min": float(attn_scores_f.min().item()),
+            "attn_scores_max": float(attn_scores_f.max().item()),
+            "attn_weights_row_sum_mean": float(row_sums.mean().item()),
+            "attn_weights_row_sum_abs_err": float((row_sums - 1.0).abs().mean().item()),
+            "attn_weights_entropy": float(attn_entropy.mean().item()),
+            "attn_weights_top1_mass": float(attn_top1_mass.mean().item()),
+            "route_prob_min": float(route_probs_f.min().item()),
+            "route_prob_has_neg": float(route_probs_f.lt(0).any().item()),
+            "route_prob_row_sum_mean": float(row_sums.mean().item()),
+            "route_prob_row_sum_abs_err": float((row_sums - 1.0).abs().mean().item()),
+            "projected_value_std": float(projected_value_f.std(unbiased=False).item()),
+            "projected_value_norm_mean": float(projected_value_norms.mean().item()),
+            "router_context_norm_mean": float(router_context_norms.mean().item()),
+            "router_context_norm_std": float(router_context_norms.std(unbiased=False).item()),
+            "router_context_proj_out_mean": float(projected_context_f.mean().item()),
+            "router_context_proj_out_std": float(projected_context_f.std(unbiased=False).item()),
+            "router_context_delta_ratio": float(router_context_delta_ratio.mean().item()),
+            "expert_key_pairwise_cos_mean": expert_key_pairwise_cos_mean,
+            "expert_key_pairwise_cos_max": expert_key_pairwise_cos_max,
+            "expert_value_pairwise_cos_mean": expert_value_pairwise_cos_mean,
+            "expert_value_pairwise_cos_max": expert_value_pairwise_cos_max,
+            "token_q_norm_mean": float(token_q_norms.mean().item()),
+            "token_q_norm_std": float(token_q_norms.std(unbiased=False).item()),
+        }
+        router_repr = (q, k) if return_router_repr else None
+        return attn_scores, attn_weights, projected_context, router_repr
 
 
 # Copied from transformers.models.llama.modeling_llama.repeat_kv
@@ -634,12 +877,41 @@ class Qwen2MoeSparseMoeBlock(nn.Module):
         self.num_experts = config.num_experts
         self.top_k = config.num_experts_per_tok
         self.norm_topk_prob = config.norm_topk_prob
+        self.use_switch = True
 
         self.use_low_rank_router = getattr(config, "use_low_rank_router", False)
         self.use_sharp_router = getattr(config, "use_sharp_router", True)
+        self.use_cross_attention_router = getattr(config, "use_cross_attention_router", False)
+        self.router_top_k = int(getattr(config, "router_top_k", self.top_k))
+        self.router_use_entmax = bool(getattr(config, "router_use_entmax", False))
+        self.router_entmax_alpha = float(getattr(config, "router_entmax_alpha", 1.5))
+        self.router_pull_temperature = float(getattr(config, "router_pull_temperature", 1.0))
+        self.router_pull_loss_type = str(getattr(config, "router_pull_loss_type", "soft"))
+        self.router_ema_momentum = float(getattr(config, "router_ema_momentum", 0.99))
+        self.router_use_ema_update = bool(getattr(config, "router_use_ema_update", False))
+        self.last_router_aux_loss = None
+        self.last_router_z_loss = None
+        self.last_router_pull_loss = None
+        self.last_router_budget_loss = None
+        self.last_router_forward_stats = {}
+        self.last_router_dispatch_stats = {}
+        self.last_router_ema_stats = {}
+        self._pending_router_ema_token_q = None
+        self._pending_router_ema_selected_probs = None
 
         # gating
-        if self.use_low_rank_router and self.use_sharp_router:
+        if self.use_cross_attention_router:
+            self.router = CrossAttentionRouter(
+                hidden_size=config.hidden_size,
+                num_experts=config.num_experts,
+                d_router=getattr(config, "router_dim", config.hidden_size),
+                use_entmax=self.router_use_entmax,
+                alpha=self.router_entmax_alpha,
+                use_softmax_temperature=bool(getattr(config, "router_use_softmax_temperature", True)),
+                softmax_temperature=float(getattr(config, "router_softmax_temperature", 1.0)),
+            )
+            self.gate = None
+        elif self.use_low_rank_router and self.use_sharp_router:
             self.gate = LowRankRouter(
                 hidden_size=config.hidden_size,
                 num_experts=config.num_experts,
@@ -669,42 +941,43 @@ class Qwen2MoeSparseMoeBlock(nn.Module):
         self.shared_expert_gate = torch.nn.Linear(config.hidden_size, 1, bias=False)
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
-        """ """
+        if not self.use_cross_attention_router:
+            self.last_router_aux_loss = None
+            self.last_router_z_loss = None
+            self.last_router_pull_loss = None
+            self.last_router_budget_loss = None
+            self.last_router_forward_stats = {}
+            self.last_router_dispatch_stats = {}
+            self.last_router_ema_stats = {}
+            self._pending_router_ema_token_q = None
+            self._pending_router_ema_selected_probs = None
+
+        if self.use_cross_attention_router:
+            return self._forward_cross_attention_router(hidden_states)
+        return self._forward_legacy_router(hidden_states)
+
+    def _forward_legacy_router(self, hidden_states: torch.Tensor) -> torch.Tensor:
         batch_size, sequence_length, hidden_dim = hidden_states.shape
         hidden_states = hidden_states.view(-1, hidden_dim)
-        # router_logits: (batch * sequence_length, n_experts)
         router_logits = self.gate(hidden_states)
 
         routing_weights = F.softmax(router_logits, dim=1, dtype=torch.float)
-        # print(f"routing_weights.shape: {routing_weights.shape}\nrouting_weights: {routing_weights}")
         routing_weights, selected_experts = torch.topk(routing_weights, self.top_k, dim=-1)
         if self.norm_topk_prob:
             routing_weights /= routing_weights.sum(dim=-1, keepdim=True)
-        # we cast back to the input dtype
         routing_weights = routing_weights.to(hidden_states.dtype)
 
         final_hidden_states = torch.zeros(
             (batch_size * sequence_length, hidden_dim), dtype=hidden_states.dtype, device=hidden_states.device
         )
 
-        # One hot encode the selected experts to create an expert mask
-        # this will be used to easily index which expert is going to be sollicitated
         expert_mask = torch.nn.functional.one_hot(selected_experts, num_classes=self.num_experts).permute(2, 1, 0)
-
-        # Loop over all available experts in the model and perform the computation on each expert
         expert_hit = torch.greater(expert_mask.sum(dim=(-1, -2)), 0).nonzero()
         for expert_idx in expert_hit:
             expert_layer = self.experts[expert_idx]
             idx, top_x = torch.where(expert_mask[expert_idx].squeeze(0))
-
-            # Index the correct hidden states and compute the expert hidden state for
-            # the current expert. We need to make sure to multiply the output hidden
-            # states by `routing_weights` on the corresponding tokens (top-1 and top-2)
             current_state = hidden_states[None, top_x].reshape(-1, hidden_dim)
             current_hidden_states = expert_layer(current_state) * routing_weights[top_x, idx, None]
-
-            # However `index_add_` only support torch tensors for indexing so we'll use
-            # the `top_x` tensor here.
             final_hidden_states.index_add_(0, top_x, current_hidden_states.to(hidden_states.dtype))
 
         shared_expert_output = self.shared_expert(hidden_states)
@@ -714,6 +987,226 @@ class Qwen2MoeSparseMoeBlock(nn.Module):
 
         final_hidden_states = final_hidden_states.reshape(batch_size, sequence_length, hidden_dim)
         return final_hidden_states, router_logits
+
+    def _compute_prototype_pull_loss(
+        self,
+        token_q: torch.Tensor,
+        expert_axis_probs: torch.Tensor,
+        expert_k: torch.Tensor,
+    ) -> torch.Tensor:
+        q = F.normalize(token_q.float(), dim=-1)
+        k = F.normalize(expert_k.float(), dim=-1)
+        temp = max(self.router_pull_temperature, 1e-6)
+        sim = torch.matmul(q, k.transpose(0, 1)) / temp
+
+        if self.router_pull_loss_type == "soft":
+            assign = expert_axis_probs.detach().float()
+            log_probs = F.log_softmax(sim, dim=-1)
+            return -(assign * log_probs).sum(dim=-1).mean()
+        if self.router_pull_loss_type == "hard_ce":
+            target = expert_axis_probs.detach().argmax(dim=-1).long()
+            return F.cross_entropy(sim.reshape(-1, sim.size(-1)), target.reshape(-1))
+        raise ValueError(f"Unsupported router_pull_loss_type: {self.router_pull_loss_type!r}")
+
+    def _scatter_selected_probs_to_expert_axis(
+        self,
+        selected_probs: torch.Tensor,
+        selected_indices: torch.Tensor,
+    ) -> torch.Tensor:
+        expert_axis_probs = selected_probs.new_zeros(
+            selected_probs.shape[:-1] + (self.num_experts,)
+        )
+        valid_mask = selected_indices >= 0
+        if not torch.any(valid_mask):
+            return expert_axis_probs
+        scatter_index = selected_indices.clamp_min(0)
+        expert_axis_probs.scatter_add_(
+            dim=-1,
+            index=scatter_index,
+            src=selected_probs * valid_mask.to(selected_probs.dtype),
+        )
+        return expert_axis_probs
+
+    @torch.no_grad()
+    def _ema_update_expert_key(
+        self,
+        token_q: torch.Tensor,
+        expert_axis_probs: torch.Tensor,
+    ) -> None:
+        router = self.router
+        expert_key_param = router.get_expert_key()
+        device = expert_key_param.device
+        dtype = expert_key_param.dtype
+
+        flat_q = F.normalize(token_q.detach().float(), dim=-1).reshape(-1, token_q.size(-1))
+        flat_selected_probs = expert_axis_probs.detach().float().reshape(-1, expert_axis_probs.size(-1))
+        proto_sums = flat_selected_probs.transpose(0, 1) @ flat_q
+        proto_counts = flat_selected_probs.sum(dim=0)
+        token_counts = (flat_selected_probs > 0).sum(dim=0).to(torch.float32)
+
+        if torch.distributed.is_available() and torch.distributed.is_initialized():
+            torch.distributed.all_reduce(proto_sums, op=torch.distributed.ReduceOp.SUM)
+            torch.distributed.all_reduce(proto_counts, op=torch.distributed.ReduceOp.SUM)
+            torch.distributed.all_reduce(token_counts, op=torch.distributed.ReduceOp.SUM)
+
+        active_mask = proto_counts > 0
+        if not torch.any(active_mask):
+            self.last_router_ema_stats = {
+                "proto_counts": proto_counts.detach().float(),
+                "active_expert_count": 0.0,
+                "proto_count_mean": float(proto_counts.mean().item()),
+                "proto_count_min": float(proto_counts.min().item()),
+                "proto_count_max": float(proto_counts.max().item()),
+                "proto_update_cosine": None,
+                "proto_delta_norm": None,
+                "ema_update_ratio": None,
+                "expert_token_count_cv": float(
+                    (token_counts.std(unbiased=False) / token_counts.mean().clamp_min(1e-12)).item()
+                ) if token_counts.numel() > 0 else None,
+            }
+            return
+
+        proto_means = proto_sums[active_mask] / proto_counts[active_mask].unsqueeze(-1)
+        proto_means = F.normalize(proto_means, dim=-1)
+        current_routed = router.key(expert_key_param.to(router.key.weight.dtype)).detach().float()
+        current_routed = F.normalize(current_routed, dim=-1)
+        old = current_routed[active_mask]
+        new_routed = self.router_ema_momentum * old + (1.0 - self.router_ema_momentum) * proto_means
+        new_routed = F.normalize(new_routed, dim=-1)
+        proto_update_cosine = F.cosine_similarity(old, new_routed, dim=-1)
+        proto_delta_norm = (new_routed - old).norm(dim=-1)
+        old_key_param = expert_key_param[active_mask].detach().float()
+        updated_key = router.project_routed_expert_repr_to_key_space(new_routed)
+        ema_update_ratio = (
+            (updated_key - old_key_param).norm(dim=-1)
+            / old_key_param.norm(dim=-1).clamp_min(1e-12)
+        )
+
+        expert_key_param[active_mask].copy_(updated_key.to(device=device, dtype=dtype))
+        self.last_router_ema_stats = {
+            "proto_counts": proto_counts.detach().float(),
+            "active_expert_count": float(active_mask.sum().item()),
+            "proto_count_mean": float(proto_counts.mean().item()),
+            "proto_count_min": float(proto_counts.min().item()),
+            "proto_count_max": float(proto_counts.max().item()),
+            "proto_update_cosine": float(proto_update_cosine.mean().item()),
+            "proto_delta_norm": float(proto_delta_norm.mean().item()),
+            "ema_update_ratio": float(ema_update_ratio.mean().item()),
+            "expert_token_count_cv": float(
+                (token_counts.std(unbiased=False) / token_counts.mean().clamp_min(1e-12)).item()
+            ) if token_counts.numel() > 0 else None,
+        }
+
+    @torch.no_grad()
+    def apply_pending_router_ema_update(self) -> None:
+        token_q = self._pending_router_ema_token_q
+        expert_axis_probs = self._pending_router_ema_selected_probs
+        self._pending_router_ema_token_q = None
+        self._pending_router_ema_selected_probs = None
+        if token_q is None or expert_axis_probs is None:
+            return
+        self._ema_update_expert_key(token_q=token_q, expert_axis_probs=expert_axis_probs)
+
+    def _forward_cross_attention_router(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        batch_size, sequence_length, hidden_dim = hidden_states.shape
+        router_logits, route_probs, projected_context, router_repr = self.router(
+            hidden_states,
+            return_router_repr=self.training,
+        )
+        self.last_router_forward_stats = dict(getattr(self.router, "last_router_forward_stats", {}))
+        router_logits = router_logits.float()
+        route_probs = route_probs.float()
+        conditioned_hidden_states = hidden_states + projected_context.to(dtype=hidden_states.dtype)
+
+        router_q = None
+        expert_k = None
+        if router_repr is not None:
+            router_q, expert_k = router_repr
+            router_q = router_q.float()
+            expert_k = expert_k.float()
+
+        if self.training:
+            self.last_router_z_loss = torch.logsumexp(router_logits, dim=-1).pow(2).mean()
+        else:
+            self.last_router_z_loss = None
+
+        route_probs_for_stats = route_probs.float()
+        soft_load = route_probs_for_stats.mean(dim=(0, 1))
+        top1_experts = route_probs_for_stats.argmax(dim=-1)
+        hard_load = F.one_hot(top1_experts, num_classes=self.num_experts).to(route_probs_for_stats.dtype).mean(dim=(0, 1))
+        self.last_router_aux_loss = self.num_experts * torch.sum(hard_load * soft_load) if self.training else None
+
+        topk_weights, topk_ind = top_k_routing_batched_all_sequence(
+            route_probs,
+            min(self.router_top_k, route_probs.size(-1)),
+        )
+        expert_axis_topk_weights = self._scatter_selected_probs_to_expert_axis(topk_weights, topk_ind)
+        selected_expert_count_per_token = (topk_ind >= 0).sum(dim=-1)
+        top2_k = min(2, route_probs_for_stats.size(-1))
+        top2_values = torch.topk(route_probs_for_stats, k=top2_k, dim=-1).values
+        top1_top2_margin = top2_values[..., 0] - top2_values[..., 1] if top2_k == 2 else top2_values[..., 0]
+        selected_mask = topk_ind >= 0
+        gathered_route_probs = route_probs_for_stats.gather(-1, topk_ind.clamp_min(0))
+        topk_pre_mass = (gathered_route_probs * selected_mask.to(gathered_route_probs.dtype)).sum(dim=-1)
+        topk_post_sum = topk_weights.sum(dim=-1)
+        hard_counts = torch.bincount(
+            topk_ind.reshape(-1)[topk_ind.reshape(-1) >= 0],
+            minlength=self.num_experts,
+        ).to(torch.float32)
+        self.last_router_dispatch_stats = {
+            "avg_selected_expert_count": float(selected_expert_count_per_token.float().mean().item()),
+            "soft_selected_expert_count": float(selected_expert_count_per_token.float().mean().item()),
+            "soft_load": soft_load.detach().float(),
+            "hard_load": hard_load.detach().float(),
+            "dead_expert_ratio": float((hard_load <= 0).float().mean().item()),
+            "top1_top2_margin": float(top1_top2_margin.mean().item()),
+            "topk_pre_mass_mean": float(topk_pre_mass.mean().item()),
+            "topk_post_sum_mean": float(topk_post_sum.mean().item()),
+            "topk_post_sum_abs_err": float((topk_post_sum - 1.0).abs().mean().item()),
+            "router_top_k": float(self.router_top_k),
+            "expert_token_count_cv": float(
+                (hard_counts.std(unbiased=False) / hard_counts.mean().clamp_min(1e-12)).item()
+            ),
+        }
+        self.last_router_budget_loss = hidden_states.new_zeros(()) if self.training else None
+
+        if self.training and router_q is not None and expert_k is not None:
+            self.last_router_pull_loss = self._compute_prototype_pull_loss(
+                token_q=router_q,
+                expert_axis_probs=expert_axis_topk_weights,
+                expert_k=expert_k,
+            )
+        else:
+            self.last_router_pull_loss = None
+
+        if self.training and self.router_use_ema_update and router_q is not None:
+            self._pending_router_ema_token_q = router_q.detach()
+            self._pending_router_ema_selected_probs = expert_axis_topk_weights.detach()
+        else:
+            self._pending_router_ema_token_q = None
+            self._pending_router_ema_selected_probs = None
+            if not self.router_use_ema_update:
+                self.last_router_ema_stats = {}
+
+        flat_hidden = conditioned_hidden_states.reshape(-1, hidden_dim)
+        flat_topk_weights = topk_weights.reshape(-1, topk_weights.size(-1))
+        flat_topk_ind = topk_ind.reshape(-1, topk_ind.size(-1))
+        output_total = torch.zeros_like(flat_hidden)
+        for expert_num, expert in enumerate(self.experts):
+            token_idx, slot_idx = torch.where(flat_topk_ind == expert_num)
+            if token_idx.numel() == 0:
+                continue
+            selected_hidden = flat_hidden[token_idx]
+            expert_output = expert(selected_hidden)
+            expert_weight = flat_topk_weights[token_idx, slot_idx].unsqueeze(-1).to(expert_output.dtype)
+            output_total[token_idx] += expert_output * expert_weight
+
+        shared_hidden = hidden_states.reshape(-1, hidden_dim)
+        shared_expert_output = self.shared_expert(shared_hidden)
+        shared_expert_output = F.sigmoid(self.shared_expert_gate(shared_hidden)) * shared_expert_output
+        output_total = output_total + shared_expert_output
+        output_total = output_total.view(batch_size, sequence_length, hidden_dim)
+        return output_total, router_logits.view(batch_size * sequence_length, self.num_experts)
 
 
 class Qwen2MoeDecoderLayer(GradientCheckpointingLayer):
@@ -847,6 +1340,26 @@ class Qwen2MoeModel(Qwen2MoePreTrainedModel):
         self.layers = nn.ModuleList(
             [Qwen2MoeDecoderLayer(config, layer_idx) for layer_idx in range(config.num_hidden_layers)]
         )
+        self.shared_expert_key = None
+        self.last_router_aux_loss = None
+        self.last_router_z_loss = None
+        self.last_router_pull_loss = None
+        self.last_router_budget_loss = None
+        self.last_router_forward_stats = {}
+        self.last_router_dispatch_stats = {}
+        self.last_router_ema_stats = {}
+        if (
+            bool(getattr(config, "share_router_expert_embedding", False))
+            and bool(getattr(config, "use_cross_attention_router", False))
+            and int(getattr(config, "num_experts", 0)) > 0
+        ):
+            d_router = int(getattr(config, "router_dim", config.hidden_size))
+            self.shared_expert_key = nn.Parameter(torch.randn(config.num_experts, d_router))
+            for layer in self.layers:
+                mlp = getattr(layer, "mlp", None)
+                if not getattr(mlp, "use_cross_attention_router", False):
+                    continue
+                mlp.router.set_shared_expert_key(self.shared_expert_key)
         self._attn_implementation = config._attn_implementation
         self.norm = Qwen2MoeRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.rotary_emb = Qwen2MoeRotaryEmbedding(config=config)
@@ -916,6 +1429,13 @@ class Qwen2MoeModel(Qwen2MoePreTrainedModel):
         all_hidden_states = () if output_hidden_states else None
         all_self_attns = () if output_attentions else None
         all_router_logits = () if output_router_logits else None
+        self.last_router_aux_loss = None
+        self.last_router_z_loss = None
+        self.last_router_pull_loss = None
+        self.last_router_budget_loss = None
+        self.last_router_forward_stats = {}
+        self.last_router_dispatch_stats = {}
+        self.last_router_ema_stats = {}
 
         for decoder_layer in self.layers:
             if output_hidden_states:
@@ -946,6 +1466,107 @@ class Qwen2MoeModel(Qwen2MoePreTrainedModel):
         # add hidden states from the last decoder layer
         if output_hidden_states:
             all_hidden_states += (hidden_states,)
+
+        if self.training:
+            aux_terms = []
+            z_terms = []
+            pull_terms = []
+            budget_terms = []
+            forward_stat_terms = []
+            dispatch_stat_terms = []
+            ema_stat_terms = []
+            for layer in self.layers:
+                mlp = getattr(layer, "mlp", None)
+                aux = getattr(mlp, "last_router_aux_loss", None)
+                if aux is not None:
+                    aux_terms.append(aux)
+                z_loss = getattr(mlp, "last_router_z_loss", None)
+                if z_loss is not None:
+                    z_terms.append(z_loss)
+                pull_loss = getattr(mlp, "last_router_pull_loss", None)
+                if pull_loss is not None:
+                    pull_terms.append(pull_loss)
+                budget_loss = getattr(mlp, "last_router_budget_loss", None)
+                if budget_loss is not None:
+                    budget_terms.append(budget_loss)
+                forward_stats = getattr(mlp, "last_router_forward_stats", None)
+                if forward_stats:
+                    forward_stat_terms.append(forward_stats)
+                dispatch_stats = getattr(mlp, "last_router_dispatch_stats", None)
+                if dispatch_stats:
+                    dispatch_stat_terms.append(dispatch_stats)
+                ema_stats = getattr(mlp, "last_router_ema_stats", None)
+                if ema_stats:
+                    ema_stat_terms.append(ema_stats)
+
+            if aux_terms:
+                self.last_router_aux_loss = torch.stack(aux_terms).mean()
+            if z_terms:
+                self.last_router_z_loss = torch.stack(z_terms).mean()
+            if pull_terms:
+                self.last_router_pull_loss = torch.stack(pull_terms).mean()
+            if budget_terms:
+                self.last_router_budget_loss = torch.stack(budget_terms).mean()
+
+            forward_scalar_keys = (
+                "attn_scores_mean",
+                "attn_scores_std",
+                "attn_scores_min",
+                "attn_scores_max",
+                "attn_weights_row_sum_mean",
+                "attn_weights_row_sum_abs_err",
+                "attn_weights_entropy",
+                "attn_weights_top1_mass",
+                "route_prob_min",
+                "route_prob_has_neg",
+                "route_prob_row_sum_mean",
+                "route_prob_row_sum_abs_err",
+                "projected_value_std",
+                "projected_value_norm_mean",
+                "router_context_norm_mean",
+                "router_context_norm_std",
+                "router_context_proj_out_mean",
+                "router_context_proj_out_std",
+                "router_context_delta_ratio",
+                "expert_key_pairwise_cos_mean",
+                "expert_key_pairwise_cos_max",
+                "expert_value_pairwise_cos_mean",
+                "expert_value_pairwise_cos_max",
+                "token_q_norm_mean",
+                "token_q_norm_std",
+            )
+            if forward_stat_terms:
+                self.last_router_forward_stats = {key: _mean_scalar_stat(forward_stat_terms, key) for key in forward_scalar_keys}
+
+            dispatch_scalar_keys = (
+                "avg_selected_expert_count",
+                "soft_selected_expert_count",
+                "dead_expert_ratio",
+                "top1_top2_margin",
+                "topk_pre_mass_mean",
+                "topk_post_sum_mean",
+                "topk_post_sum_abs_err",
+                "router_top_k",
+                "expert_token_count_cv",
+            )
+            if dispatch_stat_terms:
+                self.last_router_dispatch_stats = {key: _mean_scalar_stat(dispatch_stat_terms, key) for key in dispatch_scalar_keys}
+                self.last_router_dispatch_stats["soft_load"] = _mean_tensor_stat(dispatch_stat_terms, "soft_load")
+                self.last_router_dispatch_stats["hard_load"] = _mean_tensor_stat(dispatch_stat_terms, "hard_load")
+
+            ema_scalar_keys = (
+                "active_expert_count",
+                "proto_count_mean",
+                "proto_count_min",
+                "proto_count_max",
+                "proto_update_cosine",
+                "proto_delta_norm",
+                "ema_update_ratio",
+                "expert_token_count_cv",
+            )
+            if ema_stat_terms:
+                self.last_router_ema_stats = {key: _mean_scalar_stat(ema_stat_terms, key) for key in ema_scalar_keys}
+                self.last_router_ema_stats["proto_counts"] = _mean_tensor_stat(ema_stat_terms, "proto_counts")
 
         return MoeModelOutputWithPast(
             last_hidden_state=hidden_states,
@@ -1143,7 +1764,7 @@ class Qwen2MoeForCausalLM(Qwen2MoePreTrainedModel, GenerationMixin):
         cache_position: Optional[torch.LongTensor] = None,
         logits_to_keep: Union[int, torch.Tensor] = 0,
         **kwargs,
-    ) -> MoeCausalLMOutputWithPast:
+    ) -> Qwen2MoeCausalLMOutputWithPast:
         r"""
         labels (`torch.LongTensor` of shape `(batch_size, sequence_length)`, *optional*):
             Labels for computing the masked language modeling loss. Indices should either be in `[0, ...,
@@ -1206,10 +1827,14 @@ class Qwen2MoeForCausalLM(Qwen2MoePreTrainedModel, GenerationMixin):
                 self.num_experts_per_tok,
                 attention_mask,
             )
-            if labels is not None:
-                loss += self.router_aux_loss_coef * aux_loss.to(loss.device)  # make sure to reside in the same device
+        router_aux_loss = getattr(self.model, "last_router_aux_loss", None)
+        router_z_loss = getattr(self.model, "last_router_z_loss", None)
+        router_pull_loss = getattr(self.model, "last_router_pull_loss", None)
+        router_budget_loss = getattr(self.model, "last_router_budget_loss", None)
+        if router_aux_loss is None:
+            router_aux_loss = aux_loss
 
-        return MoeCausalLMOutputWithPast(
+        return Qwen2MoeCausalLMOutputWithPast(
             loss=loss,
             aux_loss=aux_loss,
             logits=logits,
@@ -1217,6 +1842,10 @@ class Qwen2MoeForCausalLM(Qwen2MoePreTrainedModel, GenerationMixin):
             hidden_states=outputs.hidden_states,
             attentions=outputs.attentions,
             router_logits=outputs.router_logits,
+            router_aux_loss=router_aux_loss,
+            router_z_loss=router_z_loss,
+            router_pull_loss=router_pull_loss,
+            router_budget_loss=router_budget_loss,
         )
 
 
