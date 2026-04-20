@@ -56,6 +56,9 @@ from finetune import (
 )
 
 
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+
+
 def setup_distributed_safe():
     if "RANK" not in os.environ or "WORLD_SIZE" not in os.environ:
         return -1, 1, False
@@ -1540,6 +1543,7 @@ def configure_model_config(config, args) -> None:
         config.use_router_context = bool(args.use_router_context)
     if args.router_context_scale is not None:
         config.router_context_scale = float(args.router_context_scale)
+    config.debug_nonfinite_router = bool(getattr(args, "debug_nonfinite_router", 0))
     if int(args.share_router_expert_embedding) >= 0:
         config.share_router_expert_embedding = bool(args.share_router_expert_embedding)
     config.router_dim = int(getattr(config, "hidden_size"))
@@ -2163,6 +2167,7 @@ def stage1_train_cross_attention_router(
 
 def build_dataloaders(train_ds, eval_ds, args, world_size: int, is_distributed: bool):
     collator = LMDataCollator(pad_id=0)
+    num_workers = max(0, int(getattr(args, "dataloader_num_workers", 0)))
     if is_distributed:
         train_sampler = DistributedSampler(
             train_ds,
@@ -2190,7 +2195,7 @@ def build_dataloaders(train_ds, eval_ds, args, world_size: int, is_distributed: 
         sampler=train_sampler,
         shuffle=train_sampler is None,
         drop_last=True,
-        num_workers=2,
+        num_workers=num_workers,
         pin_memory=True,
         collate_fn=collator,
     )
@@ -2203,7 +2208,7 @@ def build_dataloaders(train_ds, eval_ds, args, world_size: int, is_distributed: 
             sampler=eval_sampler,
             shuffle=False,
             drop_last=False,
-            num_workers=2,
+            num_workers=num_workers,
             pin_memory=True,
             collate_fn=collator,
         )
@@ -2283,6 +2288,7 @@ def parse_args():
     ap.add_argument("--router_lr_mult", type=float, default=1.0)
     ap.add_argument("--max_grad_norm", type=float, default=1.0)
     ap.add_argument("--num_proc", type=int, default=8)
+    ap.add_argument("--dataloader_num_workers", type=int, default=0)
     ap.add_argument("--train_max_samples", type=int, default=None)
     ap.add_argument("--eval_max_samples", type=int, default=20)
     ap.add_argument("--use_label", type=int, default=1)
@@ -2478,6 +2484,12 @@ def parse_args():
         type=float,
         default=None,
         help="Scale factor applied to projected router context before adding it back to hidden states.",
+    )
+    ap.add_argument(
+        "--debug_nonfinite_router",
+        type=int,
+        default=0,
+        help="Print the first non-finite router / MoE tensors encountered during training.",
     )
     ap.add_argument(
         "--share_router_expert_embedding",

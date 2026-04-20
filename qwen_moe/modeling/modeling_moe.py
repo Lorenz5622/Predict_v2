@@ -58,6 +58,61 @@ if is_torch_flex_attn_available():
     from transformers.integrations.flex_attention import make_flex_block_causal_mask
 
 logger = logging.get_logger(__name__)
+_NONFINITE_DEBUG_SEEN = set()
+
+
+def _nonfinite_debug_prefix() -> str:
+    if torch.distributed.is_available() and torch.distributed.is_initialized():
+        rank = torch.distributed.get_rank()
+    else:
+        rank = 0
+    return f"[router-nonfinite][rank{rank}]"
+
+
+def _report_nonfinite_tensor_once(tag: str, tensor: Optional[torch.Tensor]) -> bool:
+    if tensor is None or not torch.is_tensor(tensor):
+        return False
+    if getattr(tensor, "is_meta", False):
+        return False
+    if not torch.is_floating_point(tensor):
+        return False
+
+    value = tensor.detach()
+    try:
+        finite_mask = torch.isfinite(value)
+    except Exception:
+        return False
+
+    if bool(finite_mask.all().item()):
+        return False
+
+    if tag in _NONFINITE_DEBUG_SEEN:
+        return True
+    _NONFINITE_DEBUG_SEEN.add(tag)
+
+    flat = value.float().reshape(-1)
+    flat_finite_mask = torch.isfinite(flat)
+    finite_vals = flat[flat_finite_mask]
+    bad_vals = flat[~flat_finite_mask][:8].cpu().tolist()
+    total = int(flat.numel())
+    bad = total - int(flat_finite_mask.sum().item())
+    if finite_vals.numel() > 0:
+        finite_min = float(finite_vals.min().item())
+        finite_max = float(finite_vals.max().item())
+        finite_mean = float(finite_vals.mean().item())
+    else:
+        finite_min = None
+        finite_max = None
+        finite_mean = None
+
+    print(
+        f"{_nonfinite_debug_prefix()} {tag}: "
+        f"shape={tuple(value.shape)} device={value.device} dtype={value.dtype} "
+        f"nonfinite={bad}/{total} finite_min={finite_min} finite_max={finite_max} "
+        f"finite_mean={finite_mean} sample_bad={bad_vals}",
+        flush=True,
+    )
+    return True
 
 
 @dataclass
@@ -416,6 +471,7 @@ class CrossAttentionRouter(nn.Module):
         self.alpha = float(alpha)
         self.use_softmax_temperature = bool(use_softmax_temperature)
         self.softmax_temperature = float(softmax_temperature)
+        self.debug_nonfinite_router = False
 
         self.query = nn.Linear(self.hidden_size, self.d_router, bias=False)
         self.key = nn.Linear(self.d_router, self.d_router, bias=False)
@@ -489,10 +545,28 @@ class CrossAttentionRouter(nn.Module):
     def get_expert_value(self) -> torch.Tensor:
         return self.expert_value
 
-    def project_routed_expert_repr_to_key_space(self, routed_expert_repr: torch.Tensor) -> torch.Tensor:
-        key_weight_t = self.key.weight.detach().float().transpose(0, 1)
-        key_weight_t_pinv = torch.linalg.pinv(key_weight_t)
-        return routed_expert_repr.float() @ key_weight_t_pinv
+    def project_routed_expert_repr_to_key_space(
+        self,
+        routed_expert_repr: torch.Tensor,
+        current_key_repr: Optional[torch.Tensor] = None,
+        current_routed_repr: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        """
+        Approximate the inverse mapping from routed space back to expert-key space.
+
+        Using `torch.linalg.pinv` on every EMA update is prohibitively expensive for
+        Qwen's 2048-d router. Instead, use one preconditioned gradient step on the
+        least-squares objective ||x W^T - y||^2, which preserves EMA behavior while
+        keeping the update cheap enough for training.
+        """
+        key_weight = self.key.weight.detach().float()
+        denom = key_weight.norm().pow(2).clamp_min(1e-6)
+
+        if current_key_repr is None or current_routed_repr is None:
+            return routed_expert_repr.float() @ key_weight / denom
+
+        residual = routed_expert_repr.float() - current_routed_repr.float()
+        return current_key_repr.float() + (residual @ key_weight) / denom
 
     def forward(
         self,
@@ -502,11 +576,21 @@ class CrossAttentionRouter(nn.Module):
         router_in = hidden_states.to(self.query.weight.dtype)
         expert_key = self.get_expert_key()
         expert_value = self.get_expert_value()
+        if self.debug_nonfinite_router:
+            _report_nonfinite_tensor_once("router.hidden_states", hidden_states)
+            _report_nonfinite_tensor_once("router.expert_key.input", expert_key)
+            _report_nonfinite_tensor_once("router.expert_value.input", expert_value)
 
         q = self.query(router_in).float()
         k = self.key(expert_key.to(self.key.weight.dtype)).float()
         v = self.value(expert_value.to(self.value.weight.dtype)).float()
+        if self.debug_nonfinite_router:
+            _report_nonfinite_tensor_once("router.q", q)
+            _report_nonfinite_tensor_once("router.k", k)
+            _report_nonfinite_tensor_once("router.v", v)
         attn_scores = torch.matmul(q, k.transpose(0, 1)) / math.sqrt(self.d_router)
+        if self.debug_nonfinite_router:
+            _report_nonfinite_tensor_once("router.attn_scores.pre_clean", attn_scores)
         attn_scores = torch.nan_to_num(attn_scores, nan=0.0, posinf=1e4, neginf=-1e4)
         if self.use_entmax:
             attn_weights = entmax_bisect(attn_scores, alpha=self.alpha, dim=-1)
@@ -515,12 +599,18 @@ class CrossAttentionRouter(nn.Module):
             if self.use_softmax_temperature:
                 softmax_scores = softmax_scores / max(self.softmax_temperature, 1e-6)
             attn_weights = F.softmax(softmax_scores, dim=-1, dtype=torch.float32)
+        if self.debug_nonfinite_router:
+            _report_nonfinite_tensor_once("router.attn_weights.pre_clean", attn_weights)
         attn_weights = torch.nan_to_num(attn_weights, nan=0.0, posinf=1.0, neginf=0.0)
         router_context = torch.matmul(attn_weights, v)
+        if self.debug_nonfinite_router:
+            _report_nonfinite_tensor_once("router.context.pre_clean", router_context)
         router_context = torch.nan_to_num(router_context, nan=0.0, posinf=1e4, neginf=-1e4)
         projected_context = self.router_context_proj(
             router_context.to(self.router_context_proj.weight.dtype)
         ).float()
+        if self.debug_nonfinite_router:
+            _report_nonfinite_tensor_once("router.projected_context.pre_clean", projected_context)
         projected_context = torch.nan_to_num(projected_context, nan=0.0, posinf=1e4, neginf=-1e4)
 
         attn_scores_f = attn_scores.detach().float()
@@ -918,6 +1008,7 @@ class Qwen2MoeSparseMoeBlock(nn.Module):
         self.router_entmax_alpha = float(getattr(config, "router_entmax_alpha", 1.5))
         self.use_router_context = bool(getattr(config, "use_router_context", True))
         self.router_context_scale = float(getattr(config, "router_context_scale", 1.0))
+        self.debug_nonfinite_router = bool(getattr(config, "debug_nonfinite_router", False))
         self.router_pull_temperature = float(getattr(config, "router_pull_temperature", 1.0))
         self.router_pull_loss_type = str(getattr(config, "router_pull_loss_type", "soft"))
         self.router_ema_momentum = float(getattr(config, "router_ema_momentum", 0.99))
@@ -943,6 +1034,7 @@ class Qwen2MoeSparseMoeBlock(nn.Module):
                 use_softmax_temperature=bool(getattr(config, "router_use_softmax_temperature", True)),
                 softmax_temperature=float(getattr(config, "router_softmax_temperature", 1.0)),
             )
+            self.router.debug_nonfinite_router = self.debug_nonfinite_router
             self.gate = None
         elif self.use_low_rank_router and self.use_sharp_router:
             self.gate = LowRankRouter(
@@ -1027,10 +1119,15 @@ class Qwen2MoeSparseMoeBlock(nn.Module):
         expert_axis_probs: torch.Tensor,
         expert_k: torch.Tensor,
     ) -> torch.Tensor:
+        if self.debug_nonfinite_router:
+            _report_nonfinite_tensor_once("pull_loss.token_q", token_q)
+            _report_nonfinite_tensor_once("pull_loss.expert_k", expert_k)
         q = F.normalize(token_q.float(), dim=-1)
         k = F.normalize(expert_k.float(), dim=-1)
         temp = max(self.router_pull_temperature, 1e-6)
         sim = torch.matmul(q, k.transpose(0, 1)) / temp
+        if self.debug_nonfinite_router:
+            _report_nonfinite_tensor_once("pull_loss.sim", sim)
 
         if self.router_pull_loss_type == "soft":
             assign = expert_axis_probs.detach().float()
@@ -1109,7 +1206,11 @@ class Qwen2MoeSparseMoeBlock(nn.Module):
         proto_update_cosine = F.cosine_similarity(old, new_routed, dim=-1)
         proto_delta_norm = (new_routed - old).norm(dim=-1)
         old_key_param = expert_key_param[active_mask].detach().float()
-        updated_key = router.project_routed_expert_repr_to_key_space(new_routed)
+        updated_key = router.project_routed_expert_repr_to_key_space(
+            new_routed,
+            current_key_repr=old_key_param,
+            current_routed_repr=old,
+        )
         ema_update_ratio = (
             (updated_key - old_key_param).norm(dim=-1)
             / old_key_param.norm(dim=-1).clamp_min(1e-12)
@@ -1142,6 +1243,8 @@ class Qwen2MoeSparseMoeBlock(nn.Module):
 
     def _forward_cross_attention_router(self, hidden_states: torch.Tensor) -> torch.Tensor:
         batch_size, sequence_length, hidden_dim = hidden_states.shape
+        if self.debug_nonfinite_router:
+            _report_nonfinite_tensor_once("moe.hidden_states.input", hidden_states)
         router_logits, route_probs, projected_context, router_repr = self.router(
             hidden_states,
             return_router_repr=self.training,
@@ -1156,6 +1259,8 @@ class Qwen2MoeSparseMoeBlock(nn.Module):
             ).to(dtype=hidden_states.dtype)
         else:
             conditioned_hidden_states = hidden_states
+        if self.debug_nonfinite_router:
+            _report_nonfinite_tensor_once("moe.conditioned_hidden_states", conditioned_hidden_states)
 
         router_q = None
         expert_k = None
@@ -1231,19 +1336,30 @@ class Qwen2MoeSparseMoeBlock(nn.Module):
         flat_topk_weights = topk_weights.reshape(-1, topk_weights.size(-1))
         flat_topk_ind = topk_ind.reshape(-1, topk_ind.size(-1))
         output_total = torch.zeros_like(flat_hidden)
+        if self.debug_nonfinite_router:
+            _report_nonfinite_tensor_once("moe.flat_hidden", flat_hidden)
         for expert_num, expert in enumerate(self.experts):
             token_idx, slot_idx = torch.where(flat_topk_ind == expert_num)
             if token_idx.numel() == 0:
                 continue
             selected_hidden = flat_hidden[token_idx]
+            if self.debug_nonfinite_router:
+                _report_nonfinite_tensor_once(f"moe.expert{expert_num}.selected_hidden", selected_hidden)
             expert_output = expert(selected_hidden)
+            if self.debug_nonfinite_router:
+                _report_nonfinite_tensor_once(f"moe.expert{expert_num}.output", expert_output)
             expert_weight = flat_topk_weights[token_idx, slot_idx].unsqueeze(-1).to(expert_output.dtype)
             output_total[token_idx] += expert_output * expert_weight
 
         shared_hidden = hidden_states.reshape(-1, hidden_dim)
         shared_expert_output = self.shared_expert(shared_hidden)
         shared_expert_output = F.sigmoid(self.shared_expert_gate(shared_hidden)) * shared_expert_output
+        if self.debug_nonfinite_router:
+            _report_nonfinite_tensor_once("moe.shared_hidden", shared_hidden)
+            _report_nonfinite_tensor_once("moe.shared_expert_output", shared_expert_output)
         output_total = output_total + shared_expert_output
+        if self.debug_nonfinite_router:
+            _report_nonfinite_tensor_once("moe.output_total", output_total)
         output_total = output_total.view(batch_size, sequence_length, hidden_dim)
         return output_total, router_logits.view(batch_size * sequence_length, self.num_experts)
 
