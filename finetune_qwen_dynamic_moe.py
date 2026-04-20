@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-LoRA finetuning entrypoint for the dynamic-router MoE model.
+Two-stage LoRA finetuning entrypoint for the Qwen dynamic-router MoE model.
 
-This script keeps only the pieces that are specific to the dynamic-router
+This script keeps the pieces that are specific to the Qwen dynamic-router
 variant:
 - model/config imports
 - legacy dense-router -> cross-attention-router initialization
 - k-bit loading policy for the customized router modules
+- stage1 router distillation + stage2 LoRA finetuning workflow
 
 Datasets, collator, and the main training loop are reused from `finetune.py`
 to avoid duplicating the entire training stack.
@@ -157,6 +158,7 @@ def _init_cross_attention_router_from_legacy_dense(
     - query: partial copy from legacy dense router weight
     - expert_embed: initialized from the matching legacy dense router weight
     - expert_key: initialized from the matching legacy dense router weight
+    - expert_value: initialized from the matching legacy dense router weight
     - shared_expert_key: initialized from the mean of all compatible legacy dense router weights
     - key/value: small-variance random init
     """
@@ -228,6 +230,14 @@ def _init_cross_attention_router_from_legacy_dense(
                     )
                 elif shared_expert_key is not None:
                     shared_router_inits.append(reshaped_dense.to(dtype=torch.float32))
+                expert_value = getattr(router, "expert_value", None)
+                if expert_value is not None:
+                    expert_value.copy_(
+                        reshaped_dense.to(dtype=expert_value.dtype, device=expert_value.device)
+                    )
+                    per_layer_init_messages.append(
+                        f"[init] layer {layer_idx} expert_value initialized from legacy router.weight"
+                    )
 
             num_inited += 1
 
@@ -591,18 +601,51 @@ def load_legacy_router_teacher_weights(
     return teacher_weights
 
 
-def save_full_model_checkpoint(model: nn.Module, output_dir: str, tokenizer, config) -> None:
-    os.makedirs(output_dir, exist_ok=True)
+def _clear_quantization_runtime_attrs(model: nn.Module) -> None:
+    for attr_name in ("is_loaded_in_8bit", "is_loaded_in_4bit", "quantization_method"):
+        if hasattr(model, attr_name):
+            setattr(model, attr_name, False if attr_name != "quantization_method" else None)
+
+
+def _materialize_model_for_export(
+    model: nn.Module,
+    save_dtype: torch.dtype = torch.float16,
+):
     model_to_save = _unwrap_base_model(model)
+    was_quantized = is_quantized_model(model_to_save)
 
-    state_dict = {}
-    for name, tensor in model_to_save.state_dict().items():
-        value = tensor.detach().cpu()
-        if torch.is_floating_point(value) and value.dtype != torch.float32:
-            value = value.to(torch.float32)
-        state_dict[name] = value
+    if was_quantized and hasattr(model_to_save, "dequantize"):
+        print(f"[save] trying to dequantize model before export to {save_dtype}", flush=True)
+        maybe_dequantized = model_to_save.dequantize()
+        if maybe_dequantized is not None:
+            model_to_save = maybe_dequantized
 
-    model_to_save.save_pretrained(output_dir, state_dict=state_dict, safe_serialization=True)
+    print(f"[save] moving export model to cpu ({save_dtype})", flush=True)
+    model_to_save = model_to_save.to(device="cpu", dtype=save_dtype)
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+    if was_quantized:
+        _clear_quantization_runtime_attrs(model_to_save)
+
+    return model_to_save, was_quantized
+
+
+def save_full_model_checkpoint(
+    model: nn.Module,
+    output_dir: str,
+    tokenizer,
+    config,
+    save_dtype: torch.dtype = torch.float16,
+) -> None:
+    os.makedirs(output_dir, exist_ok=True)
+    model_to_save, was_quantized = _materialize_model_for_export(model, save_dtype=save_dtype)
+    if was_quantized:
+        print(f"[save] full checkpoint export dtype={save_dtype} (from quantized model) -> {output_dir}")
+    else:
+        print(f"[save] full checkpoint export dtype={save_dtype} -> {output_dir}")
+    model_to_save.save_pretrained(output_dir, safe_serialization=True)
     tokenizer.save_pretrained(output_dir)
     config.save_pretrained(output_dir)
 
@@ -675,34 +718,9 @@ def _warn_ignored_legacy_router_settings(args) -> None:
 
 def _warn_ignored_stage1_settings(args) -> None:
     ignored = []
-    if int(getattr(args, "stage", 0)) != 0:
-        ignored.append("stage")
-    if getattr(args, "stage2_init_path", ""):
-        ignored.append("stage2_init_path")
-    if getattr(args, "stage1_teacher_path", ""):
-        ignored.append("stage1_teacher_path")
-
-    default_pairs = {
-        "stage1_epochs": 1,
-        "stage1_lr": 2e-4,
-        "stage1_grad_accum": 1,
-        "stage1_log_every": 50,
-        "stage1_max_grad_norm": 1.0,
-        "stage1_data_ratio": 0.2,
-        "stage_split_seed": 42,
-        "stage1_distill_temperature": 1.0,
-        "stage1_kl_coef": 1.0,
-        "stage1_logit_coef": 1.0,
-        "stage1_use_logit_loss": 1,
-        "stage1_logit_loss_type": "huber",
-    }
-    for key, default in default_pairs.items():
-        if getattr(args, key) != default:
-            ignored.append(key)
-
     if ignored and is_main_process():
         print(
-            "[train] single-stage qw finetune ignores stage1/two-stage compatibility settings: "
+            "[train] ignored stage1 settings: "
             + ", ".join(sorted(set(ignored)))
         )
 
@@ -1312,38 +1330,18 @@ def train(
                 "Your PEFT model may not support merge_and_unload()."
             ) from e
 
-        if was_quantized and hasattr(merged, "dequantize"):
-            print("[save] trying to dequantize merged model before export")
-            maybe_dequantized = merged.dequantize()
-            if maybe_dequantized is not None:
-                merged = maybe_dequantized
-
-        print("[save] moving merged model to cpu before export")
-        merged = merged.to("cpu")
-        gc.collect()
-        if device.type == "cuda":
-            torch.cuda.empty_cache()
-
-        state_dict = {}
-        for k, v in merged.state_dict().items():
-            tensor = v.detach().cpu()
-            if torch.is_floating_point(tensor) and tensor.dtype != torch.float32:
-                tensor = tensor.to(torch.float32)
-            state_dict[k] = tensor
+        merged, _ = _materialize_model_for_export(merged, save_dtype=torch.float16)
 
         if was_quantized:
-            for attr_name in ("is_loaded_in_8bit", "is_loaded_in_4bit", "quantization_method"):
-                if hasattr(merged, attr_name):
-                    setattr(merged, attr_name, False if attr_name != "quantization_method" else None)
-            print(f"[save] merged + dequantized + fp32 full model -> {output_dir}")
+            print(f"[save] merged + dequantized + fp16 full model -> {output_dir}")
         else:
-            print(f"[save] merged + fp32 full model -> {output_dir}")
+            print(f"[save] merged + fp16 full model -> {output_dir}")
 
         if final_router_top_k is not None:
             _set_runtime_router_top_k(merged, final_router_top_k)
             print(f"[save] final router top_k -> {int(final_router_top_k)}")
 
-        merged.save_pretrained(output_dir, state_dict=state_dict, safe_serialization=True)
+        merged.save_pretrained(output_dir, safe_serialization=True)
 
 
 def _patch_safe_initialize_missing_keys(model_cls):
@@ -1404,6 +1402,56 @@ def _ensure_no_meta_tensors(model: nn.Module, where: str) -> None:
         raise RuntimeError(
             f"Found unmaterialized meta tensors after {where}. "
             + " | ".join(details)
+        )
+
+
+def _summarize_nonfinite_tensor(name: str, tensor: torch.Tensor) -> str:
+    value = tensor.detach().float()
+    flat = value.reshape(-1)
+    finite_mask = torch.isfinite(flat)
+    total = int(flat.numel())
+    bad = total - int(finite_mask.sum().item())
+    finite_vals = flat[finite_mask]
+    sample_bad = flat[~finite_mask][:8].cpu().tolist()
+    if finite_vals.numel() > 0:
+        finite_min = float(finite_vals.min().item())
+        finite_max = float(finite_vals.max().item())
+        finite_mean = float(finite_vals.mean().item())
+    else:
+        finite_min = None
+        finite_max = None
+        finite_mean = None
+    return (
+        f"{name}: shape={tuple(tensor.shape)} device={tensor.device} dtype={tensor.dtype} "
+        f"nonfinite={bad}/{total} finite_min={finite_min} finite_max={finite_max} "
+        f"finite_mean={finite_mean} sample_bad={sample_bad}"
+    )
+
+
+def _ensure_finite_model_tensors(model: nn.Module, where: str) -> None:
+    bad_entries: List[str] = []
+
+    for name, param in model.named_parameters():
+        if getattr(param, "is_meta", False):
+            continue
+        if not torch.is_tensor(param) or not torch.is_floating_point(param):
+            continue
+        if not bool(torch.isfinite(param.detach()).all().item()):
+            bad_entries.append(_summarize_nonfinite_tensor(name, param))
+
+    for name, buf in model.named_buffers():
+        if getattr(buf, "is_meta", False):
+            continue
+        if not torch.is_tensor(buf) or not torch.is_floating_point(buf):
+            continue
+        if not bool(torch.isfinite(buf.detach()).all().item()):
+            bad_entries.append(_summarize_nonfinite_tensor(name, buf))
+
+    if bad_entries:
+        preview = bad_entries[:20]
+        raise RuntimeError(
+            f"Found non-finite model tensors before training at {where}. "
+            f"Count={len(bad_entries)}. " + " | ".join(preview)
         )
 
 
@@ -1505,7 +1553,7 @@ def build_model_with_router_compat(
         else torch.float16
     )
     model = model_cls.from_pretrained(
-        args.model_path,
+        model_path,
         config=config,
         quantization_config=quantization_config,
         torch_dtype=torch_dtype,
@@ -2246,19 +2294,19 @@ def parse_args():
         type=int,
         default=0,
         choices=[0, 1, 2],
-        help="Backward-compatibility flag from the old two-stage workflow. Ignored in single-stage Qwen finetune.",
+        help="Stage selector: 0 runs stage1+stage2, 1 runs only stage1, 2 runs only stage2.",
     )
     ap.add_argument(
         "--stage2_init_path",
         type=str,
         default="",
-        help="Backward-compatibility flag from the old two-stage workflow. Ignored in single-stage Qwen finetune.",
+        help="Optional initialization path for stage2. Defaults to output_dir/ckpt_after_stage1 when available.",
     )
     ap.add_argument(
         "--stage1_teacher_path",
         type=str,
         default="",
-        help="Backward-compatibility flag from the old two-stage workflow. Ignored in single-stage Qwen finetune.",
+        help="Optional teacher model path for stage1 router distillation. Defaults to model_path.",
     )
 
     ap.add_argument(
@@ -2596,41 +2644,134 @@ def main():
     use_fp16 = bool(args.fp16) and device.type == "cuda" and not bool(args.bf16)
     use_bf16 = bool(args.bf16) and device.type == "cuda"
     _warn_ignored_legacy_router_settings(args)
-    _warn_ignored_stage1_settings(args)
 
     if is_main_process():
         print("[load] tokenizer from model_path:", args.model_path)
     tokenizer = AutoTokenizer.from_pretrained(args.model_path, use_fast=True)
 
     model_cls, config_cls, _ = import_moe_classes()
-    stage2_quantization_config = build_quantization_config(args)
+    quantization_config = build_quantization_config(args)
     if is_main_process():
         print(f"[load] distributed={is_distributed} world_size={world_size} 4bit={bool(args.load_in_4bit)} 8bit={bool(args.load_in_8bit)}")
-        if bool(args.load_in_4bit) and stage2_quantization_config is not None:
-            print(f"[load] 4bit compute_dtype={stage2_quantization_config.bnb_4bit_compute_dtype}")
+        if bool(args.load_in_4bit) and quantization_config is not None:
+            print(f"[load] 4bit compute_dtype={quantization_config.bnb_4bit_compute_dtype}")
         print(f"[train] mixed precision: fp16={use_fp16} bf16={use_bf16}")
-        print("[train] single-stage path: initialize CrossAttentionRouter from dense gate, then fine-tune directly")
+        print("[train] two-stage path: stage1 router distillation, then stage2 LoRA fine-tuning")
+
+    stage1_ckpt_dir = os.path.join(args.output_dir, "ckpt_after_stage1")
+
+    if args.stage in (0, 1):
+        if is_main_process():
+            print("[stage1] loading base model for router distillation")
+
+        stage1_config = config_cls.from_pretrained(args.model_path)
+        configure_model_config(stage1_config, args)
+        stage1_model = build_model_with_router_compat(
+            args=args,
+            model_cls=model_cls,
+            config=stage1_config,
+            model_path=args.model_path,
+            device=device,
+            quantization_config=quantization_config,
+            local_rank=local_rank,
+            is_distributed=is_distributed,
+            init_from_legacy=True,
+        )
+        if bool(args.debug_router_meta):
+            _debug_dump_router_param_states(stage1_model, "stage1 after build_model_with_router_compat")
+            _debug_dump_router_module_states(stage1_model, "stage1 after build_model_with_router_compat")
+        stage1_model = maybe_prepare_kbit_model_for_training(stage1_model, args, quantization_config)
+        if bool(args.debug_router_meta):
+            _debug_dump_router_param_states(stage1_model, "stage1 after maybe_prepare_kbit_model_for_training")
+            _debug_dump_router_module_states(stage1_model, "stage1 after maybe_prepare_kbit_model_for_training")
+        n_stage1_router_params = prepare_stage1_router_trainables(stage1_model)
+        if is_main_process():
+            print(f"[stage1] trainable cross-attention router params: {n_stage1_router_params}")
+
+        _ensure_no_meta_tensors(stage1_model, "stage1 pre-train model state")
+        _ensure_finite_model_tensors(stage1_model, "stage1 pre-train model state")
+
+        stage1_train_ds, _ = build_train_eval_datasets(tokenizer, args, stage="stage1")
+        stage1_train_dl, _ = build_dataloaders(stage1_train_ds, None, args, world_size, is_distributed)
+        if is_main_process():
+            print(
+                f"[stage1][data] train={len(stage1_train_ds)} "
+                f"(ratio={float(args.stage1_data_ratio):.3f}, seed={int(args.stage_split_seed)})"
+            )
+
+        stage1_switch_layers = get_switch_layers(stage1_model)
+        teacher_path = args.stage1_teacher_path or args.model_path
+        teacher_router_weights = load_legacy_router_teacher_weights(teacher_path, stage1_switch_layers)
+
+        if is_distributed:
+            stage1_model = torch.nn.parallel.DistributedDataParallel(
+                stage1_model,
+                device_ids=[local_rank],
+                output_device=local_rank,
+                find_unused_parameters=True,
+            )
+
+        stage1_train_cross_attention_router(
+            model=stage1_model,
+            train_dl=stage1_train_dl,
+            run_args=args,
+            device=device,
+            teacher_router_weights=teacher_router_weights,
+        )
+
+        if is_main_process():
+            print(f"[stage1] saving full checkpoint to {stage1_ckpt_dir}")
+            save_full_model_checkpoint(
+                stage1_model,
+                stage1_ckpt_dir,
+                tokenizer,
+                stage1_config,
+                save_dtype=torch.float16,
+            )
+        if is_distributed:
+            dist.barrier()
+
+        del stage1_model, stage1_train_dl, stage1_train_ds, teacher_router_weights, stage1_switch_layers
+        gc.collect()
+        if device.type == "cuda":
+            torch.cuda.empty_cache()
+
+        if args.stage == 1:
+            for handle in router_debug_handles:
+                try:
+                    handle.remove()
+                except Exception:
+                    pass
+            cleanup_distributed()
+            return
+
+    if args.stage2_init_path:
+        stage2_model_path = args.stage2_init_path
+    elif os.path.isdir(stage1_ckpt_dir):
+        stage2_model_path = stage1_ckpt_dir
+    else:
+        stage2_model_path = args.model_path
 
     if is_main_process():
-        print(f"[train] loading training model from {args.model_path}")
+        print(f"[stage2] loading model from {stage2_model_path}")
 
-    stage2_config = config_cls.from_pretrained(args.model_path)
+    stage2_config = config_cls.from_pretrained(stage2_model_path)
     configure_model_config(stage2_config, args)
     stage2_model = build_model_with_router_compat(
         args=args,
         model_cls=model_cls,
         config=stage2_config,
-        model_path=args.model_path,
+        model_path=stage2_model_path,
         device=device,
-        quantization_config=stage2_quantization_config,
+        quantization_config=quantization_config,
         local_rank=local_rank,
         is_distributed=is_distributed,
-        init_from_legacy=True,
+        init_from_legacy=os.path.realpath(stage2_model_path) == os.path.realpath(args.model_path),
     )
     if bool(args.debug_router_meta):
         _debug_dump_router_param_states(stage2_model, "after build_model_with_router_compat")
         _debug_dump_router_module_states(stage2_model, "after build_model_with_router_compat")
-    stage2_model = maybe_prepare_kbit_model_for_training(stage2_model, args, stage2_quantization_config)
+    stage2_model = maybe_prepare_kbit_model_for_training(stage2_model, args, quantization_config)
     if bool(args.debug_router_meta):
         _debug_dump_router_param_states(stage2_model, "after maybe_prepare_kbit_model_for_training")
         _debug_dump_router_module_states(stage2_model, "after maybe_prepare_kbit_model_for_training")
@@ -2671,6 +2812,9 @@ def main():
             stage2_model.print_trainable_parameters()
         except Exception:
             pass
+
+    _ensure_no_meta_tensors(stage2_model, "final pre-train model state")
+    _ensure_finite_model_tensors(stage2_model, "final pre-train model state")
 
     stage2_train_ds, eval_ds = build_train_eval_datasets(tokenizer, args, stage="stage2")
     if is_main_process():
