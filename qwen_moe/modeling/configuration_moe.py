@@ -226,6 +226,8 @@ class Qwen2MoeConfig(PretrainedConfig):
         router_entmax_alpha=1.5,
         router_use_softmax_temperature=True,
         router_softmax_temperature=1.0,
+        use_router_context=True,
+        router_context_scale=1.0,
         router_pull_temperature=1.0,
         router_pull_loss_type="soft",
         router_use_ema_update=False,
@@ -280,6 +282,8 @@ class Qwen2MoeConfig(PretrainedConfig):
         self.router_entmax_alpha = float(router_entmax_alpha)
         self.router_use_softmax_temperature = bool(router_use_softmax_temperature)
         self.router_softmax_temperature = float(router_softmax_temperature)
+        self.use_router_context = bool(use_router_context)
+        self.router_context_scale = float(router_context_scale)
         self.router_pull_temperature = float(router_pull_temperature)
         self.router_pull_loss_type = str(router_pull_loss_type)
         self.router_use_ema_update = bool(router_use_ema_update)
@@ -303,6 +307,8 @@ class Qwen2MoeConfig(PretrainedConfig):
         self.router_entmax_alpha = float(getattr(self, "router_entmax_alpha", 1.5))
         self.router_use_softmax_temperature = bool(getattr(self, "router_use_softmax_temperature", True))
         self.router_softmax_temperature = float(getattr(self, "router_softmax_temperature", 1.0))
+        self.use_router_context = bool(getattr(self, "use_router_context", True))
+        self.router_context_scale = float(getattr(self, "router_context_scale", 1.0))
         self.router_pull_temperature = float(getattr(self, "router_pull_temperature", 1.0))
         self.router_pull_loss_type = str(getattr(self, "router_pull_loss_type", "soft"))
         self.router_use_ema_update = bool(getattr(self, "router_use_ema_update", False))

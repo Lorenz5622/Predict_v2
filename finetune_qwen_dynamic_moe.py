@@ -1536,6 +1536,10 @@ def configure_model_config(config, args) -> None:
         config.router_use_softmax_temperature = bool(args.router_use_softmax_temperature)
     if args.router_softmax_temperature is not None:
         config.router_softmax_temperature = float(args.router_softmax_temperature)
+    if int(args.use_router_context) >= 0:
+        config.use_router_context = bool(args.use_router_context)
+    if args.router_context_scale is not None:
+        config.router_context_scale = float(args.router_context_scale)
     if int(args.share_router_expert_embedding) >= 0:
         config.share_router_expert_embedding = bool(args.share_router_expert_embedding)
     config.router_dim = int(getattr(config, "hidden_size"))
@@ -2461,6 +2465,19 @@ def parse_args():
         type=float,
         default=None,
         help="Softmax temperature for CrossAttentionRouter; smaller is sharper.",
+    )
+    ap.add_argument(
+        "--use_router_context",
+        type=int,
+        default=1,
+        choices=[-1, 0, 1],
+        help="Set -1 to keep config value, 0 to disable adding router context back to hidden states, 1 to enable.",
+    )
+    ap.add_argument(
+        "--router_context_scale",
+        type=float,
+        default=None,
+        help="Scale factor applied to projected router context before adding it back to hidden states.",
     )
     ap.add_argument(
         "--share_router_expert_embedding",

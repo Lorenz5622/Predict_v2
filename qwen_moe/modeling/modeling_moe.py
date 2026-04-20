@@ -507,6 +507,7 @@ class CrossAttentionRouter(nn.Module):
         k = self.key(expert_key.to(self.key.weight.dtype)).float()
         v = self.value(expert_value.to(self.value.weight.dtype)).float()
         attn_scores = torch.matmul(q, k.transpose(0, 1)) / math.sqrt(self.d_router)
+        attn_scores = torch.nan_to_num(attn_scores, nan=0.0, posinf=1e4, neginf=-1e4)
         if self.use_entmax:
             attn_weights = entmax_bisect(attn_scores, alpha=self.alpha, dim=-1)
         else:
@@ -514,10 +515,13 @@ class CrossAttentionRouter(nn.Module):
             if self.use_softmax_temperature:
                 softmax_scores = softmax_scores / max(self.softmax_temperature, 1e-6)
             attn_weights = F.softmax(softmax_scores, dim=-1, dtype=torch.float32)
+        attn_weights = torch.nan_to_num(attn_weights, nan=0.0, posinf=1.0, neginf=0.0)
         router_context = torch.matmul(attn_weights, v)
+        router_context = torch.nan_to_num(router_context, nan=0.0, posinf=1e4, neginf=-1e4)
         projected_context = self.router_context_proj(
             router_context.to(self.router_context_proj.weight.dtype)
         ).float()
+        projected_context = torch.nan_to_num(projected_context, nan=0.0, posinf=1e4, neginf=-1e4)
 
         attn_scores_f = attn_scores.detach().float()
         route_probs_f = attn_weights.detach().float()
@@ -912,6 +916,8 @@ class Qwen2MoeSparseMoeBlock(nn.Module):
         self.router_top_k = int(getattr(config, "router_top_k", self.top_k))
         self.router_use_entmax = bool(getattr(config, "router_use_entmax", False))
         self.router_entmax_alpha = float(getattr(config, "router_entmax_alpha", 1.5))
+        self.use_router_context = bool(getattr(config, "use_router_context", True))
+        self.router_context_scale = float(getattr(config, "router_context_scale", 1.0))
         self.router_pull_temperature = float(getattr(config, "router_pull_temperature", 1.0))
         self.router_pull_loss_type = str(getattr(config, "router_pull_loss_type", "soft"))
         self.router_ema_momentum = float(getattr(config, "router_ema_momentum", 0.99))
@@ -1141,9 +1147,15 @@ class Qwen2MoeSparseMoeBlock(nn.Module):
             return_router_repr=self.training,
         )
         self.last_router_forward_stats = dict(getattr(self.router, "last_router_forward_stats", {}))
-        router_logits = router_logits.float()
-        route_probs = route_probs.float()
-        conditioned_hidden_states = hidden_states + projected_context.to(dtype=hidden_states.dtype)
+        router_logits = torch.nan_to_num(router_logits.float(), nan=0.0, posinf=1e4, neginf=-1e4)
+        route_probs = torch.nan_to_num(route_probs.float(), nan=0.0, posinf=1.0, neginf=0.0)
+        projected_context = torch.nan_to_num(projected_context.float(), nan=0.0, posinf=1e4, neginf=-1e4)
+        if self.use_router_context:
+            conditioned_hidden_states = hidden_states + (
+                float(self.router_context_scale) * projected_context
+            ).to(dtype=hidden_states.dtype)
+        else:
+            conditioned_hidden_states = hidden_states
 
         router_q = None
         expert_k = None
