@@ -632,22 +632,45 @@ def _materialize_model_for_export(
     return model_to_save, was_quantized
 
 
+def _checkpoint_is_prequantized(model_path: str) -> bool:
+    config_fp = Path(model_path) / "config.json"
+    if not config_fp.exists():
+        return False
+    try:
+        config_data = json.loads(config_fp.read_text(encoding="utf-8"))
+    except Exception:
+        return False
+    return bool(config_data.get("quantization_config"))
+
+
 def save_full_model_checkpoint(
     model: nn.Module,
     output_dir: str,
     tokenizer,
     config,
     save_dtype: torch.dtype = torch.float16,
+    keep_quantized: bool = False,
 ) -> None:
     os.makedirs(output_dir, exist_ok=True)
-    model_to_save, was_quantized = _materialize_model_for_export(model, save_dtype=save_dtype)
-    if was_quantized:
-        print(f"[save] full checkpoint export dtype={save_dtype} (from quantized model) -> {output_dir}")
+    model_to_save = _unwrap_base_model(model)
+    was_quantized = is_quantized_model(model_to_save)
+
+    if keep_quantized and was_quantized:
+        print(f"[save] full checkpoint export keeps quantized weights -> {output_dir}")
+        model_to_save.save_pretrained(output_dir, safe_serialization=True)
     else:
-        print(f"[save] full checkpoint export dtype={save_dtype} -> {output_dir}")
-    model_to_save.save_pretrained(output_dir, safe_serialization=True)
+        model_to_save, was_quantized = _materialize_model_for_export(model, save_dtype=save_dtype)
+        if was_quantized:
+            print(f"[save] full checkpoint export dtype={save_dtype} (from quantized model) -> {output_dir}")
+        else:
+            print(f"[save] full checkpoint export dtype={save_dtype} -> {output_dir}")
+        model_to_save.save_pretrained(output_dir, safe_serialization=True)
     tokenizer.save_pretrained(output_dir)
-    config.save_pretrained(output_dir)
+    model_config = getattr(model_to_save, "config", None)
+    if model_config is not None:
+        model_config.save_pretrained(output_dir)
+    else:
+        config.save_pretrained(output_dir)
 
 
 def _apply_pending_router_ema_updates(model: nn.Module) -> None:
@@ -1547,18 +1570,29 @@ def build_model_with_router_compat(
         return model
 
     device_map = {"": local_rank} if is_distributed else {"": 0}
+    prequantized_checkpoint = _checkpoint_is_prequantized(model_path)
+    if prequantized_checkpoint and is_main_process():
+        print(f"[load] detected pre-quantized checkpoint at {model_path}; reuse saved quantization config")
+
     torch_dtype = (
         quantization_config.bnb_4bit_compute_dtype
         if bool(getattr(quantization_config, "load_in_4bit", False))
         else torch.float16
     )
+    load_kwargs = {
+        "config": config,
+        "low_cpu_mem_usage": True,
+        "device_map": device_map,
+    }
+    if prequantized_checkpoint:
+        pass
+    else:
+        load_kwargs["quantization_config"] = quantization_config
+        load_kwargs["torch_dtype"] = torch_dtype
+
     model = model_cls.from_pretrained(
         model_path,
-        config=config,
-        quantization_config=quantization_config,
-        torch_dtype=torch_dtype,
-        low_cpu_mem_usage=True,
-        device_map=device_map,
+        **load_kwargs,
     )
 
     if bool(args.init_new_router_from_legacy) and bool(init_from_legacy):
@@ -2727,6 +2761,7 @@ def main():
                 tokenizer,
                 stage1_config,
                 save_dtype=torch.float16,
+                keep_quantized=True,
             )
         if is_distributed:
             dist.barrier()
