@@ -1,0 +1,415 @@
+一、先改 finetune.py
+
+finetune.py 已经做了这几件事：
+
+通过 import_moe_classes() 导入 baseline model 和 config。
+给模型打 LoRA。
+在 train() 里统一取 out.loss 做训练。
+
+所以这里最重要的一点是：
+
+你需要让 baseline modeling 文件在 forward() 返回时，除了原始 CE loss，再额外暴露一个 router_anchor_loss。
+
+然后 finetune.py 再把它接进总 loss。
+
+1.1 在 parse_args() 里新增一个超参
+
+在 finetune.py 的 parse_args() 里，加一个：
+
+ap.add_argument(
+    "--router_anchor_loss_coef",
+    type=float,
+    default=0.01,
+    help="Coefficient for expert_key-anchor alignment loss.",
+)
+
+你现在第一版只保留 CE + anchor，所以这个系数就是唯一额外路由项。
+
+1.2 修改 train() 里的总 loss
+
+你当前 train() 里是：
+
+out = model(**batch)
+loss = out.loss / max(1, grad_accum)
+
+这说明 baseline model 现在默认只返回主 loss。
+
+你要改成：
+
+out = model(**batch)
+
+ce_loss = out.loss
+anchor_loss = getattr(out, "router_anchor_loss", None)
+if anchor_loss is None:
+    anchor_loss = ce_loss.new_zeros(())
+
+total_loss = ce_loss + args.router_anchor_loss_coef * anchor_loss
+loss = total_loss / max(1, grad_accum)
+
+这样 finetune.py 不需要知道 Router 内部细节，只消费模型暴露出来的 router_anchor_loss。
+
+1.3 日志里补一个 anchor loss
+
+你现在只打印：
+
+loss
+loss_ma
+loss_ema
+lr。
+
+建议最少加一个：
+
+loss_anchor
+
+例如在 it.set_postfix(...) 和 metrics.tsv 里都补：
+
+"anchor": f"{anchor_loss.detach().float().item():.4f}"
+
+这样你能直接看到：
+
+CE 在不在降
+anchor loss 在不在被真正优化
+二、modeling_moe_ori.py 该怎么改
+
+虽然我没直接抓到文件内容，但根据 finetune.py 的导入方式和你的原始结构，这里最自然的改法应该落在：
+
+Router 类
+Sparse MoE block
+Model output / CausalLM output
+
+你可以把这版 baseline modeling 理解成“你当前方法的主战场”。
+
+三、Router 侧的最小改法
+
+你现在想去掉 context，所以 baseline modeling 文件里的 Router 应该从“QK + V/context”收缩成：
+
+query
+expert_key
+expert_anchor
+top2 score/prob
+3.1 给每个 expert 增加 expert_anchor
+
+在 Router 的 __init__() 里，新增一个长期语义原型：
+
+self.expert_key = nn.Parameter(torch.randn(num_experts, router_dim))
+self.register_buffer("expert_anchor", torch.randn(num_experts, router_dim))
+self.anchor_momentum = 0.99
+
+推荐：
+
+expert_key 是可训练参数
+expert_anchor 是 buffer，不参与梯度
+expert_anchor 只靠 EMA 更新
+3.2 Router forward 只做 QK 打分
+
+把原来所有和 value/context 相关的输出都去掉，forward 只保留：
+
+token hidden → query
+query 和 expert_key 打分
+softmax 得全 expert 概率
+训练时可返回 token query，给后面统计 batch prototype
+
+伪代码：
+
+def forward(self, hidden_states, return_query=False):
+    # hidden_states: [B, T, H]
+    q = self.query(hidden_states)                    # [B, T, R]
+    q = F.normalize(q.float(), dim=-1)
+
+    k = F.normalize(self.expert_key.float(), dim=-1)  # [E, R]
+    router_logits = torch.matmul(q, k.transpose(0, 1))  # [B, T, E]
+    route_probs = F.softmax(router_logits, dim=-1)
+
+    if return_query:
+        return router_logits, route_probs, q
+    return router_logits, route_probs
+
+这一步的核心是：
+
+QK 负责 assignment
+不再在 Router 内部构造 context
+不再返回 projected_context
+四、Sparse MoE block 里的具体改法
+
+这部分是最关键的。
+
+你现在想保留的是：
+
+top2 dispatch
+expert 前向仍是标准 sparse MLP
+在 block 内统计当前 batch 的 expert 原型
+再用它 EMA 更新 expert_anchor
+同时算一个 anchor loss
+4.1 top2 选择
+
+在 block forward 里：
+
+router_logits, route_probs, token_q = self.router(
+    hidden_states,
+    return_query=self.training,
+)
+top2_probs, top2_idx = torch.topk(route_probs, k=2, dim=-1)     # [B, T, 2]
+top2_probs = top2_probs / top2_probs.sum(dim=-1, keepdim=True).clamp_min(1e-9)
+
+这里：
+
+top2_idx[..., 0] 是 top1 expert
+top2_idx[..., 1] 是 top2 expert
+top2_probs[..., 0] / [...,1] 是归一化后的 top2 权重
+4.2 expert 前向：只用原始 hidden_states
+
+这是你这次最重要的结构变化。
+
+不要再写：
+
+hidden_states = hidden_states + router_context
+
+而是直接：
+
+按 top2_idx 把 token 分发到 expert
+expert 只处理原始 hidden_states
+
+伪代码：
+
+flat_hidden = hidden_states.reshape(-1, hidden_dim)
+flat_top2_idx = top2_idx.reshape(-1, 2)
+flat_top2_probs = top2_probs.reshape(-1, 2)
+
+output = torch.zeros_like(flat_hidden)
+
+for expert_id in range(self.num_experts):
+    token_pos, slot_pos = torch.where(flat_top2_idx == expert_id)
+    if token_pos.numel() == 0:
+        continue
+
+    selected_hidden = flat_hidden[token_pos]
+    expert_out = self.experts[expert_id](selected_hidden)
+    weight = flat_top2_probs[token_pos, slot_pos].unsqueeze(-1).to(expert_out.dtype)
+
+    output.index_add_(0, token_pos, expert_out * weight)
+
+output = output.view(batch_size, seq_len, hidden_dim)
+
+这就是：
+
+token 只送给 top2
+两个 expert 输出按 top2 权重加权和
+4.3 统计当前 batch 的 expert prototype
+
+这就是你前面问的第 5 步，在 block 内做最自然。
+
+先把 top2 权重散到 expert 轴上
+expert_axis_probs = token_q.new_zeros(token_q.shape[:-1] + (self.num_experts,))
+expert_axis_probs.scatter_add_(
+    dim=-1,
+    index=top2_idx,
+    src=top2_probs,
+)
+
+这样：
+
+对每个 token
+只有 top2 那两个 expert 的位置非零
+权重就是该 token 对这两个 expert 的归属度
+再算每个 expert 的当前 batch 原型 c
+e
+	​
+
+flat_q = token_q.detach().reshape(-1, token_q.size(-1))                # [B*T, R]
+flat_q = F.normalize(flat_q.float(), dim=-1)
+
+flat_probs = expert_axis_probs.detach().reshape(-1, self.num_experts)  # [B*T, E]
+
+proto_sums = flat_probs.transpose(0, 1) @ flat_q                       # [E, R]
+proto_counts = flat_probs.sum(dim=0)                                   # [E]
+
+active_mask = proto_counts > 0
+
+batch_proto = torch.zeros_like(proto_sums)
+batch_proto[active_mask] = proto_sums[active_mask] / proto_counts[active_mask].unsqueeze(-1)
+batch_proto[active_mask] = F.normalize(batch_proto[active_mask], dim=-1)
+
+这个 batch_proto[e] 就是你前面公式里的：
+
+c
+e
+	​
+
+=
+∑
+b,t
+	​
+
+r
+b,t,e
+	​
+
++ϵ
+∑
+b,t
+	​
+
+r
+b,t,e
+	​
+
+q
+~
+	​
+
+b,t
+	​
+
+	​
+
+4.4 用 batch prototype 去更新 expert_anchor
+
+注意这里不要走梯度，直接做 EMA。
+
+with torch.no_grad():
+    anchor = self.router.expert_anchor
+    m = self.router.anchor_momentum
+
+    if torch.any(active_mask):
+        updated = m * anchor[active_mask].float() + (1.0 - m) * batch_proto[active_mask]
+        updated = F.normalize(updated, dim=-1)
+        anchor[active_mask].copy_(updated.to(dtype=anchor.dtype, device=anchor.device))
+
+含义是：
+
+当前 batch 中有激活的 expert，才更新
+没激活的 expert，不更新
+anchor 慢慢靠近它长期处理 token 的语义中心
+4.5 计算 anchor loss
+
+接下来算：
+
+L
+anchor
+	​
+
+=
+E
+1
+	​
+
+e
+∑
+	​
+
+(1−cos(k
+e
+	​
+
+,a
+e
+	​
+
+))
+
+代码：
+
+expert_key = F.normalize(self.router.expert_key.float(), dim=-1)
+expert_anchor = F.normalize(self.router.expert_anchor.float(), dim=-1)
+
+anchor_cos = (expert_key * expert_anchor).sum(dim=-1)
+self.last_router_anchor_loss = (1.0 - anchor_cos).mean()
+
+这里注意：
+
+expert_anchor 不走梯度
+expert_key 被 anchor loss 拉向 expert_anchor
+
+这正是你想要的关系：
+a_e 是长期语义锚点，expert_key 是当前路由键。
+
+五、模型输出要多带一个 router_anchor_loss
+
+因为 finetune.py 只会消费 model output，所以 baseline modeling 文件里需要把这个 loss 暴露出来。
+
+5.1 在 block 层缓存
+
+每个 sparse MoE block 都存：
+
+self.last_router_anchor_loss = None
+
+forward 后写进去。
+
+5.2 在 model 层汇总
+
+在 MoEModel.forward() 里遍历所有层，把每层的 last_router_anchor_loss 收集起来求均值：
+
+anchor_terms = []
+for layer in self.layers:
+    mlp = getattr(layer, "mlp", None)
+    if mlp is None:
+        continue
+    anchor_loss = getattr(mlp, "last_router_anchor_loss", None)
+    if anchor_loss is not None:
+        anchor_terms.append(anchor_loss)
+
+self.last_router_anchor_loss = None
+if anchor_terms:
+    self.last_router_anchor_loss = torch.stack(anchor_terms).mean()
+5.3 在 MoEForCausalLM.forward() 里返回
+
+最后在输出对象里多塞一个字段：
+
+router_anchor_loss=self.model.last_router_anchor_loss
+
+这样 finetune.py 才能拿到：
+
+anchor_loss = getattr(out, "router_anchor_loss", None)
+六、初始化怎么改
+
+finetune.py 这边不会帮你初始化 anchor，所以 baseline modeling 文件里建议：
+
+6.1 expert_anchor 初始拷贝 expert_key
+
+在 model 初始化完成后，或者 Router 初始化中做：
+
+with torch.no_grad():
+    self.expert_anchor.copy_(self.expert_key.data)
+
+这样第一版更稳：
+
+一开始 key 和 anchor 对齐
+后面 anchor 再靠 EMA 慢慢变成长期原型
+七、这版训练时实际发生什么
+
+按 finetune.py + baseline modeling 这套改法，一次前向/反向就是：
+
+hidden_states 进入 Router
+Router 计算 query
+query 和 expert_key 做 QK 打分
+softmax 得全 expert 概率
+取 top2 expert 和 top2 权重
+block 内部根据 top2 权重统计当前 batch 的 batch_proto
+用 batch_proto 做 expert_anchor 的 EMA 更新
+token 只送给 top2 experts 做 MLP 前向
+两个 expert 输出按 top2 权重加权
+model 正常计算 CE loss
+block/model 汇总 anchor loss
+finetune.py 中总损失 = CE + λ * anchor_loss
+反向传播更新：
+expert MLP
+query 投影
+expert_key
+expert_anchor 不参与梯度，只由 EMA 更新
+八、你这版最值得注意的点
+8.1 先不要让 expert_anchor 参与 optimizer
+
+第一版一定先作为 buffer/非梯度量处理。
+
+8.2 第一版不要再留 aux/z/pull
+
+否则你看不清 anchor 机制本身有没有用。
+
+8.3 先在 baseline modeling 里改，不要让 finetune.py 知道太多 Router 细节
+
+finetune.py 最好只做一件事：
+
+从 output 里拿 router_anchor_loss
+合成总 loss
+
+这也是你现在这个文件最自然的职责。
