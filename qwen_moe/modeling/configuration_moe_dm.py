@@ -329,6 +329,8 @@ class MoEConfig(PretrainedConfig):
         router_entmax_alpha: float = 1.7,
         router_use_softmax_temperature: bool = False,
         router_softmax_temperature: float = 1.0,
+        use_router_context: bool = True,
+        router_context_scale: float = 1.0,
         router_pull_loss_type: str = "soft",
         router_top_p: float = 0.4,
         router_budget_target_count: float = 0.0,
@@ -377,6 +379,8 @@ class MoEConfig(PretrainedConfig):
         self.router_entmax_alpha = float(router_entmax_alpha)
         self.router_use_softmax_temperature = bool(router_use_softmax_temperature)
         self.router_softmax_temperature = float(router_softmax_temperature)
+        self.use_router_context = bool(use_router_context)
+        self.router_context_scale = float(router_context_scale)
         self.router_pull_loss_type = str(router_pull_loss_type)
         self.router_budget_target_count = float(router_budget_target_count)
         self.router_budget_tau = float(router_budget_tau)
@@ -425,6 +429,8 @@ class MoEConfig(PretrainedConfig):
         self.router_entmax_alpha = float(getattr(self, "router_entmax_alpha", 1.5))
         self.router_use_softmax_temperature = bool(getattr(self, "router_use_softmax_temperature", False))
         self.router_softmax_temperature = float(getattr(self, "router_softmax_temperature", 1.0))
+        self.use_router_context = bool(getattr(self, "use_router_context", True))
+        self.router_context_scale = float(getattr(self, "router_context_scale", 1.0))
         self.router_pull_loss_type = str(getattr(self, "router_pull_loss_type", "soft"))
         self.router_budget_target_count = float(getattr(self, "router_budget_target_count", 0.0))
         self.router_budget_tau = float(getattr(self, "router_budget_tau", 0.05))
@@ -455,6 +461,8 @@ class MoEConfig(PretrainedConfig):
             raise ValueError(
                 f"`router_softmax_temperature` must be > 0, got {self.router_softmax_temperature}"
             )
+        if self.router_context_scale < 0.0:
+            raise ValueError(f"`router_context_scale` must be >= 0, got {self.router_context_scale}")
         if self.router_pull_loss_type not in {"soft", "hard_ce"}:
             raise ValueError(
                 f"`router_pull_loss_type` must be one of {{'soft', 'hard_ce'}}, "

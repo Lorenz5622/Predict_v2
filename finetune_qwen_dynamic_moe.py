@@ -566,24 +566,36 @@ def _extract_stage1_router_state_dict(model: nn.Module) -> Dict[str, torch.Tenso
     return router_state
 
 
-def _build_fp16_model_for_stage1_export(
+def _resolve_save_dtype(save_dtype: str) -> torch.dtype:
+    mapping = {
+        "float16": torch.float16,
+        "bfloat16": torch.bfloat16,
+    }
+    try:
+        return mapping[str(save_dtype).strip().lower()]
+    except KeyError as exc:
+        raise ValueError(f"Unsupported save dtype: {save_dtype!r}. Expected one of {sorted(mapping)}") from exc
+
+
+def _build_model_for_stage1_export(
     model_cls,
     config,
     model_path: str,
+    save_dtype: torch.dtype,
     init_from_legacy: bool = True,
 ) -> nn.Module:
     model = model_cls(config)
-    model = model.to(dtype=torch.float16, device="cpu")
+    model = model.to(dtype=save_dtype, device="cpu")
     legacy_sd = _load_local_checkpoint_state_dict(model_path)
     legacy_sd = {
-        name: tensor.to(dtype=torch.float16) if torch.is_floating_point(tensor) else tensor
+        name: tensor.to(dtype=save_dtype) if torch.is_floating_point(tensor) else tensor
         for name, tensor in legacy_sd.items()
     }
     missing_keys, unexpected_keys = model.load_state_dict(legacy_sd, strict=False)
     if is_main_process():
         print(
             f"[save][stage1] cpu reload from base checkpoint: missing={len(missing_keys)} "
-            f"unexpected={len(unexpected_keys)} dtype=torch.float16"
+            f"unexpected={len(unexpected_keys)} dtype={save_dtype}"
         )
     if bool(init_from_legacy):
         inited = _init_cross_attention_router_from_legacy_dense(model=model, legacy_sd=legacy_sd, config=config)
@@ -601,14 +613,12 @@ def save_stage1_full_model_checkpoint_cpu_reload(
     model_path: str,
     save_dtype: torch.dtype = torch.float16,
 ) -> None:
-    if save_dtype != torch.float16:
-        raise ValueError(f"stage1 cpu reload export currently only supports float16, got {save_dtype}")
-
     os.makedirs(output_dir, exist_ok=True)
-    model_to_save = _build_fp16_model_for_stage1_export(
+    model_to_save = _build_model_for_stage1_export(
         model_cls=model_cls,
         config=config,
         model_path=model_path,
+        save_dtype=save_dtype,
         init_from_legacy=True,
     )
 
@@ -621,7 +631,7 @@ def save_stage1_full_model_checkpoint_cpu_reload(
         )
     if is_main_process():
         print(
-            f"[save][stage1] applied router-only state onto CPU fp16 model: "
+            f"[save][stage1] applied router-only state onto CPU export model: "
             f"router_tensors={len(router_state_dict)} missing_after_partial_load={len(missing_keys)}"
         )
         print(f"[save] full checkpoint export dtype={save_dtype} -> {output_dir}")
@@ -1012,6 +1022,7 @@ def train(
     log_every: int,
     eval_every: int,
     save_every: int,
+    export_dtype: torch.dtype,
 ):
     os.makedirs(output_dir, exist_ok=True)
 
@@ -1421,12 +1432,12 @@ def train(
                 "Your PEFT model may not support merge_and_unload()."
             ) from e
 
-        merged, _ = _materialize_model_for_export(merged, save_dtype=torch.float16)
+        merged, _ = _materialize_model_for_export(merged, save_dtype=export_dtype)
 
         if was_quantized:
-            print(f"[save] merged + dequantized + fp16 full model -> {output_dir}")
+            print(f"[save] merged + dequantized + {export_dtype} full model -> {output_dir}")
         else:
-            print(f"[save] merged + fp16 full model -> {output_dir}")
+            print(f"[save] merged + {export_dtype} full model -> {output_dir}")
 
         if final_router_top_k is not None:
             _set_runtime_router_top_k(merged, final_router_top_k)
@@ -2435,6 +2446,13 @@ def parse_args():
     ap.add_argument("--fp16", type=int, default=0)
     ap.add_argument("--bf16", type=int, default=0)
     ap.add_argument("--load_in_fp16", type=int, default=0)
+    ap.add_argument(
+        "--save_dtype",
+        type=str,
+        default="float16",
+        choices=["float16", "bfloat16"],
+        help="Checkpoint export dtype used for stage1/stage2 saved models.",
+    )
 
     ap.add_argument("--lora_r", type=int, default=8)
     ap.add_argument("--lora_alpha", type=int, default=8)
@@ -2692,6 +2710,7 @@ def parse_args():
 def main():
     args = parse_args()
     router_debug_handles: List[Any] = []
+    export_dtype = _resolve_save_dtype(args.save_dtype)
 
     if not args.model_path:
         raise ValueError("--model_path is required (or provide it via --config).")
@@ -2825,7 +2844,7 @@ def main():
             dist.barrier()
 
         if is_main_process():
-            print(f"[stage1] rebuilding CPU fp16 model and saving full checkpoint to {stage1_ckpt_dir}")
+            print(f"[stage1] rebuilding CPU export model and saving full checkpoint to {stage1_ckpt_dir}")
             save_stage1_full_model_checkpoint_cpu_reload(
                 router_state_dict=stage1_router_state_dict,
                 output_dir=stage1_ckpt_dir,
@@ -2833,7 +2852,7 @@ def main():
                 config=stage1_config,
                 model_cls=model_cls,
                 model_path=args.model_path,
-                save_dtype=torch.float16,
+                save_dtype=export_dtype,
             )
             del stage1_router_state_dict
             gc.collect()
@@ -2953,6 +2972,7 @@ def main():
         log_every=max(1, args.log_every),
         eval_every=max(1, args.eval_every),
         save_every=max(0, args.save_every),
+        export_dtype=export_dtype,
     )
 
     if is_main_process():
