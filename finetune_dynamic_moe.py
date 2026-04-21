@@ -153,20 +153,13 @@ def _init_cross_attention_router_from_legacy_dense(
 
     Rules:
     - query: partial copy from legacy dense router weight
-    - expert_embed: initialized from the matching legacy dense router weight
     - expert_key: initialized from the matching legacy dense router weight
-    - shared_expert_key: initialized from the mean of all compatible legacy dense router weights
-    - key/value: small-variance random init
+    - expert_anchor: copied from expert_key after initialization
     """
     num_inited = 0
-    base_std = float(getattr(config, "initializer_range", 0.02))
-    kv_std = base_std * 0.1
-    shared_router_inits = []
     per_layer_init_messages = []
 
     with torch.no_grad():
-        shared_expert_key = getattr(model.model, "shared_expert_key", None)
-
         for layer_idx, layer in enumerate(model.model.layers):
             mlp = layer.mlp
             if not getattr(mlp, "use_switch", False):
@@ -179,18 +172,13 @@ def _init_cross_attention_router_from_legacy_dense(
             router = mlp.router
             dense_w = legacy_sd.get(f"model.layers.{layer_idx}.mlp.router.weight")
             if dense_w is None:
-                if getattr(router, "expert_embed", None) is not None:
-                    per_layer_init_messages.append(
-                        f"[init] layer {layer_idx} expert_embed kept random init (legacy router.weight not found)"
-                    )
-                if getattr(router, "_shared_expert_key_ref", None) is None and getattr(router, "expert_key", None) is not None:
+                if getattr(router, "expert_key", None) is not None:
                     per_layer_init_messages.append(
                         f"[init] layer {layer_idx} expert_key kept random init (legacy router.weight not found)"
                     )
                 continue
 
-            if not all(hasattr(router, name) for name in ("query", "key")):
-                # Legacy path (q_proj/expert_keys/...) is no longer used by current simplified router.
+            if not hasattr(router, "query"):
                 continue
 
             dense_w = dense_w.float()
@@ -204,44 +192,14 @@ def _init_cross_attention_router_from_legacy_dense(
                     dense_w[:rows, :cols].to(dtype=query.weight.dtype, device=query.weight.device)
                 )
 
-            # Match the f9f3f85 behavior: reinitialize only the active q-k
-            # routing path here and leave router.value at its module default
-            # initialization.
-            key_proj = getattr(router, "key", None)
-            if key_proj is not None and hasattr(key_proj, "weight"):
-                key_proj.weight.normal_(mean=0.0, std=kv_std)
-
             if hasattr(router, "_reshape_legacy_router_weight"):
-                target_embed = router.get_expert_embed()
-                reshaped_dense = router._reshape_legacy_router_weight(dense_w, tuple(target_embed.shape))
-                if getattr(router, "expert_embed", None) is not None:
-                    router.initialize_expert_embed_from_legacy_router(dense_w)
-                    per_layer_init_messages.append(
-                        f"[init] layer {layer_idx} expert_embed initialized from legacy router.weight"
-                    )
-                if getattr(router, "_shared_expert_key_ref", None) is None and getattr(router, "expert_key", None) is not None:
+                if getattr(router, "expert_key", None) is not None:
                     router.initialize_expert_key_from_legacy_router(dense_w)
                     per_layer_init_messages.append(
-                        f"[init] layer {layer_idx} expert_key initialized from legacy router.weight"
+                        f"[init] layer {layer_idx} expert_key/expert_anchor initialized from legacy router.weight"
                     )
-                elif shared_expert_key is not None:
-                    shared_router_inits.append(reshaped_dense.to(dtype=torch.float32))
 
             num_inited += 1
-
-        if shared_expert_key is not None:
-            if shared_router_inits:
-                shared_init = torch.stack(shared_router_inits, dim=0).mean(dim=0)
-                shared_expert_key.copy_(
-                    shared_init.to(dtype=shared_expert_key.dtype, device=shared_expert_key.device)
-                )
-                print(
-                    f"[init] shared_expert_key initialized from legacy router.weight "
-                    f"(mean over {len(shared_router_inits)} layers)"
-                )
-            else:
-                shared_expert_key.normal_(mean=0.0, std=base_std)
-                print("[init] shared_expert_key kept random init (no compatible legacy router.weight)")
 
         for msg in per_layer_init_messages:
             print(msg)
@@ -252,16 +210,7 @@ def _init_cross_attention_router_from_legacy_dense(
 def _enable_new_router_params_trainable(model: nn.Module) -> int:
     keys = (
         "router.query",
-        "router.key",
-        "router.token_couple_proj",
-        "router.value",
-        "router.expert_value",
-        "router.router_context_proj",
         "router.expert_key",
-        "shared_expert_key",
-        # Legacy (unused in current simplified router):
-        # "router.q_proj", "expert_keys", "expert_values", "log_router_temperature",
-        # "router_value_proj", "router_context_gate_proj",
     )
     n_params = 0
     for name, param in model.named_parameters():
@@ -278,21 +227,11 @@ def _cast_selected_trainable_params_to_fp32(model: nn.Module) -> int:
     This keeps base frozen/quantized weights untouched (requires_grad=False),
     leaves LoRA weights in the model/autocast dtype, and promotes only:
     - router.query
-    - router.key
-    - router.value
-    - router.expert_value
-    - router.router_context_proj
     - router.expert_key
-    - shared_expert_key
     """
     fp32_keys = (
         "router.query",
-        "router.key",
-        "router.value",
-        "router.expert_value",
-        "router.router_context_proj",
         "router.expert_key",
-        "shared_expert_key",
     )
     n_params = 0
     with torch.no_grad():
@@ -377,20 +316,10 @@ def enable_cross_attention_router_only(model: nn.Module) -> int:
                 key in name
                 for key in (
                     "query",
-                    "key",
-                    "token_couple_proj",
-                    "value",
-                    "expert_value",
-                    "router_context_proj",
                     "expert_key",
                 )
             ):
                 continue
-            param.requires_grad = True
-            n_params += param.numel()
-
-    for name, param in model.named_parameters():
-        if "shared_expert_key" in name:
             param.requires_grad = True
             n_params += param.numel()
     return n_params
@@ -482,7 +411,7 @@ def save_full_model_checkpoint(model: nn.Module, output_dir: str, tokenizer, con
     config.save_pretrained(output_dir)
 
 
-def _apply_pending_router_ema_updates(model: nn.Module) -> None:
+def _apply_pending_router_anchor_updates(model: nn.Module) -> None:
     model_for_updates = model.module if hasattr(model, "module") else model
     base_model = model_for_updates.get_base_model() if hasattr(model_for_updates, "get_base_model") else model_for_updates
     moe_model = getattr(base_model, "model", None)
@@ -491,7 +420,7 @@ def _apply_pending_router_ema_updates(model: nn.Module) -> None:
 
     for layer in getattr(moe_model, "layers", []):
         mlp = getattr(layer, "mlp", None)
-        apply_fn = getattr(mlp, "apply_pending_router_ema_update", None)
+        apply_fn = getattr(mlp, "apply_pending_router_anchor_update", None)
         if callable(apply_fn):
             apply_fn()
 
@@ -540,10 +469,22 @@ def _warn_ignored_legacy_router_settings(args) -> None:
         ignored.append("router_budget_start_ratio")
     if float(getattr(args, "router_budget_end_ratio", 1.0)) != 1.0:
         ignored.append("router_budget_end_ratio")
+    if int(getattr(args, "use_router_context", 0)) not in (-1, 0):
+        ignored.append("use_router_context")
+    if float(getattr(args, "router_context_scale", 0.0) or 0.0) != 0.0:
+        ignored.append("router_context_scale")
+    if int(getattr(args, "share_router_expert_embedding", 0)) not in (-1, 0):
+        ignored.append("share_router_expert_embedding")
+    if float(getattr(args, "router_aux_loss_coef", 0.0)) > 0.0:
+        ignored.append("router_aux_loss_coef")
+    if float(getattr(args, "router_z_loss_coef", 0.0)) > 0.0:
+        ignored.append("router_z_loss_coef")
+    if float(getattr(args, "router_pull_loss_coef", 0.0)) > 0.0:
+        ignored.append("router_pull_loss_coef")
 
     if ignored and is_main_process():
         print(
-            "[router] fixed top-k routing ignores legacy top-p/budget settings: "
+            "[router] anchor-router trunk ignores legacy router settings: "
             + ", ".join(sorted(set(ignored)))
         )
 
@@ -650,13 +591,7 @@ def apply_lora(
 def _is_stage2_router_param(name: str) -> bool:
     router_keys = (
         "router.query",
-        "router.key",
-        "router.token_couple_proj",
-        "router.value",
-        "router.expert_value",
-        "router.router_context_proj",
         "router.expert_key",
-        "shared_expert_key",
     )
     return any(key in name for key in router_keys)
 
@@ -751,23 +686,8 @@ def train(
         desc="train",
     )
 
-    initial_router_top_k = _get_runtime_router_top_k(model)
-    if initial_router_top_k is None:
-        requested_top_k = int(getattr(run_args, "router_top_k", 0))
-        if requested_top_k <= 0:
-            requested_top_k = int(getattr(run_args, "router_topk", 0))
-        initial_router_top_k = requested_top_k if requested_top_k > 0 else 2
-    _set_runtime_router_top_k(model, initial_router_top_k)
-
-    initial_pull_loss_type = _get_runtime_router_pull_loss_type(model)
-    if initial_pull_loss_type is None:
-        initial_pull_loss_type = str(getattr(run_args, "router_pull_loss_type", "soft"))
-    _set_runtime_router_pull_loss_type(model, initial_pull_loss_type)
-
-    target_pull_loss_coef = getattr(run_args, "router_pull_loss_coef_final", None)
-    target_pull_loss_type = str(getattr(run_args, "router_pull_loss_type_final", "")).strip().lower()
-    if not target_pull_loss_type:
-        target_pull_loss_type = initial_pull_loss_type
+    current_router_top_k = 2
+    _set_runtime_router_top_k(model, current_router_top_k)
 
     def lr_lambda(step: int):
         if step < warmup_steps:
@@ -810,25 +730,21 @@ def train(
             ]) + "\n")
         metrics_f.write("\t".join([
             "time", "epoch", "global_step", "optim_step", "lr",
-            "loss", "loss_ce", "loss_aux", "loss_z", "loss_pull", "loss_budget",
+            "loss", "loss_ce", "loss_anchor", "loss_budget",
             f"loss_ma{ma_win}", "loss_ema", "loss_ce_ema", "eval_loss", "eval_ppl",
-            "router_top_k", "router_pull_loss_coef", "router_pull_loss_type", "router_budget_loss_scale",
+            "router_top_k", "router_anchor_loss_coef",
             "router_score_mean", "router_score_std", "router_score_min", "router_score_max",
             "router_weight_row_sum_mean", "router_weight_row_sum_abs_err",
             "router_weight_entropy", "router_weight_top1_mass",
             "route_prob_min", "route_prob_has_neg", "route_prob_row_sum_mean", "route_prob_row_sum_abs_err",
-            "projected_value_std", "projected_value_norm_mean",
-            "router_context_norm_mean", "router_context_norm_std",
-            "router_context_proj_out_mean", "router_context_proj_out_std",
-            "router_context_delta_ratio",
             "expert_key_pairwise_cos_mean", "expert_key_pairwise_cos_max",
-            "expert_value_pairwise_cos_mean", "expert_value_pairwise_cos_max",
+            "expert_anchor_pairwise_cos_mean", "expert_anchor_pairwise_cos_max",
             "token_q_norm_mean", "token_q_norm_std",
             "dispatch_avg_selected_count", "dispatch_soft_selected_count", "dispatch_dead_expert_ratio", "dispatch_top1_top2_margin",
             "dispatch_topk_pre_mass_mean", "dispatch_topk_post_sum_mean", "dispatch_topk_post_sum_abs_err", "expert_token_count_cv",
             "dispatch_soft_load", "dispatch_hard_load",
-            "ema_active_expert_count", "ema_proto_count_mean", "ema_proto_count_min", "ema_proto_count_max",
-            "ema_proto_update_cosine", "ema_proto_delta_norm", "ema_update_ratio", "ema_proto_counts",
+            "anchor_active_expert_count", "anchor_proto_count_mean", "anchor_proto_count_min", "anchor_proto_count_max",
+            "anchor_key_cosine_mean", "anchor_proto_counts",
         ]) + "\n")
         metrics_f.flush()
 
@@ -844,21 +760,6 @@ def train(
 
         for step, batch in it:
             step_progress = float(optim_step) / float(max(1, total_optim_steps - 1))
-            current_router_top_k = initial_router_top_k
-
-            current_pull_loss_coef = _scheduled_float(
-                step_progress,
-                initial_value=float(run_args.router_pull_loss_coef),
-                final_value=target_pull_loss_coef,
-                start_ratio=float(getattr(run_args, "router_pull_loss_schedule_start_ratio", 0.5)),
-                end_ratio=float(getattr(run_args, "router_pull_loss_schedule_end_ratio", 1.0)),
-            )
-            pull_loss_type_switch_ratio = float(getattr(run_args, "router_pull_loss_type_switch_ratio", 0.5))
-            if step_progress >= pull_loss_type_switch_ratio:
-                current_pull_loss_type = target_pull_loss_type
-            else:
-                current_pull_loss_type = initial_pull_loss_type
-            _set_runtime_router_pull_loss_type(model, current_pull_loss_type)
 
             budget_loss_scale = 0.0
 
@@ -883,11 +784,11 @@ def train(
             else:
                 z_loss = z_loss.to(device=raw_loss.device, dtype=raw_loss.dtype)
 
-            pull_loss = getattr(out, "router_pull_loss", None)
-            if pull_loss is None:
-                pull_loss = raw_loss.new_zeros(())
+            anchor_loss = getattr(out, "router_anchor_loss", None)
+            if anchor_loss is None:
+                anchor_loss = raw_loss.new_zeros(())
             else:
-                pull_loss = pull_loss.to(device=raw_loss.device, dtype=raw_loss.dtype)
+                anchor_loss = anchor_loss.to(device=raw_loss.device, dtype=raw_loss.dtype)
 
             budget_loss = getattr(out, "router_budget_loss", None)
             if budget_loss is None:
@@ -898,9 +799,7 @@ def train(
             ce_loss = raw_loss
             total_loss = (
                 ce_loss
-                + float(run_args.router_aux_loss_coef) * aux_loss
-                + float(run_args.router_z_loss_coef) * z_loss
-                + current_pull_loss_coef * pull_loss
+                + float(run_args.router_anchor_loss_coef) * anchor_loss
                 + float(getattr(run_args, "router_budget_loss_coef", 0.0)) * budget_loss_scale * budget_loss
             )
             loss = total_loss / max(1, grad_accum)
@@ -909,8 +808,6 @@ def train(
                 scaler.scale(loss).backward()
             else:
                 loss.backward()
-
-            _apply_pending_router_ema_updates(model)
 
             global_step += 1
 
@@ -939,14 +836,13 @@ def train(
                         )
                     continue
 
+                _apply_pending_router_anchor_updates(model)
                 optim_step += 1
                 scheduler.step()
 
                 loss_real = float(total_loss.detach().float().item())
                 ce_loss_real = float(ce_loss.detach().float().item())
-                aux_loss_real = float(aux_loss.detach().float().item())
-                z_loss_real = float(z_loss.detach().float().item())
-                pull_loss_real = float(pull_loss.detach().float().item())
+                anchor_loss_real = float(anchor_loss.detach().float().item())
                 budget_loss_real = float(budget_loss.detach().float().item())
 
                 if len(ma_loss_buf) == ma_loss_buf.maxlen:
@@ -967,7 +863,7 @@ def train(
                 cur_lr = scheduler.get_last_lr()[0]
                 router_forward_stats = _get_moe_stat_dict(model, "last_router_forward_stats")
                 router_dispatch_stats = _get_moe_stat_dict(model, "last_router_dispatch_stats")
-                router_ema_stats = _get_moe_stat_dict(model, "last_router_ema_stats")
+                router_anchor_stats = _get_moe_stat_dict(model, "last_router_anchor_stats")
                 should_eval = eval_dl is not None and (optim_step % eval_every == 0)
                 eval_loss_real = None
                 eval_ppl_real = None
@@ -980,16 +876,14 @@ def train(
                         it.set_postfix({
                             "loss": f"{loss_real:.4f}",
                             "ce": f"{ce_loss_real:.4f}",
-                            "aux": f"{aux_loss_real:.4f}",
-                            "z": f"{z_loss_real:.4f}",
-                            "pull": f"{pull_loss_real:.4f}",
-                            "pullc": f"{current_pull_loss_coef:.3f}",
+                            "anchor": f"{anchor_loss_real:.4f}",
                             "budget": f"{budget_loss_real:.4f}",
                             f"ma{ma_win}": f"{loss_ma:.4f}",
                             "ema": f"{ema_loss:.4f}",
                             "ce_ema": f"{ema_ce_loss:.4f}",
                             "sel": f"{float(router_dispatch_stats.get('avg_selected_expert_count', 0.0)):.2f}",
                             "top_k": str(int(current_router_top_k)),
+                            "ak": f"{float(router_anchor_stats.get('anchor_key_cosine_mean', 0.0)):.3f}",
                             "dead": f"{float(router_dispatch_stats.get('dead_expert_ratio', 0.0)):.2f}",
                             "neg": f"{float(router_forward_stats.get('route_prob_has_neg', 0.0)):.0f}",
                             "lr": f"{cur_lr:.2e}",
@@ -1004,9 +898,7 @@ def train(
                             f"{cur_lr:.6e}",
                             f"{loss_real:.6f}",
                             f"{ce_loss_real:.6f}",
-                            f"{aux_loss_real:.6f}",
-                            f"{z_loss_real:.6f}",
-                            f"{pull_loss_real:.6f}",
+                            f"{anchor_loss_real:.6f}",
                             f"{budget_loss_real:.6f}",
                             f"{loss_ma:.6f}",
                             f"{ema_loss:.6f}",
@@ -1014,9 +906,7 @@ def train(
                             "" if eval_loss_real is None else f"{eval_loss_real:.6f}",
                             "" if eval_ppl_real is None else f"{eval_ppl_real:.6f}",
                             str(int(current_router_top_k)),
-                            f"{current_pull_loss_coef:.6f}",
-                            current_pull_loss_type,
-                            f"{budget_loss_scale:.6f}",
+                            f"{float(run_args.router_anchor_loss_coef):.6f}",
                             _metric_cell(router_forward_stats.get("attn_scores_mean")),
                             _metric_cell(router_forward_stats.get("attn_scores_std")),
                             _metric_cell(router_forward_stats.get("attn_scores_min")),
@@ -1033,17 +923,10 @@ def train(
                             _metric_cell(router_forward_stats.get("route_prob_has_neg")),
                             _metric_cell(router_forward_stats.get("route_prob_row_sum_mean")),
                             _metric_cell(router_forward_stats.get("route_prob_row_sum_abs_err")),
-                            _metric_cell(router_forward_stats.get("projected_value_std")),
-                            _metric_cell(router_forward_stats.get("projected_value_norm_mean")),
-                            _metric_cell(router_forward_stats.get("router_context_norm_mean")),
-                            _metric_cell(router_forward_stats.get("router_context_norm_std")),
-                            _metric_cell(router_forward_stats.get("router_context_proj_out_mean")),
-                            _metric_cell(router_forward_stats.get("router_context_proj_out_std")),
-                            _metric_cell(router_forward_stats.get("router_context_delta_ratio")),
                             _metric_cell(router_forward_stats.get("expert_key_pairwise_cos_mean")),
                             _metric_cell(router_forward_stats.get("expert_key_pairwise_cos_max")),
-                            _metric_cell(router_forward_stats.get("expert_value_pairwise_cos_mean")),
-                            _metric_cell(router_forward_stats.get("expert_value_pairwise_cos_max")),
+                            _metric_cell(router_forward_stats.get("expert_anchor_pairwise_cos_mean")),
+                            _metric_cell(router_forward_stats.get("expert_anchor_pairwise_cos_max")),
                             _metric_cell(router_forward_stats.get("token_q_norm_mean")),
                             _metric_cell(router_forward_stats.get("token_q_norm_std")),
                             _metric_cell(router_dispatch_stats.get("avg_selected_expert_count")),
@@ -1056,14 +939,12 @@ def train(
                             _metric_cell(router_dispatch_stats.get("expert_token_count_cv")),
                             _metric_cell(router_dispatch_stats.get("soft_load")),
                             _metric_cell(router_dispatch_stats.get("hard_load")),
-                            _metric_cell(router_ema_stats.get("active_expert_count")),
-                            _metric_cell(router_ema_stats.get("proto_count_mean")),
-                            _metric_cell(router_ema_stats.get("proto_count_min")),
-                            _metric_cell(router_ema_stats.get("proto_count_max")),
-                            _metric_cell(router_ema_stats.get("proto_update_cosine")),
-                            _metric_cell(router_ema_stats.get("proto_delta_norm")),
-                            _metric_cell(router_ema_stats.get("ema_update_ratio")),
-                            _metric_cell(router_ema_stats.get("proto_counts")),
+                            _metric_cell(router_anchor_stats.get("active_expert_count")),
+                            _metric_cell(router_anchor_stats.get("proto_count_mean")),
+                            _metric_cell(router_anchor_stats.get("proto_count_min")),
+                            _metric_cell(router_anchor_stats.get("proto_count_max")),
+                            _metric_cell(router_anchor_stats.get("anchor_key_cosine_mean")),
+                            _metric_cell(router_anchor_stats.get("proto_counts")),
                         ]) + "\n")
                         metrics_f.flush()
 
@@ -1071,9 +952,7 @@ def train(
                 pbar.set_postfix({
                     "loss": f"{loss_real:.4f}",
                     "ce": f"{ce_loss_real:.4f}",
-                    "aux": f"{aux_loss_real:.4f}",
-                    "z": f"{z_loss_real:.4f}",
-                    "pullc": f"{current_pull_loss_coef:.3f}",
+                    "anchor": f"{anchor_loss_real:.4f}",
                     "budget": f"{budget_loss_real:.4f}",
                     "ce_ema": f"{ema_ce_loss:.4f}",
                     "top_k": str(int(current_router_top_k)),
@@ -1085,10 +964,9 @@ def train(
                     print(
                         f"[train] epoch={epoch+1}/{epochs} step={optim_step}/{total_optim_steps} "
                         f"loss={loss_real:.4f} ce={ce_loss_real:.4f} ce_ema={ema_ce_loss:.4f} "
-                        f"aux={aux_loss_real:.4f} z={z_loss_real:.4f} pull={pull_loss_real:.4f} "
-                        f"pull_coef={current_pull_loss_coef:.3f} pull_type={current_pull_loss_type} "
-                        f"budget={budget_loss_real:.4f} top_k={int(current_router_top_k)} "
-                        f"budget_scale={budget_loss_scale:.3f} "
+                        f"anchor={anchor_loss_real:.4f} budget={budget_loss_real:.4f} "
+                        f"top_k={int(current_router_top_k)} "
+                        f"anchor_key_cos={float(router_anchor_stats.get('anchor_key_cosine_mean', 0.0)):.4f} "
                         f"lr={cur_lr:.3e} elapsed={elapsed/60:.1f}m"
                     )
 
@@ -1222,12 +1100,6 @@ def build_quantization_config(args):
             llm_int8_skip_modules=[
                 "router",
                 "query",
-                "key",
-                "token_couple_proj",
-                "value",
-                # Legacy (unused in current simplified router):
-                # "router_value_proj",
-                # "router_context_gate_proj",
             ],
         )
 
@@ -1238,12 +1110,6 @@ def build_quantization_config(args):
             llm_int8_skip_modules=[
                 "router",
                 "query",
-                "key",
-                "token_couple_proj",
-                "value",
-                # Legacy (unused in current simplified router):
-                # "router_value_proj",
-                # "router_context_gate_proj",
             ],
         )
 
@@ -1325,9 +1191,7 @@ def configure_model_config(config, args) -> None:
     if hasattr(config, "ensure_model_attributes"):
         config.ensure_model_attributes()
 
-    effective_top_k = int(args.router_top_k) if int(args.router_top_k) > 0 else int(args.router_topk)
-    if effective_top_k > 0:
-        config.router_top_k = effective_top_k
+    config.router_top_k = 2
     if int(args.router_use_entmax) >= 0:
         config.router_use_entmax = bool(args.router_use_entmax)
     if args.router_entmax_alpha is not None:
@@ -1336,12 +1200,9 @@ def configure_model_config(config, args) -> None:
         config.router_use_softmax_temperature = bool(args.router_use_softmax_temperature)
     if args.router_softmax_temperature is not None:
         config.router_softmax_temperature = float(args.router_softmax_temperature)
-    if int(args.use_router_context) >= 0:
-        config.use_router_context = bool(args.use_router_context)
-    if args.router_context_scale is not None:
-        config.router_context_scale = float(args.router_context_scale)
-    if int(args.share_router_expert_embedding) >= 0:
-        config.share_router_expert_embedding = bool(args.share_router_expert_embedding)
+    config.use_router_context = False
+    config.router_context_scale = 0.0
+    config.share_router_expert_embedding = False
     config.router_budget_target_count = 0.0
 
     if hasattr(config, "ensure_model_attributes"):
@@ -1351,10 +1212,10 @@ def configure_model_config(config, args) -> None:
     if int(getattr(config, "num_experts", 0)) > 0 and int(config.router_top_k) > int(config.num_experts):
         raise ValueError(f"router_top_k ({config.router_top_k}) cannot exceed num_experts ({config.num_experts})")
 
-    config.router_use_ema_update = bool(args.router_use_ema_update)
-    config.router_ema_momentum = float(args.router_ema_momentum)
-    config.router_pull_temperature = float(args.router_pull_temperature)
-    config.router_pull_loss_type = str(args.router_pull_loss_type)
+    anchor_momentum = getattr(args, "router_anchor_momentum", None)
+    if anchor_momentum is None:
+        anchor_momentum = float(args.router_ema_momentum)
+    config.router_anchor_momentum = float(anchor_momentum)
 
 
 def make_dataset(name: str, tokenizer, args, split: str, max_samples: Optional[int]):
@@ -1687,7 +1548,7 @@ def stage1_train_cross_attention_router(
 
                     teacher_weight = teacher_weight_cpu.to(device=device, dtype=hidden_states.dtype)
                     teacher_logits = F.linear(hidden_states.to(dtype=teacher_weight.dtype), teacher_weight).float()
-                    student_logits, _, _, _ = mlp.router(hidden_states)
+                    student_logits, _, _ = mlp.router(hidden_states)
                     student_logits = student_logits.float()
 
                     mask = valid_mask
@@ -1975,77 +1836,89 @@ def parse_args():
     ap.add_argument("--lora_target_modules", type=str, default="")
     ap.add_argument("--train_new_router_params", type=int, default=1)
     ap.add_argument(
+        "--router_anchor_loss_coef",
+        type=float,
+        default=0.01,
+        help="Coefficient for expert-key to anchor alignment loss.",
+    )
+    ap.add_argument(
+        "--router_anchor_momentum",
+        type=float,
+        default=None,
+        help="EMA momentum for expert anchors. Unset falls back to --router_ema_momentum for config compatibility.",
+    )
+    ap.add_argument(
         "--router_aux_loss_coef",
         type=float,
-        default=1.0,
-        help="Coefficient for router balancing aux loss.",
+        default=0.0,
+        help="Deprecated. Kept only so older configs still parse.",
     )
     ap.add_argument(
         "--router_z_loss_coef",
         type=float,
-        default=1e-3,
-        help="Coefficient for router z-loss on the cross-attention router branch.",
+        default=0.0,
+        help="Deprecated. Kept only so older configs still parse.",
     )
     ap.add_argument(
         "--router_pull_loss_coef",
         type=float,
-        default=0.01,
-        help="Coefficient for prototype pull loss.",
+        default=0.0,
+        help="Deprecated. Kept only so older configs still parse.",
     )
     ap.add_argument(
         "--router_pull_loss_coef_final",
         type=float,
         default=None,
-        help="Optional final coefficient for prototype pull loss; unset keeps it fixed.",
+        help="Deprecated. Kept only so older configs still parse.",
     )
     ap.add_argument(
         "--router_pull_loss_schedule_start_ratio",
         type=float,
         default=0.5,
-        help="Training progress ratio to start ramping router pull-loss coefficient toward --router_pull_loss_coef_final.",
-    )
-    ap.add_argument(
-        "--router_pull_loss_schedule_end_ratio",
-        type=float,
-        default=1.0,
-        help="Training progress ratio to finish ramping router pull-loss coefficient toward --router_pull_loss_coef_final.",
-    )
-    ap.add_argument(
-        "--router_use_ema_update",
-        type=int,
-        default=1,
-        help="Whether to update expert_key with EMA from assigned token prototypes.",
+        help="Deprecated. Kept only so older configs still parse.",
     )
     ap.add_argument(
         "--router_ema_momentum",
         type=float,
         default=0.99,
-        help="EMA momentum for expert_key update.",
+        help="Deprecated fallback for anchor EMA momentum when --router_anchor_momentum is unset.",
+    )
+    ap.add_argument(
+        "--router_pull_loss_schedule_end_ratio",
+        type=float,
+        default=1.0,
+        help="Deprecated. Kept only so older configs still parse.",
+    )
+    ap.add_argument(
+        "--router_use_ema_update",
+        type=int,
+        default=1,
+        help="Deprecated. Kept only so older configs still parse.",
     )
     ap.add_argument(
         "--router_pull_temperature",
         type=float,
         default=1.0,
-        help="Reserved temperature for prototype pull loss / similarity scaling.",
+        help="Deprecated. Kept only so older configs still parse.",
     )
     ap.add_argument(
         "--router_pull_loss_type",
         type=str,
         default="soft",
         choices=["soft", "hard_ce"],
-        help="Router pull-loss type: soft assignment pull loss or argmax pseudo-label cross-entropy.",
+        help="Deprecated. Kept only so older configs still parse.",
     )
     ap.add_argument(
         "--router_pull_loss_type_final",
         type=str,
         default="",
-        help="Optional final router pull-loss type for stage2 runtime switching; unset keeps the initial type.",
+        help="Deprecated. Kept only so older configs still parse.",
     )
     ap.add_argument(
         "--router_pull_loss_type_switch_ratio",
         type=float,
         default=0.5,
-        help="Training progress ratio to switch router pull-loss type to --router_pull_loss_type_final.",
+        help="Deprecated. Kept only so older configs still parse.",
     )
     ap.add_argument("--use_bnb_8bit", type=int, default=0)
     ap.add_argument("--load_in_4bit", type=int, default=0)
@@ -2219,6 +2092,17 @@ def main():
     if not (0.0 <= float(args.stage2_validation_train_ratio) <= 1.0):
         raise ValueError(
             f"--stage2_validation_train_ratio must be in [0, 1], got {args.stage2_validation_train_ratio}"
+        )
+    if float(args.router_anchor_loss_coef) < 0.0:
+        raise ValueError(
+            f"--router_anchor_loss_coef must be >= 0, got {args.router_anchor_loss_coef}"
+        )
+    anchor_momentum = args.router_anchor_momentum
+    if anchor_momentum is None:
+        anchor_momentum = args.router_ema_momentum
+    if not (0.0 <= float(anchor_momentum) < 1.0):
+        raise ValueError(
+            f"--router_anchor_momentum/--router_ema_momentum must be in [0, 1), got {anchor_momentum}"
         )
     for name in (
         "router_pull_loss_schedule_start_ratio",
