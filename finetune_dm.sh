@@ -73,7 +73,8 @@ CONFIGS=(
   # 新版本代码
   # "configs/CB_lowlr_norestrict_abl_newlr01.json" # 69.26
   # "configs/CB_lowlr_norestrict_abl_newlr01_ctx03.json" # 69.64
-  "configs/CB_lowlr_norestrict.json" # 68.39
+  # "configs/CB_lowlr_norestrict.json" # 68.39
+  "configs/CB_lowlr_norestrict_abl_newlr01_ctx03.json"
 )
 
 LOGDIR="$SCRIPT_DIR/logs/sweep_$(date +%Y%m%d_%H%M%S)" 

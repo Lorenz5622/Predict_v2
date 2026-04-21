@@ -567,7 +567,9 @@ class SwitchMLP(nn.Module):
         self.router_pull_temperature = float(getattr(config, "router_pull_temperature", 1.0))
         self.router_pull_loss_type = str(getattr(config, "router_pull_loss_type", "soft"))
         self.router_ema_momentum = float(getattr(config, "router_ema_momentum", 0.99))
-        self.router_use_ema_update = bool(getattr(config, "router_use_ema_update", False))
+        # Disable router EMA updates in this variant so expert_key / expert_value
+        # are optimized only by backpropagation.
+        self.router_use_ema_update = False
         self.router_budget_target_count = float(getattr(config, "router_budget_target_count", 0.0))
         self.router_budget_tau = float(getattr(config, "router_budget_tau", 0.05))
         self._pending_router_ema_token_q = None
@@ -592,6 +594,8 @@ class SwitchMLP(nn.Module):
                 )
 
             self.use_cross_attention_router = getattr(config, "use_cross_attention_router", True)
+            self.use_router_context = bool(getattr(config, "use_router_context", True))
+            self.router_context_scale = float(getattr(config, "router_context_scale", 1.0))
             self.router_use_entmax = bool(getattr(config, "router_use_entmax", False))
             self.router_entmax_alpha = float(getattr(config, "router_entmax_alpha", 1.5))
             if self.router_use_entmax and not (1.0 < self.router_entmax_alpha <= 2.0):
@@ -756,13 +760,9 @@ class SwitchMLP(nn.Module):
 
     @torch.no_grad()
     def apply_pending_router_ema_update(self) -> None:
-        token_q = self._pending_router_ema_token_q
-        expert_axis_probs = self._pending_router_ema_selected_probs
         self._pending_router_ema_token_q = None
         self._pending_router_ema_selected_probs = None
-        if token_q is None or expert_axis_probs is None:
-            return
-        self._ema_update_expert_key(token_q=token_q, expert_axis_probs=expert_axis_probs)
+        self.last_router_ema_stats = {}
     
     def forward(self, hidden_states):
         """
@@ -793,7 +793,9 @@ class SwitchMLP(nn.Module):
             router_logits = router_logits.float()
             route_probs = route_probs.float()
             projected_context = projected_context.to(dtype=hidden_states.dtype)
-            conditioned_hidden_states = hidden_states + projected_context
+            conditioned_hidden_states = hidden_states
+            if self.use_router_context:
+                conditioned_hidden_states = hidden_states + self.router_context_scale * projected_context
             router_q = None
             expert_k = None
             if router_repr is not None:

@@ -20,9 +20,9 @@ def main() -> None:
     sys.path.insert(0, os.getcwd())
     _force_stage(2)
 
-    import finetune_dynamic_moe
+    import finetune_qwen_dynamic_moe
 
-    finetune_dynamic_moe.main()
+    finetune_qwen_dynamic_moe.main()
 
 
 if __name__ == "__main__":

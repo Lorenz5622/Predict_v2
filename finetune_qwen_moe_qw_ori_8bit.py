@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import gc
 import inspect
+import json
 import math
 import os
 import shutil
@@ -48,12 +49,11 @@ from finetune import (
     load_and_pack_hellaswag_ppl_opencompass,
     load_and_pack_mmlu_ppl_opencompass,
     load_and_pack_openbookqa_ppl_opencompass,
-    load_and_pack_piqa_ppl_opencompass,
     load_and_pack_siqa_ppl_opencompass,
     load_and_pack_winogrande_ppl_opencompass,
     set_seed,
 )
-from finetune_qwen_dynamic_moe import load_and_pack_piqa_local, setup_distributed_safe
+from finetune_qwen_dynamic_moe import setup_distributed_safe
 from qwen_moe.modeling.configuration_moe_qw_ori import Qwen2MoeConfig
 from qwen_moe.modeling.modeling_moe_qw_ori import Qwen2MoeForCausalLM
 
@@ -61,20 +61,43 @@ from qwen_moe.modeling.modeling_moe_qw_ori import Qwen2MoeForCausalLM
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
 
+def _enable_gradient_checkpointing(model: nn.Module, args) -> None:
+    if not bool(args.gradient_checkpointing):
+        return
+
+    if hasattr(model, "config") and hasattr(model.config, "use_cache"):
+        model.config.use_cache = False
+
+    gc_sig = inspect.signature(model.gradient_checkpointing_enable)
+    gc_kwargs = {}
+    if "gradient_checkpointing_kwargs" in gc_sig.parameters:
+        gc_kwargs["gradient_checkpointing_kwargs"] = {
+            "use_reentrant": bool(args.gradient_checkpointing_use_reentrant),
+        }
+    model.gradient_checkpointing_enable(**gc_kwargs)
+
+
 def maybe_prepare_kbit_model_for_training(model: nn.Module, args) -> nn.Module:
     if not bool(args.load_in_8bit):
+        _enable_gradient_checkpointing(model, args)
         return model
 
-    if bool(args.gradient_checkpointing):
-        model.gradient_checkpointing_enable()
-
     prep_sig = inspect.signature(prepare_model_for_kbit_training)
+    prep_kwargs = {}
     if "use_gradient_checkpointing" in prep_sig.parameters:
-        return prepare_model_for_kbit_training(
-            model,
-            use_gradient_checkpointing=bool(args.gradient_checkpointing),
-        )
-    return prepare_model_for_kbit_training(model)
+        prep_kwargs["use_gradient_checkpointing"] = bool(args.gradient_checkpointing)
+    if bool(args.gradient_checkpointing) and "gradient_checkpointing_kwargs" in prep_sig.parameters:
+        prep_kwargs["gradient_checkpointing_kwargs"] = {
+            "use_reentrant": bool(args.gradient_checkpointing_use_reentrant),
+        }
+
+    model = prepare_model_for_kbit_training(model, **prep_kwargs)
+
+    if bool(args.gradient_checkpointing) and "gradient_checkpointing_kwargs" not in prep_sig.parameters:
+        if hasattr(model, "enable_input_require_grads"):
+            model.enable_input_require_grads()
+        _enable_gradient_checkpointing(model, args)
+    return model
 
 
 def build_quantization_config(args) -> Optional[BitsAndBytesConfig]:
@@ -139,26 +162,127 @@ def build_optimizer(model: nn.Module, lr: float, weight_decay: float, use_bnb_8b
     return torch.optim.AdamW(params, lr=lr, weight_decay=weight_decay)
 
 
+def _resolve_local_piqa_files(piqa_local_dir: str, split: str) -> tuple[Path, Path]:
+    root = Path(piqa_local_dir).expanduser()
+    if not root.exists():
+        raise FileNotFoundError(f"piqa_local_dir not found: {root}")
+
+    split_key = str(split).strip().lower()
+    if split_key == "train":
+        stem = "train"
+    elif split_key in {"validation", "valid", "dev"}:
+        stem = "dev"
+    else:
+        raise ValueError(
+            f"Unsupported PIQA local split: {split!r}. Expected one of "
+            "{'train', 'validation', 'valid', 'dev'}."
+        )
+
+    data_fp = root / f"{stem}.jsonl"
+    label_fp = root / f"{stem}-labels.lst"
+    if not data_fp.exists():
+        raise FileNotFoundError(f"Missing PIQA local data file: {data_fp}")
+    if not label_fp.exists():
+        raise FileNotFoundError(f"Missing PIQA local labels file: {label_fp}")
+    return data_fp, label_fp
+
+
+def load_and_pack_piqa_local(
+    tokenizer,
+    block_size: int,
+    piqa_local_dir: str,
+    split: str = "train",
+    max_samples: Optional[int] = None,
+    use_label: bool = True,
+):
+    data_fp, label_fp = _resolve_local_piqa_files(piqa_local_dir, split)
+
+    with data_fp.open("r", encoding="utf-8") as f_data:
+        data_lines = f_data.readlines()
+    with label_fp.open("r", encoding="utf-8") as f_labels:
+        label_lines = f_labels.readlines()
+
+    if len(data_lines) != len(label_lines):
+        raise ValueError(
+            f"PIQA local data/label length mismatch: {data_fp} has {len(data_lines)} rows "
+            f"but {label_fp} has {len(label_lines)} rows."
+        )
+
+    records = []
+    for data_line, label_line in zip(data_lines, label_lines):
+        item = json.loads(data_line)
+        label_text = label_line.strip()
+        label = int(label_text) if label_text != "" else None
+        records.append(
+            {
+                "goal": (item.get("goal") or "").strip(),
+                "sol1": (item.get("sol1") or "").strip(),
+                "sol2": (item.get("sol2") or "").strip(),
+                "label": label,
+            }
+        )
+        if max_samples is not None and len(records) >= int(max_samples):
+            break
+
+    bos_id = tokenizer.bos_token_id
+    pad_id = 0
+
+    def _pad_to_block(input_ids: List[int], labels: List[int]):
+        input_ids = input_ids[:block_size]
+        labels = labels[:block_size]
+        pad_len = block_size - len(input_ids)
+        if pad_len > 0:
+            input_ids = input_ids + [pad_id] * pad_len
+            labels = labels + [-100] * pad_len
+        return {"input_ids": input_ids, "labels": labels}
+
+    def build(ex):
+        goal = ex["goal"]
+        sol1 = ex["sol1"]
+        sol2 = ex["sol2"]
+        label = ex.get("label")
+
+        if label is None or not use_label:
+            sol = sol1
+        else:
+            sol = sol1 if int(label) == 0 else sol2
+
+        prompt = (
+            "The following makes sense:\n"
+            f"Q: {goal}\n"
+            "A:"
+        )
+        prompt_ids = tokenizer(prompt, add_special_tokens=False)["input_ids"]
+        ans_ids = tokenizer(" " + sol, add_special_tokens=False)["input_ids"]
+        input_ids = prompt_ids + ans_ids
+        labels = ([-100] * len(prompt_ids)) + ans_ids
+        if bos_id is not None:
+            input_ids = [bos_id] + input_ids
+            labels = [-100] + labels
+        return _pad_to_block(input_ids, labels)
+
+    from datasets import Dataset
+
+    ds = Dataset.from_list(records)
+    ds = ds.map(build, remove_columns=ds.column_names)
+    ds.set_format(type="torch", columns=["input_ids", "labels"])
+    return ds
+
+
 def make_dataset(name: str, tokenizer, args, split: str, max_samples: Optional[int]):
     use_label = bool(args.use_label)
 
     if name == "piqa":
-        if args.piqa_local_dir:
-            return load_and_pack_piqa_local(
-                tokenizer=tokenizer,
-                block_size=args.block_size,
-                piqa_local_dir=args.piqa_local_dir,
-                split=split,
-                max_samples=max_samples,
-                use_label=use_label,
+        if not args.piqa_local_dir:
+            raise ValueError(
+                "--piqa_local_dir is required when dataset/eval_dataset includes 'piqa', "
+                "because finetune_qwen_moe_qw_ori_8bit.py reads PIQA from local files."
             )
-        return load_and_pack_piqa_ppl_opencompass(
+        return load_and_pack_piqa_local(
             tokenizer=tokenizer,
             block_size=args.block_size,
+            piqa_local_dir=args.piqa_local_dir,
             split=split,
-            num_proc=args.num_proc,
-            bos=True,
-            eos=False,
             max_samples=max_samples,
             use_label=use_label,
         )
@@ -604,6 +728,12 @@ def parse_args():
     ap.add_argument("--load_in_8bit", type=int, default=1)
     ap.add_argument("--llm_int8_threshold", type=float, default=6.0)
     ap.add_argument("--gradient_checkpointing", type=int, default=0)
+    ap.add_argument(
+        "--gradient_checkpointing_use_reentrant",
+        type=int,
+        default=0,
+        help="Set to 0 to prefer non-reentrant gradient checkpointing, which is more stable with DDP + LoRA + MoE.",
+    )
     ap.add_argument("--fp16", type=int, default=0)
     ap.add_argument("--bf16", type=int, default=0)
     ap.add_argument("--use_bnb_8bit", type=int, default=0)
@@ -621,6 +751,12 @@ def parse_args():
     ap.add_argument("--log_every", type=int, default=50)
     ap.add_argument("--eval_every", type=int, default=200)
     ap.add_argument("--device", type=str, default="cuda")
+    ap.add_argument(
+        "--ddp_find_unused_parameters",
+        type=int,
+        default=1,
+        help="Enable DDP unused-parameter detection. Recommended for MoE because not every expert is active every step.",
+    )
 
     ap.add_argument("--router_aux_loss_coef", type=float, default=0.001)
     ap.add_argument("--output_router_logits", type=int, default=1)
@@ -713,7 +849,7 @@ def main():
             model,
             device_ids=[local_rank],
             output_device=local_rank,
-            find_unused_parameters=False,
+            find_unused_parameters=bool(args.ddp_find_unused_parameters),
         )
 
     train(

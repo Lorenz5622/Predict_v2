@@ -7,6 +7,7 @@ OUT_ROOT="/path/to/outputs"
 LOG_ROOT="$(pwd)/logs"
 SCRIPT="finetune_qwen_moe_qw_ori_8bit.py"
 NPROC_PER_NODE=2
+PIQA_LOCAL_DIR="/path/to/piqa_local"
 
 COMMON_BLOCK_SIZE=192
 COMMON_BATCH_SIZE=4
@@ -38,6 +39,7 @@ run_one() {
 #   --model_path "$MODEL_PATH" \
 #   --output_dir "$OUT_ROOT/out_piqa_qw_ori_8bit" \
 #   --dataset piqa --eval_dataset piqa \
+#   --piqa_local_dir "$PIQA_LOCAL_DIR" \
 #   --train_split train --eval_split validation \
 #   --block_size "$COMMON_BLOCK_SIZE" --batch_size "$COMMON_BATCH_SIZE" --grad_accum "$COMMON_GRAD_ACCUM" \
 #   --epochs 3 --lr "$COMMON_LR" \
