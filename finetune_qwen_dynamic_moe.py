@@ -540,6 +540,97 @@ def prepare_stage1_router_trainables(model: nn.Module) -> int:
     return n_router_params
 
 
+def _is_stage1_router_param(name: str) -> bool:
+    keys = (
+        "router.query",
+        "router.key",
+        "router.token_couple_proj",
+        "router.value",
+        "router.expert_value",
+        "router.router_context_proj",
+        "router.expert_key",
+        "shared_expert_key",
+    )
+    return any(key in name for key in keys)
+
+
+def _extract_stage1_router_state_dict(model: nn.Module) -> Dict[str, torch.Tensor]:
+    base_model = _unwrap_base_model(model)
+    router_state: Dict[str, torch.Tensor] = {}
+    for name, param in base_model.named_parameters():
+        if not _is_stage1_router_param(name):
+            continue
+        router_state[name] = param.detach().to(device="cpu").clone()
+    if not router_state:
+        raise RuntimeError("Stage1 router export found no router parameters to save.")
+    return router_state
+
+
+def _build_fp16_model_for_stage1_export(
+    model_cls,
+    config,
+    model_path: str,
+    init_from_legacy: bool = True,
+) -> nn.Module:
+    model = model_cls(config)
+    model = model.to(dtype=torch.float16, device="cpu")
+    legacy_sd = _load_local_checkpoint_state_dict(model_path)
+    legacy_sd = {
+        name: tensor.to(dtype=torch.float16) if torch.is_floating_point(tensor) else tensor
+        for name, tensor in legacy_sd.items()
+    }
+    missing_keys, unexpected_keys = model.load_state_dict(legacy_sd, strict=False)
+    if is_main_process():
+        print(
+            f"[save][stage1] cpu reload from base checkpoint: missing={len(missing_keys)} "
+            f"unexpected={len(unexpected_keys)} dtype=torch.float16"
+        )
+    if bool(init_from_legacy):
+        inited = _init_cross_attention_router_from_legacy_dense(model=model, legacy_sd=legacy_sd, config=config)
+        if is_main_process():
+            print(f"[save][stage1] cpu router init from legacy dense router for {inited} layers")
+    return model
+
+
+def save_stage1_full_model_checkpoint_cpu_reload(
+    router_state_dict: Dict[str, torch.Tensor],
+    output_dir: str,
+    tokenizer,
+    config,
+    model_cls,
+    model_path: str,
+    save_dtype: torch.dtype = torch.float16,
+) -> None:
+    if save_dtype != torch.float16:
+        raise ValueError(f"stage1 cpu reload export currently only supports float16, got {save_dtype}")
+
+    os.makedirs(output_dir, exist_ok=True)
+    model_to_save = _build_fp16_model_for_stage1_export(
+        model_cls=model_cls,
+        config=config,
+        model_path=model_path,
+        init_from_legacy=True,
+    )
+
+    missing_keys, unexpected_keys = model_to_save.load_state_dict(router_state_dict, strict=False)
+    unexpected_nonempty = [key for key in unexpected_keys if key]
+    if unexpected_nonempty:
+        raise RuntimeError(
+            "Stage1 router state produced unexpected keys during CPU reload save: "
+            + ", ".join(unexpected_nonempty[:20])
+        )
+    if is_main_process():
+        print(
+            f"[save][stage1] applied router-only state onto CPU fp16 model: "
+            f"router_tensors={len(router_state_dict)} missing_after_partial_load={len(missing_keys)}"
+        )
+        print(f"[save] full checkpoint export dtype={save_dtype} -> {output_dir}")
+
+    model_to_save.save_pretrained(output_dir, safe_serialization=True)
+    tokenizer.save_pretrained(output_dir)
+    config.save_pretrained(output_dir)
+
+
 def build_stage1_subset_dataset(ds, stage1_ratio: float, seed: int):
     if not (0.0 < float(stage1_ratio) < 1.0):
         raise ValueError(f"stage1_ratio must be in (0, 1), got {stage1_ratio}")
@@ -632,45 +723,22 @@ def _materialize_model_for_export(
     return model_to_save, was_quantized
 
 
-def _checkpoint_is_prequantized(model_path: str) -> bool:
-    config_fp = Path(model_path) / "config.json"
-    if not config_fp.exists():
-        return False
-    try:
-        config_data = json.loads(config_fp.read_text(encoding="utf-8"))
-    except Exception:
-        return False
-    return bool(config_data.get("quantization_config"))
-
-
 def save_full_model_checkpoint(
     model: nn.Module,
     output_dir: str,
     tokenizer,
     config,
     save_dtype: torch.dtype = torch.float16,
-    keep_quantized: bool = False,
 ) -> None:
     os.makedirs(output_dir, exist_ok=True)
-    model_to_save = _unwrap_base_model(model)
-    was_quantized = is_quantized_model(model_to_save)
-
-    if keep_quantized and was_quantized:
-        print(f"[save] full checkpoint export keeps quantized weights -> {output_dir}")
-        model_to_save.save_pretrained(output_dir, safe_serialization=True)
+    model_to_save, was_quantized = _materialize_model_for_export(model, save_dtype=save_dtype)
+    if was_quantized:
+        print(f"[save] full checkpoint export dtype={save_dtype} (from quantized model) -> {output_dir}")
     else:
-        model_to_save, was_quantized = _materialize_model_for_export(model, save_dtype=save_dtype)
-        if was_quantized:
-            print(f"[save] full checkpoint export dtype={save_dtype} (from quantized model) -> {output_dir}")
-        else:
-            print(f"[save] full checkpoint export dtype={save_dtype} -> {output_dir}")
-        model_to_save.save_pretrained(output_dir, safe_serialization=True)
+        print(f"[save] full checkpoint export dtype={save_dtype} -> {output_dir}")
+    model_to_save.save_pretrained(output_dir, safe_serialization=True)
     tokenizer.save_pretrained(output_dir)
-    model_config = getattr(model_to_save, "config", None)
-    if model_config is not None:
-        model_config.save_pretrained(output_dir)
-    else:
-        config.save_pretrained(output_dir)
+    config.save_pretrained(output_dir)
 
 
 def _apply_pending_router_ema_updates(model: nn.Module) -> None:
@@ -1570,29 +1638,18 @@ def build_model_with_router_compat(
         return model
 
     device_map = {"": local_rank} if is_distributed else {"": 0}
-    prequantized_checkpoint = _checkpoint_is_prequantized(model_path)
-    if prequantized_checkpoint and is_main_process():
-        print(f"[load] detected pre-quantized checkpoint at {model_path}; reuse saved quantization config")
-
     torch_dtype = (
         quantization_config.bnb_4bit_compute_dtype
         if bool(getattr(quantization_config, "load_in_4bit", False))
         else torch.float16
     )
-    load_kwargs = {
-        "config": config,
-        "low_cpu_mem_usage": True,
-        "device_map": device_map,
-    }
-    if prequantized_checkpoint:
-        pass
-    else:
-        load_kwargs["quantization_config"] = quantization_config
-        load_kwargs["torch_dtype"] = torch_dtype
-
     model = model_cls.from_pretrained(
         model_path,
-        **load_kwargs,
+        config=config,
+        quantization_config=quantization_config,
+        torch_dtype=torch_dtype,
+        low_cpu_mem_usage=True,
+        device_map=device_map,
     )
 
     if bool(args.init_new_router_from_legacy) and bool(init_from_legacy):
@@ -2753,16 +2810,10 @@ def main():
             teacher_router_weights=teacher_router_weights,
         )
 
+        stage1_router_state_dict = None
         if is_main_process():
-            print(f"[stage1] saving full checkpoint to {stage1_ckpt_dir}")
-            save_full_model_checkpoint(
-                stage1_model,
-                stage1_ckpt_dir,
-                tokenizer,
-                stage1_config,
-                save_dtype=torch.float16,
-                keep_quantized=True,
-            )
+            print(f"[stage1] collecting router state for CPU fp16 checkpoint save -> {stage1_ckpt_dir}")
+            stage1_router_state_dict = _extract_stage1_router_state_dict(stage1_model)
         if is_distributed:
             dist.barrier()
 
@@ -2770,6 +2821,24 @@ def main():
         gc.collect()
         if device.type == "cuda":
             torch.cuda.empty_cache()
+        if is_distributed:
+            dist.barrier()
+
+        if is_main_process():
+            print(f"[stage1] rebuilding CPU fp16 model and saving full checkpoint to {stage1_ckpt_dir}")
+            save_stage1_full_model_checkpoint_cpu_reload(
+                router_state_dict=stage1_router_state_dict,
+                output_dir=stage1_ckpt_dir,
+                tokenizer=tokenizer,
+                config=stage1_config,
+                model_cls=model_cls,
+                model_path=args.model_path,
+                save_dtype=torch.float16,
+            )
+            del stage1_router_state_dict
+            gc.collect()
+        if is_distributed:
+            dist.barrier()
 
         if args.stage == 1:
             for handle in router_debug_handles:
