@@ -174,6 +174,8 @@ def load_and_pack_piqa_ppl_opencompass(
     """
     PIQA fields:
       goal, sol1, sol2, label (0->sol1, 1->sol2).
+    Unlike the other MCQ packers, PIQA supervises the full prompt+answer
+    sequence so perplexity reflects the entire formatted string.
     """
     ds = load_dataset("ybisk/piqa", split=split)
     if max_samples is not None:
@@ -205,7 +207,7 @@ def load_and_pack_piqa_ppl_opencompass(
         ans_ids = tokenizer(" " + sol, add_special_tokens=False)["input_ids"]
 
         input_ids = prompt_ids + ans_ids
-        labels = ([-100] * len(prompt_ids)) + ans_ids
+        labels = list(input_ids)
 
         if bos and bos_id is not None:
             input_ids = [bos_id] + input_ids
