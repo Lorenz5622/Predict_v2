@@ -428,9 +428,9 @@ class CrossAttentionRouter(nn.Module):
     ) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
         # Keep router params in fp32 while allowing upstream hidden states in fp16/bf16.
         router_in = hidden_states.to(self.query.weight.dtype)
-        q = F.normalize(self.query(router_in).float(), dim=-1)                  # (b, s, d)
-        k = F.normalize(self.expert_key.float(), dim=-1)                        # (e, d)
-        attn_scores = torch.matmul(q, k.transpose(0, 1)) / math.sqrt(self.d_router)  # (b, s, e)
+        q = self.query(router_in).float()                  # (b, s, d)
+        k = self.expert_key.float()                        # (e, d)
+        attn_scores = torch.matmul(q, k.transpose(0, 1))  # (b, s, e)
         if self.use_entmax:
             attn_weights = entmax_bisect(attn_scores, alpha=self.alpha, dim=-1)
         else:
@@ -571,7 +571,7 @@ class SwitchMLP(nn.Module):
         token_q: torch.Tensor,
         expert_axis_probs: torch.Tensor,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-        flat_q = F.normalize(token_q.detach().float(), dim=-1).reshape(-1, token_q.size(-1))
+        flat_q = token_q.detach().float().reshape(-1, token_q.size(-1))
         flat_selected_probs = expert_axis_probs.detach().float().reshape(-1, expert_axis_probs.size(-1))
         proto_sums = flat_selected_probs.transpose(0, 1) @ flat_q
         proto_counts = flat_selected_probs.sum(dim=0)
