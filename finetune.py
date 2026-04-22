@@ -1096,12 +1096,15 @@ class PairwiseDataCollator:
     pad_id: int = 0
 
     def __call__(self, features):
-        chosen_input_ids = torch.stack([f["chosen_input_ids"] for f in features], dim=0)
-        chosen_labels = torch.stack([f["chosen_labels"] for f in features], dim=0)
-        chosen_answer_mask = torch.stack([f["chosen_answer_mask"] for f in features], dim=0)
-        rejected_input_ids = torch.stack([f["rejected_input_ids"] for f in features], dim=0)
-        rejected_labels = torch.stack([f["rejected_labels"] for f in features], dim=0)
-        rejected_answer_mask = torch.stack([f["rejected_answer_mask"] for f in features], dim=0)
+        def _stack_long(key: str):
+            return torch.stack([torch.as_tensor(f[key], dtype=torch.long) for f in features], dim=0)
+
+        chosen_input_ids = _stack_long("chosen_input_ids")
+        chosen_labels = _stack_long("chosen_labels")
+        chosen_answer_mask = _stack_long("chosen_answer_mask")
+        rejected_input_ids = _stack_long("rejected_input_ids")
+        rejected_labels = _stack_long("rejected_labels")
+        rejected_answer_mask = _stack_long("rejected_answer_mask")
         return {
             "chosen_input_ids": chosen_input_ids,
             "chosen_labels": chosen_labels,

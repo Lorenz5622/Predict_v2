@@ -435,6 +435,11 @@ def _set_runtime_router_anchor_collection(model: nn.Module, enabled: bool) -> No
         setattr(mlp, "enable_router_anchor_collection", bool(enabled))
 
 
+def _set_runtime_router_anchor_batch_mask(model: nn.Module, batch_mask: Optional[torch.Tensor]) -> None:
+    for _layer_idx, mlp in get_switch_layers(model):
+        setattr(mlp, "router_anchor_batch_mask", batch_mask)
+
+
 def _is_pairwise_dataset(ds) -> bool:
     if ds is None:
         return False
@@ -459,6 +464,16 @@ def _mean_answer_logprob(logits: torch.Tensor, labels: torch.Tensor, answer_mask
     gathered = gathered * valid_mask.to(gathered.dtype)
     token_counts = valid_mask.sum(dim=-1).clamp_min(1)
     return gathered.sum(dim=-1) / token_counts.to(gathered.dtype)
+
+
+def _causal_lm_ce_loss(logits: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
+    shift_logits = logits[:, :-1, :].float().contiguous()
+    shift_labels = labels[:, 1:].contiguous()
+    return F.cross_entropy(
+        shift_logits.view(-1, shift_logits.size(-1)),
+        shift_labels.reshape(-1),
+        ignore_index=-100,
+    )
 
 
 def _forward_stage2_batch(
@@ -500,44 +515,52 @@ def _forward_stage2_batch(
             "rejected_score": raw_loss.new_zeros(()),
         }
 
-    rejected_inputs = {
-        "input_ids": batch["rejected_input_ids"],
-        "labels": batch["rejected_labels"],
-        "attention_mask": batch["rejected_attention_mask"],
-    }
-    chosen_inputs = {
-        "input_ids": batch["chosen_input_ids"],
-        "labels": batch["chosen_labels"],
-        "attention_mask": batch["chosen_attention_mask"],
-    }
+    chosen_input_ids = batch["chosen_input_ids"]
+    chosen_labels = batch["chosen_labels"]
+    chosen_attention_mask = batch["chosen_attention_mask"]
+    rejected_input_ids = batch["rejected_input_ids"]
+    rejected_labels = batch["rejected_labels"]
+    rejected_attention_mask = batch["rejected_attention_mask"]
 
-    _set_runtime_router_anchor_collection(model, False)
+    combined_inputs = {
+        "input_ids": torch.cat([chosen_input_ids, rejected_input_ids], dim=0),
+        "labels": torch.cat([chosen_labels, rejected_labels], dim=0),
+        "attention_mask": torch.cat([chosen_attention_mask, rejected_attention_mask], dim=0),
+    }
+    chosen_batch = chosen_input_ids.size(0)
+    anchor_batch_mask = torch.cat([
+        torch.ones(chosen_batch, device=chosen_input_ids.device, dtype=torch.bool),
+        torch.zeros(rejected_input_ids.size(0), device=chosen_input_ids.device, dtype=torch.bool),
+    ], dim=0)
+
+    _set_runtime_router_anchor_collection(model, True)
+    _set_runtime_router_anchor_batch_mask(model, anchor_batch_mask)
     try:
-        rejected_out = _run_model(rejected_inputs)
+        out = _run_model(combined_inputs)
     finally:
-        _set_runtime_router_anchor_collection(model, True)
-    chosen_out = _run_model(chosen_inputs)
+        _set_runtime_router_anchor_batch_mask(model, None)
 
-    ce_loss = chosen_out.loss
-    anchor_loss = getattr(chosen_out, "router_anchor_loss", None)
+    chosen_logits, rejected_logits = out.logits.split([chosen_batch, rejected_input_ids.size(0)], dim=0)
+    ce_loss = _causal_lm_ce_loss(chosen_logits, chosen_labels)
+    anchor_loss = getattr(out, "router_anchor_loss", None)
     if anchor_loss is None:
         anchor_loss = ce_loss.new_zeros(())
     else:
         anchor_loss = anchor_loss.to(device=ce_loss.device, dtype=ce_loss.dtype)
-    budget_loss = getattr(chosen_out, "router_budget_loss", None)
+    budget_loss = getattr(out, "router_budget_loss", None)
     if budget_loss is None:
         budget_loss = ce_loss.new_zeros(())
     else:
         budget_loss = budget_loss.to(device=ce_loss.device, dtype=ce_loss.dtype)
 
     chosen_score = _mean_answer_logprob(
-        chosen_out.logits,
-        batch["chosen_labels"],
+        chosen_logits,
+        chosen_labels,
         batch["chosen_answer_mask"],
     )
     rejected_score = _mean_answer_logprob(
-        rejected_out.logits,
-        batch["rejected_labels"],
+        rejected_logits,
+        rejected_labels,
         batch["rejected_answer_mask"],
     )
     margin = chosen_score - rejected_score

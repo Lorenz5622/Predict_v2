@@ -495,6 +495,7 @@ class SwitchMLP(nn.Module):
         self._pending_anchor_proto_sums = None
         self._pending_anchor_proto_counts = None
         self.enable_router_anchor_collection = True
+        self.router_anchor_batch_mask = None
 
         if self.use_switch:
             self.experts = nn.ModuleList()
@@ -571,7 +572,20 @@ class SwitchMLP(nn.Module):
         self,
         token_q: torch.Tensor,
         expert_axis_probs: torch.Tensor,
+        batch_mask: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
+        if batch_mask is not None:
+            batch_mask = batch_mask.to(device=token_q.device, dtype=torch.bool).view(-1)
+            if batch_mask.numel() != token_q.size(0):
+                raise ValueError(
+                    f"router_anchor_batch_mask size mismatch: got {batch_mask.numel()} for batch {token_q.size(0)}"
+                )
+            if not torch.any(batch_mask):
+                proto_sums = token_q.new_zeros((expert_axis_probs.size(-1), token_q.size(-1)), dtype=torch.float32)
+                proto_counts = expert_axis_probs.new_zeros((expert_axis_probs.size(-1),), dtype=torch.float32)
+                return proto_sums, proto_counts
+            token_q = token_q[batch_mask]
+            expert_axis_probs = expert_axis_probs[batch_mask]
         flat_q = token_q.detach().float().reshape(-1, token_q.size(-1))
         flat_selected_probs = expert_axis_probs.detach().float().reshape(-1, expert_axis_probs.size(-1))
         proto_sums = flat_selected_probs.transpose(0, 1) @ flat_q
@@ -735,6 +749,7 @@ class SwitchMLP(nn.Module):
             proto_sums, proto_counts = self._compute_batch_prototypes(
                 token_q=token_q,
                 expert_axis_probs=expert_axis_topk_weights,
+                batch_mask=self.router_anchor_batch_mask,
             )
             if self._pending_anchor_proto_sums is None:
                 self._pending_anchor_proto_sums = proto_sums.detach()
