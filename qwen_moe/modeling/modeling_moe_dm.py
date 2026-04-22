@@ -494,6 +494,7 @@ class SwitchMLP(nn.Module):
         self.router_budget_tau = float(getattr(config, "router_budget_tau", 0.05))
         self._pending_anchor_proto_sums = None
         self._pending_anchor_proto_counts = None
+        self.enable_router_anchor_collection = True
 
         if self.use_switch:
             self.experts = nn.ModuleList()
@@ -723,7 +724,7 @@ class SwitchMLP(nn.Module):
 
         # Anchor loss and deferred anchor update both operate on q-space
         # prototypes built from the current micro-batch dispatch.
-        if self.training and self.use_cross_attention_router:
+        if self.training and self.use_cross_attention_router and bool(self.enable_router_anchor_collection):
             if token_q is None:
                 raise RuntimeError("CrossAttentionRouter did not return token queries during training.")
             expert_key = F.normalize(self.router.expert_key.float(), dim=-1)

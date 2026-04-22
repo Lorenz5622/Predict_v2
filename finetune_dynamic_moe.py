@@ -38,6 +38,7 @@ from transformers import AutoTokenizer, BitsAndBytesConfig
 
 from finetune import (
     LMDataCollator,
+    PairwiseDataCollator,
     cleanup_distributed,
     evaluate,
     is_main_process,
@@ -49,11 +50,15 @@ from finetune import (
     load_and_pack_hellaswag_ppl_opencompass,
     load_and_pack_mmlu_ppl_opencompass,
     load_and_pack_openbookqa_ppl_opencompass,
+    load_and_pack_piqa_pairwise_opencompass,
     load_and_pack_piqa_ppl_opencompass,
     load_and_pack_siqa_ppl_opencompass,
     load_and_pack_winogrande_ppl_opencompass,
     set_seed,
 )
+
+
+PIQA_PAIRWISE_COEF = 0.8
 
 
 def setup_distributed_safe():
@@ -425,6 +430,208 @@ def _apply_pending_router_anchor_updates(model: nn.Module) -> None:
             apply_fn()
 
 
+def _set_runtime_router_anchor_collection(model: nn.Module, enabled: bool) -> None:
+    for _layer_idx, mlp in get_switch_layers(model):
+        setattr(mlp, "enable_router_anchor_collection", bool(enabled))
+
+
+def _is_pairwise_dataset(ds) -> bool:
+    if ds is None:
+        return False
+    column_names = getattr(ds, "column_names", None)
+    return isinstance(column_names, list) and "chosen_input_ids" in column_names
+
+
+def _make_collator_for_dataset(ds):
+    if _is_pairwise_dataset(ds):
+        return PairwiseDataCollator(pad_id=0)
+    return LMDataCollator(pad_id=0)
+
+
+def _mean_answer_logprob(logits: torch.Tensor, labels: torch.Tensor, answer_mask: torch.Tensor) -> torch.Tensor:
+    shift_logits = logits[:, :-1, :].float()
+    shift_labels = labels[:, 1:]
+    shift_answer_mask = answer_mask[:, 1:].to(dtype=torch.bool)
+    valid_mask = shift_answer_mask & (shift_labels != -100)
+
+    token_log_probs = torch.log_softmax(shift_logits, dim=-1)
+    gathered = token_log_probs.gather(dim=-1, index=shift_labels.clamp_min(0).unsqueeze(-1)).squeeze(-1)
+    gathered = gathered * valid_mask.to(gathered.dtype)
+    token_counts = valid_mask.sum(dim=-1).clamp_min(1)
+    return gathered.sum(dim=-1) / token_counts.to(gathered.dtype)
+
+
+def _forward_stage2_batch(
+    model: nn.Module,
+    batch: Dict[str, torch.Tensor],
+    *,
+    amp_dtype,
+    device: torch.device,
+):
+    is_pairwise = "chosen_input_ids" in batch
+
+    def _run_model(inputs: Dict[str, torch.Tensor]):
+        if amp_dtype is not None and device.type == "cuda":
+            with torch.autocast(device_type="cuda", dtype=amp_dtype):
+                return model(**inputs)
+        return model(**inputs)
+
+    if not is_pairwise:
+        out = _run_model(batch)
+        raw_loss = out.loss
+        anchor_loss = getattr(out, "router_anchor_loss", None)
+        if anchor_loss is None:
+            anchor_loss = raw_loss.new_zeros(())
+        else:
+            anchor_loss = anchor_loss.to(device=raw_loss.device, dtype=raw_loss.dtype)
+        budget_loss = getattr(out, "router_budget_loss", None)
+        if budget_loss is None:
+            budget_loss = raw_loss.new_zeros(())
+        else:
+            budget_loss = budget_loss.to(device=raw_loss.device, dtype=raw_loss.dtype)
+        return {
+            "ce_loss": raw_loss,
+            "pairwise_loss": raw_loss.new_zeros(()),
+            "anchor_loss": anchor_loss,
+            "budget_loss": budget_loss,
+            "pairwise_acc": raw_loss.new_zeros(()),
+            "pairwise_margin": raw_loss.new_zeros(()),
+            "chosen_score": raw_loss.new_zeros(()),
+            "rejected_score": raw_loss.new_zeros(()),
+        }
+
+    rejected_inputs = {
+        "input_ids": batch["rejected_input_ids"],
+        "labels": batch["rejected_labels"],
+        "attention_mask": batch["rejected_attention_mask"],
+    }
+    chosen_inputs = {
+        "input_ids": batch["chosen_input_ids"],
+        "labels": batch["chosen_labels"],
+        "attention_mask": batch["chosen_attention_mask"],
+    }
+
+    _set_runtime_router_anchor_collection(model, False)
+    try:
+        rejected_out = _run_model(rejected_inputs)
+    finally:
+        _set_runtime_router_anchor_collection(model, True)
+    chosen_out = _run_model(chosen_inputs)
+
+    ce_loss = chosen_out.loss
+    anchor_loss = getattr(chosen_out, "router_anchor_loss", None)
+    if anchor_loss is None:
+        anchor_loss = ce_loss.new_zeros(())
+    else:
+        anchor_loss = anchor_loss.to(device=ce_loss.device, dtype=ce_loss.dtype)
+    budget_loss = getattr(chosen_out, "router_budget_loss", None)
+    if budget_loss is None:
+        budget_loss = ce_loss.new_zeros(())
+    else:
+        budget_loss = budget_loss.to(device=ce_loss.device, dtype=ce_loss.dtype)
+
+    chosen_score = _mean_answer_logprob(
+        chosen_out.logits,
+        batch["chosen_labels"],
+        batch["chosen_answer_mask"],
+    )
+    rejected_score = _mean_answer_logprob(
+        rejected_out.logits,
+        batch["rejected_labels"],
+        batch["rejected_answer_mask"],
+    )
+    margin = chosen_score - rejected_score
+    pairwise_loss = -F.logsigmoid(margin).mean()
+    pairwise_acc = (margin > 0).to(chosen_score.dtype).mean()
+
+    return {
+        "ce_loss": ce_loss,
+        "pairwise_loss": pairwise_loss,
+        "anchor_loss": anchor_loss,
+        "budget_loss": budget_loss,
+        "pairwise_acc": pairwise_acc,
+        "pairwise_margin": margin.mean(),
+        "chosen_score": chosen_score.mean(),
+        "rejected_score": rejected_score.mean(),
+    }
+
+
+@torch.no_grad()
+def evaluate_stage2(model: nn.Module, dl: DataLoader, device: torch.device, fp16: bool, bf16: bool) -> Dict[str, float]:
+    was_training = model.training
+    model.eval()
+    amp_dtype = torch.float16 if fp16 else (torch.bfloat16 if bf16 else None)
+
+    totals = {
+        "ce_loss": 0.0,
+        "pairwise_loss": 0.0,
+        "total_loss": 0.0,
+        "pairwise_acc": 0.0,
+        "pairwise_margin": 0.0,
+        "chosen_score": 0.0,
+        "rejected_score": 0.0,
+        "count": 0.0,
+    }
+
+    try:
+        for batch in dl:
+            batch = {k: v.to(device, non_blocking=True) for k, v in batch.items()}
+            stats = _forward_stage2_batch(model, batch, amp_dtype=amp_dtype, device=device)
+            batch_size = float(next(iter(batch.values())).shape[0])
+            ce_loss = float(stats["ce_loss"].detach().float().item())
+            pairwise_loss = float(stats["pairwise_loss"].detach().float().item())
+            pairwise_acc = float(stats["pairwise_acc"].detach().float().item())
+            pairwise_margin = float(stats["pairwise_margin"].detach().float().item())
+            chosen_score = float(stats["chosen_score"].detach().float().item())
+            rejected_score = float(stats["rejected_score"].detach().float().item())
+            total_loss = ce_loss + PIQA_PAIRWISE_COEF * pairwise_loss
+
+            totals["ce_loss"] += ce_loss * batch_size
+            totals["pairwise_loss"] += pairwise_loss * batch_size
+            totals["total_loss"] += total_loss * batch_size
+            totals["pairwise_acc"] += pairwise_acc * batch_size
+            totals["pairwise_margin"] += pairwise_margin * batch_size
+            totals["chosen_score"] += chosen_score * batch_size
+            totals["rejected_score"] += rejected_score * batch_size
+            totals["count"] += batch_size
+    finally:
+        _set_runtime_router_anchor_collection(model, True)
+        if was_training:
+            model.train()
+
+    packed = torch.tensor(
+        [
+            totals["ce_loss"],
+            totals["pairwise_loss"],
+            totals["total_loss"],
+            totals["pairwise_acc"],
+            totals["pairwise_margin"],
+            totals["chosen_score"],
+            totals["rejected_score"],
+            totals["count"],
+        ],
+        device=device,
+        dtype=torch.float64,
+    )
+    if dist.is_initialized():
+        dist.all_reduce(packed, op=dist.ReduceOp.SUM)
+
+    count = max(float(packed[-1].item()), 1.0)
+    ce_loss = float((packed[0] / count).item())
+    pairwise_loss = float((packed[1] / count).item())
+    total_loss = float((packed[2] / count).item())
+    return {
+        "loss": total_loss,
+        "ce_loss": ce_loss,
+        "pairwise_loss": pairwise_loss,
+        "pairwise_acc": float((packed[3] / count).item()),
+        "pairwise_margin": float((packed[4] / count).item()),
+        "chosen_score": float((packed[5] / count).item()),
+        "rejected_score": float((packed[6] / count).item()),
+        "ppl": math.exp(min(20.0, ce_loss)),
+    }
+
+
 def _get_runtime_router_top_k(model: nn.Module) -> Optional[int]:
     switch_layers = get_switch_layers(model)
     if not switch_layers:
@@ -730,9 +937,10 @@ def train(
             ]) + "\n")
         metrics_f.write("\t".join([
             "time", "epoch", "global_step", "optim_step", "lr",
-            "loss", "loss_ce", "loss_anchor", "loss_budget",
-            f"loss_ma{ma_win}", "loss_ema", "loss_ce_ema", "eval_loss", "eval_ppl",
-            "router_top_k", "router_anchor_loss_coef",
+            "loss", "loss_ce", "loss_pairwise", "loss_anchor", "loss_budget",
+            f"loss_ma{ma_win}", "loss_ema", "loss_ce_ema", "eval_loss", "eval_ce_loss", "eval_pairwise_loss", "eval_pairwise_acc", "eval_pairwise_margin", "eval_ppl",
+            "pairwise_coef", "router_top_k", "router_anchor_loss_coef",
+            "train_pairwise_acc", "train_pairwise_margin", "train_chosen_score", "train_rejected_score",
             "router_score_mean", "router_score_std", "router_score_min", "router_score_max",
             "router_weight_row_sum_mean", "router_weight_row_sum_abs_err",
             "router_weight_entropy", "router_weight_top1_mass",
@@ -765,40 +973,14 @@ def train(
 
             batch = {k: v.to(device, non_blocking=True) for k, v in batch.items()}
 
-            if amp_dtype is not None and device.type == "cuda":
-                with torch.autocast(device_type="cuda", dtype=amp_dtype):
-                    out = model(**batch)
-                    raw_loss = out.loss
-            else:
-                out = model(**batch)
-                raw_loss = out.loss
-
-            aux_loss = getattr(out, "router_aux_loss", None)
-            if aux_loss is None:
-                aux_loss = raw_loss.new_zeros(())
-            else:
-                aux_loss = aux_loss.to(device=raw_loss.device, dtype=raw_loss.dtype)
-            z_loss = getattr(out, "router_z_loss", None)
-            if z_loss is None:
-                z_loss = raw_loss.new_zeros(())
-            else:
-                z_loss = z_loss.to(device=raw_loss.device, dtype=raw_loss.dtype)
-
-            anchor_loss = getattr(out, "router_anchor_loss", None)
-            if anchor_loss is None:
-                anchor_loss = raw_loss.new_zeros(())
-            else:
-                anchor_loss = anchor_loss.to(device=raw_loss.device, dtype=raw_loss.dtype)
-
-            budget_loss = getattr(out, "router_budget_loss", None)
-            if budget_loss is None:
-                budget_loss = raw_loss.new_zeros(())
-            else:
-                budget_loss = budget_loss.to(device=raw_loss.device, dtype=raw_loss.dtype)
-
-            ce_loss = raw_loss
+            loss_stats = _forward_stage2_batch(model, batch, amp_dtype=amp_dtype, device=device)
+            ce_loss = loss_stats["ce_loss"]
+            pairwise_loss = loss_stats["pairwise_loss"].to(device=ce_loss.device, dtype=ce_loss.dtype)
+            anchor_loss = loss_stats["anchor_loss"].to(device=ce_loss.device, dtype=ce_loss.dtype)
+            budget_loss = loss_stats["budget_loss"].to(device=ce_loss.device, dtype=ce_loss.dtype)
             total_loss = (
                 ce_loss
+                + PIQA_PAIRWISE_COEF * pairwise_loss
                 + float(run_args.router_anchor_loss_coef) * anchor_loss
                 + float(getattr(run_args, "router_budget_loss_coef", 0.0)) * budget_loss_scale * budget_loss
             )
@@ -842,8 +1024,13 @@ def train(
 
                 loss_real = float(total_loss.detach().float().item())
                 ce_loss_real = float(ce_loss.detach().float().item())
+                pairwise_loss_real = float(pairwise_loss.detach().float().item())
                 anchor_loss_real = float(anchor_loss.detach().float().item())
                 budget_loss_real = float(budget_loss.detach().float().item())
+                pairwise_acc_real = float(loss_stats["pairwise_acc"].detach().float().item())
+                pairwise_margin_real = float(loss_stats["pairwise_margin"].detach().float().item())
+                chosen_score_real = float(loss_stats["chosen_score"].detach().float().item())
+                rejected_score_real = float(loss_stats["rejected_score"].detach().float().item())
 
                 if len(ma_loss_buf) == ma_loss_buf.maxlen:
                     ma_loss_sum -= ma_loss_buf[0]
@@ -866,16 +1053,26 @@ def train(
                 router_anchor_stats = _get_moe_stat_dict(model, "last_router_anchor_stats")
                 should_eval = eval_dl is not None and (optim_step % eval_every == 0)
                 eval_loss_real = None
+                eval_ce_loss_real = None
+                eval_pairwise_loss_real = None
+                eval_pairwise_acc_real = None
+                eval_pairwise_margin_real = None
                 eval_ppl_real = None
                 if should_eval:
-                    eval_loss_real = evaluate(model, eval_dl, device, fp16=fp16, bf16=bf16)
-                    eval_ppl_real = math.exp(min(20, eval_loss_real))
+                    eval_stats = evaluate_stage2(model, eval_dl, device, fp16=fp16, bf16=bf16)
+                    eval_loss_real = eval_stats["loss"]
+                    eval_ce_loss_real = eval_stats["ce_loss"]
+                    eval_pairwise_loss_real = eval_stats["pairwise_loss"]
+                    eval_pairwise_acc_real = eval_stats["pairwise_acc"]
+                    eval_pairwise_margin_real = eval_stats["pairwise_margin"]
+                    eval_ppl_real = eval_stats["ppl"]
 
                 if is_main_process() and (optim_step % log_every == 0):
                     if hasattr(it, "set_postfix"):
                         it.set_postfix({
                             "loss": f"{loss_real:.4f}",
                             "ce": f"{ce_loss_real:.4f}",
+                            "pw": f"{pairwise_loss_real:.4f}",
                             "anchor": f"{anchor_loss_real:.4f}",
                             "budget": f"{budget_loss_real:.4f}",
                             f"ma{ma_win}": f"{loss_ma:.4f}",
@@ -898,15 +1095,25 @@ def train(
                             f"{cur_lr:.6e}",
                             f"{loss_real:.6f}",
                             f"{ce_loss_real:.6f}",
+                            f"{pairwise_loss_real:.6f}",
                             f"{anchor_loss_real:.6f}",
                             f"{budget_loss_real:.6f}",
                             f"{loss_ma:.6f}",
                             f"{ema_loss:.6f}",
                             f"{ema_ce_loss:.6f}",
                             "" if eval_loss_real is None else f"{eval_loss_real:.6f}",
+                            "" if eval_ce_loss_real is None else f"{eval_ce_loss_real:.6f}",
+                            "" if eval_pairwise_loss_real is None else f"{eval_pairwise_loss_real:.6f}",
+                            "" if eval_pairwise_acc_real is None else f"{eval_pairwise_acc_real:.6f}",
+                            "" if eval_pairwise_margin_real is None else f"{eval_pairwise_margin_real:.6f}",
                             "" if eval_ppl_real is None else f"{eval_ppl_real:.6f}",
+                            f"{PIQA_PAIRWISE_COEF:.6f}",
                             str(int(current_router_top_k)),
                             f"{float(run_args.router_anchor_loss_coef):.6f}",
+                            f"{pairwise_acc_real:.6f}",
+                            f"{pairwise_margin_real:.6f}",
+                            f"{chosen_score_real:.6f}",
+                            f"{rejected_score_real:.6f}",
                             _metric_cell(router_forward_stats.get("attn_scores_mean")),
                             _metric_cell(router_forward_stats.get("attn_scores_std")),
                             _metric_cell(router_forward_stats.get("attn_scores_min")),
@@ -952,6 +1159,7 @@ def train(
                 pbar.set_postfix({
                     "loss": f"{loss_real:.4f}",
                     "ce": f"{ce_loss_real:.4f}",
+                    "pw": f"{pairwise_loss_real:.4f}",
                     "anchor": f"{anchor_loss_real:.4f}",
                     "budget": f"{budget_loss_real:.4f}",
                     "ce_ema": f"{ema_ce_loss:.4f}",
@@ -964,6 +1172,7 @@ def train(
                     print(
                         f"[train] epoch={epoch+1}/{epochs} step={optim_step}/{total_optim_steps} "
                         f"loss={loss_real:.4f} ce={ce_loss_real:.4f} ce_ema={ema_ce_loss:.4f} "
+                        f"pairwise={pairwise_loss_real:.4f} pairwise_acc={pairwise_acc_real:.4f} "
                         f"anchor={anchor_loss_real:.4f} budget={budget_loss_real:.4f} "
                         f"top_k={int(current_router_top_k)} "
                         f"anchor_key_cos={float(router_anchor_stats.get('anchor_key_cosine_mean', 0.0)):.4f} "
@@ -973,7 +1182,13 @@ def train(
                 if should_eval and is_main_process():
                     assert eval_loss_real is not None and eval_ppl_real is not None
                     if is_main_process():
-                        print(f"[eval] step={optim_step} loss={eval_loss_real:.4f} ppl={eval_ppl_real:.2f}")
+                        print(
+                            f"[eval] step={optim_step} loss={eval_loss_real:.4f} "
+                            f"ce={float(eval_ce_loss_real or 0.0):.4f} "
+                            f"pairwise={float(eval_pairwise_loss_real or 0.0):.4f} "
+                            f"pairwise_acc={float(eval_pairwise_acc_real or 0.0):.4f} "
+                            f"ppl={eval_ppl_real:.2f}"
+                        )
 
                 if False and save_every > 0 and (optim_step % save_every == 0) and is_main_process():
                     save_dir = os.path.join(output_dir, f"checkpoint-{optim_step}")
@@ -1218,10 +1433,20 @@ def configure_model_config(config, args) -> None:
     config.router_anchor_momentum = float(anchor_momentum)
 
 
-def make_dataset(name: str, tokenizer, args, split: str, max_samples: Optional[int]):
+def make_dataset(name: str, tokenizer, args, split: str, max_samples: Optional[int], *, stage: str):
     use_label = bool(args.use_label)
 
     if name == "piqa":
+        if stage == "stage2" and getattr(args, "dataset", "") == "piqa":
+            return load_and_pack_piqa_pairwise_opencompass(
+                tokenizer=tokenizer,
+                block_size=args.block_size,
+                split=split,
+                num_proc=args.num_proc,
+                bos=True,
+                eos=False,
+                max_samples=max_samples,
+            )
         return load_and_pack_piqa_ppl_opencompass(
             tokenizer=tokenizer,
             block_size=args.block_size,
@@ -1370,10 +1595,10 @@ def build_train_eval_datasets(tokenizer, args, *, stage: str):
     if args.dataset == "mix":
         names = [x.strip() for x in args.mix_datasets.split(",") if x.strip()]
         train_ds_full = concatenate_datasets([
-            make_dataset(name, tokenizer, args, args.train_split, args.train_max_samples) for name in names
+            make_dataset(name, tokenizer, args, args.train_split, args.train_max_samples, stage=stage) for name in names
         ])
     else:
-        train_ds_full = make_dataset(args.dataset, tokenizer, args, args.train_split, args.train_max_samples)
+        train_ds_full = make_dataset(args.dataset, tokenizer, args, args.train_split, args.train_max_samples, stage=stage)
 
     if stage == "stage1":
         train_ds = build_stage1_subset_dataset(
@@ -1402,6 +1627,7 @@ def build_train_eval_datasets(tokenizer, args, *, stage: str):
                     args,
                     args.stage2_validation_train_split,
                     None,
+                    stage=stage,
                 )
                 val_train_part, val_eval_part = split_dataset_by_ratio(
                     val_ds,
@@ -1431,7 +1657,7 @@ def build_train_eval_datasets(tokenizer, args, *, stage: str):
             if args.eval_max_samples is not None:
                 eval_ds = eval_ds.select(range(min(args.eval_max_samples, len(eval_ds))))
         else:
-            eval_ds = make_dataset(args.eval_dataset, tokenizer, args, args.eval_split, args.eval_max_samples)
+            eval_ds = make_dataset(args.eval_dataset, tokenizer, args, args.eval_split, args.eval_max_samples, stage=stage)
     return train_ds, eval_ds
 
 
@@ -1708,7 +1934,8 @@ def stage1_train_cross_attention_router(
 
 
 def build_dataloaders(train_ds, eval_ds, args, world_size: int, is_distributed: bool):
-    collator = LMDataCollator(pad_id=0)
+    train_collator = _make_collator_for_dataset(train_ds)
+    eval_collator = _make_collator_for_dataset(eval_ds)
     if is_distributed:
         train_sampler = DistributedSampler(
             train_ds,
@@ -1738,7 +1965,7 @@ def build_dataloaders(train_ds, eval_ds, args, world_size: int, is_distributed: 
         drop_last=True,
         num_workers=2,
         pin_memory=True,
-        collate_fn=collator,
+        collate_fn=train_collator,
     )
 
     eval_dl = None
@@ -1751,7 +1978,7 @@ def build_dataloaders(train_ds, eval_ds, args, world_size: int, is_distributed: 
             drop_last=False,
             num_workers=2,
             pin_memory=True,
-            collate_fn=collator,
+            collate_fn=eval_collator,
         )
     return train_dl, eval_dl
 

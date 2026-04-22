@@ -155,6 +155,29 @@ def _pad_to_block(input_ids: List[int], labels: List[int], *, block_size: int, p
         labels = labels + [-100] * pad_len
     return {"input_ids": input_ids, "labels": labels}
 
+
+def _pad_pairwise_to_block(
+    input_ids: List[int],
+    labels: List[int],
+    answer_mask: List[int],
+    *,
+    block_size: int,
+    pad_id: int = 0,
+) -> Dict[str, List[int]]:
+    input_ids = input_ids[:block_size]
+    labels = labels[:block_size]
+    answer_mask = answer_mask[:block_size]
+    pad_len = block_size - len(input_ids)
+    if pad_len > 0:
+        input_ids = input_ids + [pad_id] * pad_len
+        labels = labels + [-100] * pad_len
+        answer_mask = answer_mask + [0] * pad_len
+    return {
+        "input_ids": input_ids,
+        "labels": labels,
+        "answer_mask": answer_mask,
+    }
+
 def shuffle_select(ds, max_samples, seed: int):
     if max_samples is None:
         return ds
@@ -220,6 +243,97 @@ def load_and_pack_piqa_ppl_opencompass(
 
     ds = ds.map(build, num_proc=num_proc, remove_columns=ds.column_names)
     ds.set_format(type="torch", columns=["input_ids", "labels"])
+    return ds
+
+
+def load_and_pack_piqa_pairwise_opencompass(
+    tokenizer,
+    block_size: int,
+    split: str = "train",
+    num_proc: int = 1,
+    bos: bool = True,
+    eos: bool = False,
+    max_samples: Optional[int] = None,
+):
+    """
+    PIQA pairwise format for stage2 ranking.
+
+    Each example returns chosen/rejected sequences, while the chosen branch keeps
+    the same full-sequence supervision style as the plain PIQA loader.
+    `*_answer_mask` isolates the candidate-answer continuation for pairwise
+    mean log-prob scoring.
+    """
+    ds = load_dataset("ybisk/piqa", split=split)
+    if max_samples is not None:
+        ds = ds.select(range(min(max_samples, len(ds))))
+
+    bos_id = tokenizer.bos_token_id
+    eos_id = tokenizer.eos_token_id
+    pad_id = 0
+
+    def _build_sequence(prompt: str, answer: str) -> Dict[str, List[int]]:
+        prompt_ids = tokenizer(prompt, add_special_tokens=False)["input_ids"]
+        ans_ids = tokenizer(" " + answer, add_special_tokens=False)["input_ids"]
+
+        input_ids = prompt_ids + ans_ids
+        labels = list(input_ids)
+        answer_mask = ([0] * len(prompt_ids)) + ([1] * len(ans_ids))
+
+        if bos and bos_id is not None:
+            input_ids = [bos_id] + input_ids
+            labels = [-100] + labels
+            answer_mask = [0] + answer_mask
+        if eos and eos_id is not None and eos:
+            input_ids = input_ids + [eos_id]
+            labels = labels + [eos_id]
+            answer_mask = answer_mask + [1]
+
+        return _pad_pairwise_to_block(
+            input_ids,
+            labels,
+            answer_mask,
+            block_size=block_size,
+            pad_id=pad_id,
+        )
+
+    def build(ex):
+        goal = (ex.get("goal") or "").strip()
+        sol1 = (ex.get("sol1") or "").strip()
+        sol2 = (ex.get("sol2") or "").strip()
+        label = int(ex.get("label", 0))
+
+        chosen = sol1 if label == 0 else sol2
+        rejected = sol2 if label == 0 else sol1
+
+        prompt = (
+            "The following makes sense:\n"
+            f"Q: {goal}\n"
+            "A:"
+        )
+
+        chosen_seq = _build_sequence(prompt, chosen)
+        rejected_seq = _build_sequence(prompt, rejected)
+        return {
+            "chosen_input_ids": chosen_seq["input_ids"],
+            "chosen_labels": chosen_seq["labels"],
+            "chosen_answer_mask": chosen_seq["answer_mask"],
+            "rejected_input_ids": rejected_seq["input_ids"],
+            "rejected_labels": rejected_seq["labels"],
+            "rejected_answer_mask": rejected_seq["answer_mask"],
+        }
+
+    ds = ds.map(build, num_proc=num_proc, remove_columns=ds.column_names)
+    ds.set_format(
+        type="torch",
+        columns=[
+            "chosen_input_ids",
+            "chosen_labels",
+            "chosen_answer_mask",
+            "rejected_input_ids",
+            "rejected_labels",
+            "rejected_answer_mask",
+        ],
+    )
     return ds
 
 
@@ -975,6 +1089,29 @@ class LMDataCollator:
         # attention_mask is optional; model can infer from pad_id if needed, but providing helps some impls
         attention_mask = (input_ids != self.pad_id).long()
         return {"input_ids": input_ids, "labels": labels, "attention_mask": attention_mask}
+
+
+@dataclass
+class PairwiseDataCollator:
+    pad_id: int = 0
+
+    def __call__(self, features):
+        chosen_input_ids = torch.stack([f["chosen_input_ids"] for f in features], dim=0)
+        chosen_labels = torch.stack([f["chosen_labels"] for f in features], dim=0)
+        chosen_answer_mask = torch.stack([f["chosen_answer_mask"] for f in features], dim=0)
+        rejected_input_ids = torch.stack([f["rejected_input_ids"] for f in features], dim=0)
+        rejected_labels = torch.stack([f["rejected_labels"] for f in features], dim=0)
+        rejected_answer_mask = torch.stack([f["rejected_answer_mask"] for f in features], dim=0)
+        return {
+            "chosen_input_ids": chosen_input_ids,
+            "chosen_labels": chosen_labels,
+            "chosen_answer_mask": chosen_answer_mask,
+            "chosen_attention_mask": (chosen_input_ids != self.pad_id).long(),
+            "rejected_input_ids": rejected_input_ids,
+            "rejected_labels": rejected_labels,
+            "rejected_answer_mask": rejected_answer_mask,
+            "rejected_attention_mask": (rejected_input_ids != self.pad_id).long(),
+        }
 
 
 # -----------------------------
