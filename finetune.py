@@ -391,7 +391,7 @@ def load_and_pack_siqa_ppl_opencompass(
         ans_ids = tokenizer(" " + ans, add_special_tokens=False)["input_ids"]
 
         input_ids = prompt_ids + ans_ids
-        labels = ([-100] * len(prompt_ids)) + ans_ids
+        labels = list(input_ids)
 
         if bos and bos_id is not None:
             input_ids = [bos_id] + input_ids
@@ -453,7 +453,7 @@ def load_and_pack_hellaswag_ppl_opencompass(
         ans_ids = tokenizer(" " + ans_text, add_special_tokens=False)["input_ids"]
 
         input_ids = prompt_ids + ans_ids
-        labels = ([-100] * len(prompt_ids)) + ans_ids
+        labels = list(input_ids)
 
         if bos and bos_id is not None:
             input_ids = [bos_id] + input_ids
@@ -510,7 +510,7 @@ def load_and_pack_arc_easy_ppl_opencompass(
         ans_ids = tokenizer(" " + ans_text, add_special_tokens=False)["input_ids"]
 
         input_ids = prompt_ids + ans_ids
-        out_labels = ([-100] * len(prompt_ids)) + ans_ids
+        out_labels = list(input_ids)
 
         if bos and bos_id is not None:
             input_ids = [bos_id] + input_ids
@@ -567,7 +567,7 @@ def load_and_pack_commonsenseqa_ppl_opencompass(
         ans_ids = tokenizer(" " + ans_text, add_special_tokens=False)["input_ids"]
 
         input_ids = prompt_ids + ans_ids
-        out_labels = ([-100] * len(prompt_ids)) + ans_ids
+        out_labels = list(input_ids)
 
         if bos and bos_id is not None:
             input_ids = [bos_id] + input_ids
@@ -614,7 +614,7 @@ def load_and_pack_bbh_ppl_opencompass(
         ans_ids = tokenizer(" " + tgt, add_special_tokens=False)["input_ids"]
 
         input_ids = prompt_ids + ans_ids
-        labels = ([-100] * len(prompt_ids)) + ans_ids
+        labels = list(input_ids)
 
         if bos and bos_id is not None:
             input_ids = [bos_id] + input_ids
@@ -685,7 +685,7 @@ def load_and_pack_winogrande_ppl_opencompass(
         ans_ids = tokenizer(" " + gold_text, add_special_tokens=False)["input_ids"]
 
         input_ids = prompt_ids + ans_ids
-        labels = ([-100] * len(prompt_ids)) + ans_ids
+        labels = list(input_ids)
 
         if bos and bos_id is not None:
             input_ids = [bos_id] + input_ids
@@ -781,7 +781,7 @@ def load_and_pack_mmlu_ppl_opencompass(
         ans_ids = tokenizer(" " + str(gold).strip(), add_special_tokens=False)["input_ids"]
 
         input_ids = prompt_ids + ans_ids
-        labels = ([-100] * len(prompt_ids)) + ans_ids
+        labels = list(input_ids)
 
         if bos and bos_id is not None:
             input_ids = [bos_id] + input_ids
@@ -838,7 +838,7 @@ def load_and_pack_arc_challenge_ppl_opencompass(
         ans_ids = tokenizer(" " + ans_text, add_special_tokens=False)["input_ids"]
 
         input_ids = prompt_ids + ans_ids
-        out_labels = ([-100] * len(prompt_ids)) + ans_ids
+        out_labels = list(input_ids)
 
         if bos and bos_id is not None:
             input_ids = [bos_id] + input_ids
@@ -895,7 +895,7 @@ def load_and_pack_openbookqa_ppl_opencompass(
         ans_ids = tokenizer(" " + ans_text, add_special_tokens=False)["input_ids"]
 
         input_ids = prompt_ids + ans_ids
-        out_labels = ([-100] * len(prompt_ids)) + ans_ids
+        out_labels = list(input_ids)
 
         if bos and bos_id is not None:
             input_ids = [bos_id] + input_ids

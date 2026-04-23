@@ -29,7 +29,7 @@ import torch
 import torch.distributed as dist
 import torch.nn as nn
 import torch.nn.functional as F
-from datasets import concatenate_datasets
+from datasets import Dataset, concatenate_datasets
 from peft import LoraConfig, TaskType, get_peft_model, prepare_model_for_kbit_training
 from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
@@ -50,7 +50,6 @@ from finetune import (
     load_and_pack_hellaswag_ppl_opencompass,
     load_and_pack_mmlu_ppl_opencompass,
     load_and_pack_openbookqa_ppl_opencompass,
-    load_and_pack_piqa_pairwise_opencompass,
     load_and_pack_piqa_ppl_opencompass,
     load_and_pack_siqa_ppl_opencompass,
     load_and_pack_winogrande_ppl_opencompass,
@@ -1456,20 +1455,75 @@ def configure_model_config(config, args) -> None:
     config.router_anchor_momentum = float(anchor_momentum)
 
 
+def load_and_pack_redpajama_local(
+    tokenizer,
+    block_size: int,
+    redpajama_local_dir: str,
+    split: str = "train",
+    num_proc: int = 1,
+    bos: bool = True,
+    eos: bool = False,
+    max_samples: Optional[int] = None,
+):
+    if not str(redpajama_local_dir).strip():
+        raise ValueError("--redpajama_local_dir is required when dataset/eval_dataset includes 'redpajama'")
+    data_dir = Path(redpajama_local_dir).expanduser()
+    if not data_dir.exists():
+        raise FileNotFoundError(f"RedPajama local dir not found: {data_dir}")
+
+    data_files = sorted(str(path) for path in data_dir.glob("*.jsonl") if path.is_file())
+    if not data_files:
+        raise FileNotFoundError(f"No .jsonl files found under RedPajama local dir: {data_dir}")
+
+    if split != "train" and is_main_process():
+        print(f"[data] RedPajama local dataset has no built-in '{split}' split; reusing train files.")
+
+    bos_id = tokenizer.bos_token_id
+    eos_id = tokenizer.eos_token_id
+    pad_id = 0
+
+    packed_records = []
+    for file_path in data_files:
+        with open(file_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                text = (json.loads(line).get("text") or "").strip()
+                if not text:
+                    continue
+
+                input_ids = tokenizer(text, add_special_tokens=False)["input_ids"]
+                if bos and bos_id is not None:
+                    input_ids = [bos_id] + input_ids
+                if eos and eos_id is not None:
+                    input_ids = input_ids + [eos_id]
+
+                input_ids = input_ids[:block_size]
+                labels = list(input_ids)
+                pad_len = block_size - len(input_ids)
+                if pad_len > 0:
+                    input_ids = input_ids + [pad_id] * pad_len
+                    labels = labels + [-100] * pad_len
+                packed_records.append({"input_ids": input_ids, "labels": labels})
+
+                if max_samples is not None and len(packed_records) >= int(max_samples):
+                    break
+        if max_samples is not None and len(packed_records) >= int(max_samples):
+            break
+
+    if not packed_records:
+        raise ValueError(f"No usable RedPajama samples found under: {data_dir}")
+
+    ds = Dataset.from_list(packed_records)
+    ds.set_format(type="torch", columns=["input_ids", "labels"])
+    return ds
+
+
 def make_dataset(name: str, tokenizer, args, split: str, max_samples: Optional[int], *, stage: str):
     use_label = bool(args.use_label)
 
     if name == "piqa":
-        if stage == "stage2" and getattr(args, "dataset", "") == "piqa":
-            return load_and_pack_piqa_pairwise_opencompass(
-                tokenizer=tokenizer,
-                block_size=args.block_size,
-                split=split,
-                num_proc=args.num_proc,
-                bos=True,
-                eos=False,
-                max_samples=max_samples,
-            )
         return load_and_pack_piqa_ppl_opencompass(
             tokenizer=tokenizer,
             block_size=args.block_size,
@@ -1583,6 +1637,17 @@ def make_dataset(name: str, tokenizer, args, split: str, max_samples: Optional[i
             eos=False,
             max_samples=max_samples,
             use_label=use_label,
+        )
+    if name == "redpajama":
+        return load_and_pack_redpajama_local(
+            tokenizer=tokenizer,
+            block_size=args.block_size,
+            redpajama_local_dir=args.redpajama_local_dir,
+            split=split,
+            num_proc=args.num_proc,
+            bos=True,
+            eos=False,
+            max_samples=max_samples,
         )
     raise ValueError(f"Unknown dataset: {name}")
 
@@ -2050,15 +2115,16 @@ def parse_args():
         "--dataset",
         type=str,
         default="piqa",
-        choices=["piqa", "siqa", "hellaswag", "arc-e", "csqa", "bbh", "winogrande", "mmlu", "mix", "arc-c", "openbookqa"],
+        choices=["piqa", "siqa", "hellaswag", "arc-e", "csqa", "bbh", "winogrande", "mmlu", "mix", "arc-c", "openbookqa", "redpajama"],
     )
     ap.add_argument(
         "--eval_dataset",
         type=str,
         default="piqa",
-        choices=["piqa", "siqa", "hellaswag", "arc-e", "csqa", "bbh", "winogrande", "mmlu", "arc-c", "openbookqa"],
+        choices=["piqa", "siqa", "hellaswag", "arc-e", "csqa", "bbh", "winogrande", "mmlu", "arc-c", "openbookqa", "redpajama"],
     )
     ap.add_argument("--mix_datasets", type=str, default="piqa,siqa")
+    ap.add_argument("--redpajama_local_dir", type=str, default="")
     ap.add_argument("--train_split", type=str, default="train")
     ap.add_argument("--eval_split", type=str, default="validation")
     ap.add_argument("--block_size", type=int, default=64)

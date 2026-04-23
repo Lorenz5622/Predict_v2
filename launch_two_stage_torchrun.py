@@ -53,13 +53,23 @@ def _build_torchrun_args(ns: argparse.Namespace) -> List[str]:
     return args
 
 
-def _extract_config_path(forwarded: List[str]) -> Path:
-    for i, token in enumerate(forwarded):
+def _extract_config_path_and_overrides(forwarded: List[str]) -> tuple[Path, List[str]]:
+    config_path: Path | None = None
+    overrides: List[str] = []
+    i = 0
+    while i < len(forwarded):
+        token = forwarded[i]
         if token == "--config":
             if i + 1 >= len(forwarded):
                 raise SystemExit("--config was provided without a path")
-            return Path(forwarded[i + 1]).expanduser()
-    raise SystemExit("Missing required forwarded arg: --config <path>")
+            config_path = Path(forwarded[i + 1]).expanduser()
+            i += 2
+            continue
+        overrides.append(token)
+        i += 1
+    if config_path is None:
+        raise SystemExit("Missing required forwarded arg: --config <path>")
+    return config_path, overrides
 
 
 def _mapping_to_argv(mapping: Dict[str, Any], *, output_dir: str) -> List[str]:
@@ -120,13 +130,15 @@ def main() -> None:
         raise SystemExit(2)
 
     forwarded = ns.train_args[1:]
-    config_path = _extract_config_path(forwarded)
+    config_path, forwarded_overrides = _extract_config_path_and_overrides(forwarded)
     if not config_path.is_absolute():
         config_path = (Path.cwd() / config_path).resolve()
     if not config_path.exists():
         raise SystemExit(f"Config file not found: {config_path}")
 
     stage1_args, stage2_args, output_dir = _load_launch_args(config_path)
+    stage1_args = stage1_args + forwarded_overrides
+    stage2_args = stage2_args + forwarded_overrides
     torchrun_args = _build_torchrun_args(ns)
 
     env = os.environ.copy()

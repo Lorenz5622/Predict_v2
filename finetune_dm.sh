@@ -4,6 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NPROC=2
 LAUNCHER="$SCRIPT_DIR/launch_two_stage_torchrun.py"
+EXTRA_ARGS=("$@")
 
 CONFIGS=(
   # "configs/finetune_dm.json"
@@ -76,7 +77,7 @@ CONFIGS=(
   # "configs/CB_lowlr_norestrict.json" # 68.39
   # "configs/CB_lowlr_norestrict_abl_newlr01_ctx03_pruned.json" # 68.02
   # "configs/CB_lowlr_norestrict_abl_newlr005_ctx03_pruned.json" # 68.81
-  "configs/final_version_v1.json"
+  "configs/final_version_v1.json" # 73.61，疑似掺多了
 )
 
 LOGDIR="$SCRIPT_DIR/logs/sweep_$(date +%Y%m%d_%H%M%S)" 
@@ -91,6 +92,7 @@ for cfg in "${CONFIGS[@]}"; do
     --nproc_per_node "$NPROC" \
     -- \
     --config "$cfg_path" \
+    "${EXTRA_ARGS[@]}" \
     1> >(tee "$LOGDIR/${name}.out.log") \
     2> >(tee "$LOGDIR/${name}.err.log" >&2)
 
