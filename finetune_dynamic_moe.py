@@ -58,7 +58,7 @@ from finetune import (
 )
 
 
-PIQA_PAIRWISE_COEF = 0.8
+PIQA_PAIRWISE_COEF = 0.0
 
 
 def setup_distributed_safe():

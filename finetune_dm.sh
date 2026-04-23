@@ -76,7 +76,12 @@ CONFIGS=(
   # "configs/CB_lowlr_norestrict.json" # 68.39
   # "configs/CB_lowlr_norestrict_abl_newlr01_ctx03_pruned.json" # 68.02
   # "configs/CB_lowlr_norestrict_abl_newlr005_ctx03_pruned.json" # 68.81
-  "configs/final_version_v1.json"
+  # "configs/CB.json"
+  # "configs/CB_arce.json"
+  # "configs/CB_siqa.json"
+  # "configs/CB_oqa.json"
+  # "configs/CB_wino.json"
+  "configs/CB_arcc.json"
 )
 
 LOGDIR="$SCRIPT_DIR/logs/sweep_$(date +%Y%m%d_%H%M%S)" 
