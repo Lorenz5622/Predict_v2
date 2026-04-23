@@ -1460,16 +1460,16 @@ def make_dataset(name: str, tokenizer, args, split: str, max_samples: Optional[i
     use_label = bool(args.use_label)
 
     if name == "piqa":
-        if stage == "stage2" and getattr(args, "dataset", "") == "piqa":
-            return load_and_pack_piqa_pairwise_opencompass(
-                tokenizer=tokenizer,
-                block_size=args.block_size,
-                split=split,
-                num_proc=args.num_proc,
-                bos=True,
-                eos=False,
-                max_samples=max_samples,
-            )
+        # if stage == "stage2" and getattr(args, "dataset", "") == "piqa":
+            # return load_and_pack_piqa_pairwise_opencompass(
+            #     tokenizer=tokenizer,
+            #     block_size=args.block_size,
+            #     split=split,
+            #     num_proc=args.num_proc,
+            #     bos=True,
+            #     eos=False,
+            #     max_samples=max_samples,
+            # )
         return load_and_pack_piqa_ppl_opencompass(
             tokenizer=tokenizer,
             block_size=args.block_size,
