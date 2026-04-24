@@ -289,6 +289,20 @@ def _metric_cell(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, default=str)
 
 
+def _named_param_grad_norm(model: nn.Module, name_fragment: str) -> float:
+    total_sq = 0.0
+    matched = 0
+    for name, param in model.named_parameters():
+        if name_fragment not in name or param.grad is None:
+            continue
+        grad_norm = param.grad.detach().float().norm(2)
+        if not torch.isfinite(grad_norm):
+            return float("nan")
+        total_sq += float(grad_norm.item()) ** 2
+        matched += 1
+    return math.sqrt(total_sq) if matched > 0 else 0.0
+
+
 def get_switch_layers(model: nn.Module) -> List[tuple[int, nn.Module]]:
     base_model = _unwrap_base_model(model)
     moe_model = getattr(base_model, "model", None)
@@ -1089,6 +1103,7 @@ def train(
             "loss", "loss_ce", "loss_pairwise", "loss_value_anchor", "loss_budget",
             f"loss_ma{ma_win}", "loss_ema", "loss_ce_ema", "eval_pairwise_acc",
             "pairwise_coef", "router_top_k", "router_value_anchor_loss_coef",
+            "expert_value_grad_norm",
             "train_pairwise_acc", "train_pairwise_margin", "train_chosen_score", "train_rejected_score",
             "router_score_mean", "router_score_std", "router_score_min", "router_score_max",
             "router_weight_row_sum_mean", "router_weight_row_sum_abs_err",
@@ -1144,9 +1159,12 @@ def train(
             global_step += 1
 
             if global_step % grad_accum == 0:
+                if scaler.is_enabled():
+                    scaler.unscale_(optimizer)
+
+                expert_value_grad_norm = _named_param_grad_norm(model, "router.expert_value")
+
                 if max_grad_norm > 0:
-                    if scaler.is_enabled():
-                        scaler.unscale_(optimizer)
                     nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
 
                 step_succeeded = True
@@ -1214,6 +1232,7 @@ def train(
                             "ce": f"{ce_loss_real:.4f}",
                             "pw": f"{pairwise_loss_real:.4f}",
                             "v_anchor": f"{value_anchor_loss_real:.4f}",
+                            "ev_gn": f"{expert_value_grad_norm:.3e}",
                             "budget": f"{budget_loss_real:.4f}",
                             f"ma{ma_win}": f"{loss_ma:.4f}",
                             "ema": f"{ema_loss:.4f}",
@@ -1244,6 +1263,7 @@ def train(
                             f"{PIQA_PAIRWISE_COEF:.6f}",
                             str(int(current_router_top_k)),
                             f"{float(run_args.router_value_anchor_loss_coef):.6f}",
+                            _metric_cell(expert_value_grad_norm),
                             f"{pairwise_acc_real:.6f}",
                             f"{pairwise_margin_real:.6f}",
                             f"{chosen_score_real:.6f}",
@@ -1296,6 +1316,7 @@ def train(
                     "ce": f"{ce_loss_real:.4f}",
                     "pw": f"{pairwise_loss_real:.4f}",
                     "v_anchor": f"{value_anchor_loss_real:.4f}",
+                    "ev_gn": f"{expert_value_grad_norm:.3e}",
                     "budget": f"{budget_loss_real:.4f}",
                     "ce_ema": f"{ema_ce_loss:.4f}",
                     "top_k": str(int(current_router_top_k)),
@@ -1308,7 +1329,8 @@ def train(
                         f"[train] epoch={epoch+1}/{epochs} step={optim_step}/{total_optim_steps} "
                         f"loss={loss_real:.4f} ce={ce_loss_real:.4f} ce_ema={ema_ce_loss:.4f} "
                         f"pairwise={pairwise_loss_real:.4f} pairwise_acc={pairwise_acc_real:.4f} "
-                        f"v_anchor={value_anchor_loss_real:.4f} budget={budget_loss_real:.4f} "
+                        f"v_anchor={value_anchor_loss_real:.4f} ev_gn={expert_value_grad_norm:.3e} "
+                        f"budget={budget_loss_real:.4f} "
                         f"top_k={int(current_router_top_k)} "
                         f"value_anchor_cos={float(router_value_anchor_stats.get('value_anchor_cosine_mean', 0.0)):.4f} "
                         f"lr={cur_lr:.3e} elapsed={elapsed/60:.1f}m"
