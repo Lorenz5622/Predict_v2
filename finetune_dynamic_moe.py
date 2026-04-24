@@ -29,7 +29,7 @@ import torch
 import torch.distributed as dist
 import torch.nn as nn
 import torch.nn.functional as F
-from datasets import Dataset, concatenate_datasets
+from datasets import Dataset, concatenate_datasets, load_dataset
 from peft import LoraConfig, TaskType, get_peft_model, prepare_model_for_kbit_training
 from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
@@ -452,7 +452,50 @@ def _is_pairwise_dataset(ds) -> bool:
     return isinstance(column_names, list) and "chosen_input_ids" in column_names
 
 
+def _is_ranking_eval_dataset(ds) -> bool:
+    if ds is None:
+        return False
+    column_names = getattr(ds, "column_names", None)
+    return isinstance(column_names, list) and "candidate_input_ids" in column_names
+
+
+class OpenCompassPPLDataCollator:
+    pad_id: int = 0
+
+    def __init__(self, pad_id: int = 0):
+        self.pad_id = int(pad_id)
+
+    def __call__(self, features):
+        max_choices = max(len(f["candidate_input_ids"]) for f in features)
+        seq_len = len(features[0]["candidate_input_ids"][0])
+
+        def _pad_candidates(key: str, pad_value: int):
+            rows = []
+            for f in features:
+                values = [torch.as_tensor(x, dtype=torch.long) for x in f[key]]
+                while len(values) < max_choices:
+                    values.append(torch.full((seq_len,), pad_value, dtype=torch.long))
+                rows.append(torch.stack(values, dim=0))
+            return torch.stack(rows, dim=0)
+
+        input_ids = _pad_candidates("candidate_input_ids", self.pad_id)
+        labels = _pad_candidates("candidate_labels", -100)
+        candidate_mask = torch.zeros((len(features), max_choices), dtype=torch.bool)
+        for i, f in enumerate(features):
+            candidate_mask[i, : len(f["candidate_input_ids"])] = True
+
+        return {
+            "candidate_input_ids": input_ids,
+            "candidate_labels": labels,
+            "candidate_attention_mask": (input_ids != self.pad_id).long(),
+            "candidate_mask": candidate_mask,
+            "gold_idx": torch.as_tensor([int(f["gold_idx"]) for f in features], dtype=torch.long),
+        }
+
+
 def _make_collator_for_dataset(ds):
+    if _is_ranking_eval_dataset(ds):
+        return OpenCompassPPLDataCollator(pad_id=0)
     if _is_pairwise_dataset(ds):
         return PairwiseDataCollator(pad_id=0)
     return LMDataCollator(pad_id=0)
@@ -479,6 +522,76 @@ def _causal_lm_ce_loss(logits: torch.Tensor, labels: torch.Tensor) -> torch.Tens
         shift_labels.reshape(-1),
         ignore_index=-100,
     )
+
+
+def _per_sample_causal_lm_ce(logits: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
+    shift_logits = logits[:, :-1, :].float().contiguous()
+    shift_labels = labels[:, 1:].contiguous()
+    loss = F.cross_entropy(
+        shift_logits.view(-1, shift_logits.size(-1)),
+        shift_labels.reshape(-1),
+        ignore_index=-100,
+        reduction="none",
+    ).view(shift_labels.shape)
+    valid_mask = shift_labels != -100
+    token_counts = valid_mask.sum(dim=-1).clamp_min(1)
+    return loss.sum(dim=-1) / token_counts.to(loss.dtype)
+
+
+def _forward_opencompass_ppl_batch(
+    model: nn.Module,
+    batch: Dict[str, torch.Tensor],
+    *,
+    amp_dtype,
+    device: torch.device,
+) -> Dict[str, torch.Tensor]:
+    input_ids = batch["candidate_input_ids"]
+    labels = batch["candidate_labels"]
+    attention_mask = batch["candidate_attention_mask"]
+    candidate_mask = batch["candidate_mask"].to(dtype=torch.bool)
+    gold_idx = batch["gold_idx"]
+
+    batch_size, num_choices, seq_len = input_ids.shape
+    flat_valid = candidate_mask.reshape(-1)
+    flat_input_ids = input_ids.reshape(batch_size * num_choices, seq_len)
+    flat_labels = labels.reshape(batch_size * num_choices, seq_len)
+    flat_attention_mask = attention_mask.reshape(batch_size * num_choices, seq_len)
+
+    valid_input_ids = flat_input_ids[flat_valid]
+    valid_labels = flat_labels[flat_valid]
+    valid_attention_mask = flat_attention_mask[flat_valid]
+
+    def _run_model(inputs: Dict[str, torch.Tensor]):
+        if amp_dtype is not None and device.type == "cuda":
+            with torch.autocast(device_type="cuda", dtype=amp_dtype):
+                return model(**inputs)
+        return model(**inputs)
+
+    out = _run_model({
+        "input_ids": valid_input_ids,
+        "labels": valid_labels,
+        "attention_mask": valid_attention_mask,
+    })
+    valid_scores = _per_sample_causal_lm_ce(out.logits, valid_labels)
+
+    scores = torch.full(
+        (batch_size * num_choices,),
+        float("inf"),
+        device=valid_scores.device,
+        dtype=valid_scores.dtype,
+    )
+    scores[flat_valid.to(device=scores.device)] = valid_scores
+    scores = scores.view(batch_size, num_choices)
+
+    pred_idx = scores.argmin(dim=-1)
+    correct = pred_idx.eq(gold_idx.to(device=pred_idx.device))
+    return {
+        "correct": correct.to(dtype=torch.float32).sum(),
+        "count": torch.tensor(float(batch_size), device=scores.device, dtype=torch.float32),
+        "pairwise_acc": correct.to(dtype=torch.float32).mean(),
+        "chosen_score": scores.gather(1, gold_idx.to(device=scores.device).view(-1, 1)).mean(),
+        "rejected_score": scores.min(dim=-1).values.mean(),
+    }
 
 
 def _forward_stage2_batch(
@@ -610,12 +723,20 @@ def evaluate_stage2(model: nn.Module, dl: DataLoader, device: torch.device, fp16
         "pairwise_margin": 0.0,
         "chosen_score": 0.0,
         "rejected_score": 0.0,
+        "ranking_correct": 0.0,
+        "ranking_count": 0.0,
         "count": 0.0,
     }
 
     try:
         for batch in dl:
             batch = {k: v.to(device, non_blocking=True) for k, v in batch.items()}
+            if "candidate_input_ids" in batch:
+                stats = _forward_opencompass_ppl_batch(model, batch, amp_dtype=amp_dtype, device=device)
+                totals["ranking_correct"] += float(stats["correct"].detach().float().item())
+                totals["ranking_count"] += float(stats["count"].detach().float().item())
+                continue
+
             stats = _forward_stage2_batch(model, batch, amp_dtype=amp_dtype, device=device)
             batch_size = float(next(iter(batch.values())).shape[0])
             ce_loss = float(stats["ce_loss"].detach().float().item())
@@ -648,6 +769,8 @@ def evaluate_stage2(model: nn.Module, dl: DataLoader, device: torch.device, fp16
             totals["pairwise_margin"],
             totals["chosen_score"],
             totals["rejected_score"],
+            totals["ranking_correct"],
+            totals["ranking_count"],
             totals["count"],
         ],
         device=device,
@@ -655,6 +778,20 @@ def evaluate_stage2(model: nn.Module, dl: DataLoader, device: torch.device, fp16
     )
     if dist.is_initialized():
         dist.all_reduce(packed, op=dist.ReduceOp.SUM)
+
+    ranking_count = float(packed[-2].item())
+    if ranking_count > 0:
+        ranking_acc = float((packed[-3] / max(ranking_count, 1.0)).item())
+        return {
+            "loss": 0.0,
+            "ce_loss": 0.0,
+            "pairwise_loss": 0.0,
+            "pairwise_acc": ranking_acc,
+            "pairwise_margin": 0.0,
+            "chosen_score": 0.0,
+            "rejected_score": 0.0,
+            "ppl": 0.0,
+        }
 
     count = max(float(packed[-1].item()), 1.0)
     ce_loss = float((packed[0] / count).item())
@@ -979,7 +1116,7 @@ def train(
         metrics_f.write("\t".join([
             "time", "epoch", "global_step", "optim_step", "lr",
             "loss", "loss_ce", "loss_pairwise", "loss_anchor", "loss_value_anchor", "loss_budget",
-            f"loss_ma{ma_win}", "loss_ema", "loss_ce_ema", "eval_loss", "eval_ce_loss", "eval_pairwise_loss", "eval_pairwise_acc", "eval_pairwise_margin", "eval_ppl",
+            f"loss_ma{ma_win}", "loss_ema", "loss_ce_ema", "eval_pairwise_acc",
             "pairwise_coef", "router_top_k", "router_anchor_loss_coef", "router_value_anchor_loss_coef",
             "train_pairwise_acc", "train_pairwise_margin", "train_chosen_score", "train_rejected_score",
             "router_score_mean", "router_score_std", "router_score_min", "router_score_max",
@@ -1101,20 +1238,10 @@ def train(
                 router_anchor_stats = _get_moe_stat_dict(model, "last_router_anchor_stats")
                 router_value_anchor_stats = _get_moe_stat_dict(model, "last_router_value_anchor_stats")
                 should_eval = eval_dl is not None and (optim_step % eval_every == 0)
-                eval_loss_real = None
-                eval_ce_loss_real = None
-                eval_pairwise_loss_real = None
                 eval_pairwise_acc_real = None
-                eval_pairwise_margin_real = None
-                eval_ppl_real = None
                 if should_eval:
                     eval_stats = evaluate_stage2(model, eval_dl, device, fp16=fp16, bf16=bf16)
-                    eval_loss_real = eval_stats["loss"]
-                    eval_ce_loss_real = eval_stats["ce_loss"]
-                    eval_pairwise_loss_real = eval_stats["pairwise_loss"]
                     eval_pairwise_acc_real = eval_stats["pairwise_acc"]
-                    eval_pairwise_margin_real = eval_stats["pairwise_margin"]
-                    eval_ppl_real = eval_stats["ppl"]
 
                 if is_main_process() and (optim_step % log_every == 0):
                     if hasattr(it, "set_postfix"):
@@ -1152,12 +1279,7 @@ def train(
                             f"{loss_ma:.6f}",
                             f"{ema_loss:.6f}",
                             f"{ema_ce_loss:.6f}",
-                            "" if eval_loss_real is None else f"{eval_loss_real:.6f}",
-                            "" if eval_ce_loss_real is None else f"{eval_ce_loss_real:.6f}",
-                            "" if eval_pairwise_loss_real is None else f"{eval_pairwise_loss_real:.6f}",
                             "" if eval_pairwise_acc_real is None else f"{eval_pairwise_acc_real:.6f}",
-                            "" if eval_pairwise_margin_real is None else f"{eval_pairwise_margin_real:.6f}",
-                            "" if eval_ppl_real is None else f"{eval_ppl_real:.6f}",
                             f"{PIQA_PAIRWISE_COEF:.6f}",
                             str(int(current_router_top_k)),
                             f"{float(run_args.router_anchor_loss_coef):.6f}",
@@ -1245,15 +1367,8 @@ def train(
                     )
 
                 if should_eval and is_main_process():
-                    assert eval_loss_real is not None and eval_ppl_real is not None
-                    if is_main_process():
-                        print(
-                            f"[eval] step={optim_step} loss={eval_loss_real:.4f} "
-                            f"ce={float(eval_ce_loss_real or 0.0):.4f} "
-                            f"pairwise={float(eval_pairwise_loss_real or 0.0):.4f} "
-                            f"pairwise_acc={float(eval_pairwise_acc_real or 0.0):.4f} "
-                            f"ppl={eval_ppl_real:.2f}"
-                        )
+                    assert eval_pairwise_acc_real is not None
+                    print(f"[eval] step={optim_step} eval_pairwise_acc={eval_pairwise_acc_real:.6f}")
 
                 if False and save_every > 0 and (optim_step % save_every == 0) and is_main_process():
                     save_dir = os.path.join(output_dir, f"checkpoint-{optim_step}")
@@ -1695,6 +1810,191 @@ def make_dataset(name: str, tokenizer, args, split: str, max_samples: Optional[i
     raise ValueError(f"Unknown dataset: {name}")
 
 
+OPENCOMPASS_PPL_EVAL_DATASETS = {"piqa", "siqa", "arc-e", "arc-c", "winogrande", "openbookqa"}
+
+
+def _choice_label_to_index(answer_key, labels_: List[str]) -> Optional[int]:
+    answer_key = str(answer_key).strip()
+    labels_ = [str(x).strip() for x in labels_]
+    if answer_key in labels_:
+        return labels_.index(answer_key)
+    letters = ["A", "B", "C", "D", "E"]
+    if answer_key in letters:
+        idx = letters.index(answer_key)
+        return idx if idx < len(labels_) else None
+    try:
+        idx = int(answer_key)
+    except Exception:
+        return None
+    if 0 <= idx < len(labels_):
+        return idx
+    if 1 <= idx <= len(labels_):
+        return idx - 1
+    return None
+
+
+def _pack_opencompass_ppl_text(
+    tokenizer,
+    text: str,
+    *,
+    block_size: int,
+    bos: bool = True,
+    eos: bool = False,
+    pad_id: int = 0,
+) -> Dict[str, List[int]]:
+    input_ids = tokenizer(str(text), add_special_tokens=False)["input_ids"]
+    labels = list(input_ids)
+    bos_id = tokenizer.bos_token_id
+    eos_id = tokenizer.eos_token_id
+    if bos and bos_id is not None:
+        input_ids = [bos_id] + input_ids
+        labels = [-100] + labels
+    if eos and eos_id is not None:
+        input_ids = input_ids + [eos_id]
+        labels = labels + [eos_id]
+    input_ids = input_ids[:block_size]
+    labels = labels[:block_size]
+    pad_len = block_size - len(input_ids)
+    if pad_len > 0:
+        input_ids = input_ids + [pad_id] * pad_len
+        labels = labels + [-100] * pad_len
+    return {"input_ids": input_ids, "labels": labels}
+
+
+def _make_ranking_record(tokenizer, candidate_texts: List[str], gold_idx: int, block_size: int):
+    packed = [
+        _pack_opencompass_ppl_text(tokenizer, text, block_size=block_size, bos=True, eos=False, pad_id=0)
+        for text in candidate_texts
+    ]
+    return {
+        "candidate_input_ids": [x["input_ids"] for x in packed],
+        "candidate_labels": [x["labels"] for x in packed],
+        "gold_idx": int(gold_idx),
+    }
+
+
+def make_opencompass_ppl_eval_dataset(
+    name: str,
+    tokenizer,
+    args,
+    split: str,
+    max_samples: Optional[int],
+):
+    records: List[Dict[str, Any]] = []
+    block_size = int(args.block_size)
+
+    if name == "piqa":
+        ds = load_dataset("ybisk/piqa", split=split)
+        for ex in ds:
+            goal = (ex.get("goal") or "").strip()
+            sol1 = (ex.get("sol1") or "").strip()
+            sol2 = (ex.get("sol2") or "").strip()
+            gold_idx = int(ex.get("label", 0))
+            if gold_idx not in (0, 1):
+                continue
+            records.append(_make_ranking_record(
+                tokenizer,
+                [
+                    f"The following makes sense: \nQ: {goal}\nA: {sol1}\n",
+                    f"The following makes sense: \nQ: {goal}\nA: {sol2}\n",
+                ],
+                gold_idx,
+                block_size,
+            ))
+
+    elif name == "siqa":
+        ds = load_dataset("allenai/social_i_qa", split=split, trust_remote_code=True)
+        for ex in ds:
+            ctx = (ex.get("context") or "").strip()
+            q = (ex.get("question") or "").strip()
+            answers = [
+                (ex.get("answerA") or "").strip(),
+                (ex.get("answerB") or "").strip(),
+                (ex.get("answerC") or "").strip(),
+            ]
+            try:
+                gold_idx = int(str(ex.get("label", "1")).strip()) - 1
+            except Exception:
+                gold_idx = 0
+            if gold_idx not in (0, 1, 2):
+                continue
+            records.append(_make_ranking_record(
+                tokenizer,
+                [f"{ctx}\nQuestion: {q}\nAnswer:{answer}" for answer in answers],
+                gold_idx,
+                block_size,
+            ))
+
+    elif name in {"arc-e", "arc-c"}:
+        config_name = "ARC-Easy" if name == "arc-e" else "ARC-Challenge"
+        ds = load_dataset("allenai/ai2_arc", config_name, split=split)
+        for ex in ds:
+            q = (ex.get("question") or "").strip()
+            choices = ex.get("choices") or {}
+            texts = [str(x).strip() for x in list(choices.get("text") or [])]
+            labels_ = [str(x).strip() for x in list(choices.get("label") or [])]
+            if len(texts) != 4 or len(labels_) != 4:
+                continue
+            gold_idx = _choice_label_to_index(ex.get("answerKey", ""), labels_)
+            if gold_idx is None or gold_idx >= 4:
+                continue
+            records.append(_make_ranking_record(
+                tokenizer,
+                [f"Question: {q}\nAnswer: {answer}" for answer in texts],
+                gold_idx,
+                block_size,
+            ))
+
+    elif name == "winogrande":
+        ds = load_dataset("allenai/winogrande", args.winogrande_config, split=split, trust_remote_code=True)
+        for ex in ds:
+            sent = (ex.get("sentence") or "").strip()
+            opt1 = sent.replace("_", (ex.get("option1") or "").strip())
+            opt2 = sent.replace("_", (ex.get("option2") or "").strip())
+            try:
+                gold_idx = int(str(ex.get("answer", "1")).strip()) - 1
+            except Exception:
+                gold_idx = 0
+            if gold_idx not in (0, 1):
+                continue
+            records.append(_make_ranking_record(
+                tokenizer,
+                [f"Good sentence: {opt1}", f"Good sentence: {opt2}"],
+                gold_idx,
+                block_size,
+            ))
+
+    elif name == "openbookqa":
+        ds = load_dataset("allenai/openbookqa", "main", split=split)
+        for ex in ds:
+            question = (ex.get("question_stem") or "").strip()
+            choices = ex.get("choices") or {}
+            texts = [str(x).strip() for x in list(choices.get("text") or [])]
+            labels_ = [str(x).strip() for x in list(choices.get("label") or [])]
+            if len(texts) < 4 or len(labels_) < 4:
+                continue
+            texts = texts[:4]
+            labels_ = labels_[:4]
+            gold_idx = _choice_label_to_index(ex.get("answerKey", ""), labels_)
+            if gold_idx is None or gold_idx >= 4:
+                continue
+            records.append(_make_ranking_record(
+                tokenizer,
+                [f"{question} {answer}" for answer in texts],
+                gold_idx,
+                block_size,
+            ))
+
+    else:
+        raise ValueError(f"OpenCompass PPL eval is not configured for dataset: {name}")
+
+    if max_samples is not None:
+        records = records[: min(int(max_samples), len(records))]
+    if not records:
+        raise ValueError(f"No usable OpenCompass PPL eval records for {name!r} split {split!r}")
+    return Dataset.from_list(records)
+
+
 DATASETS_WITH_VALIDATION = {
     "piqa",
     "siqa",
@@ -1779,14 +2079,32 @@ def build_train_eval_datasets(tokenizer, args, *, stage: str):
 
     eval_ds = None
     if stage == "stage2":
-        if (
-            bool(args.stage2_include_validation_in_train)
-            and args.eval_split == args.stage2_validation_train_split
-            and args.eval_dataset in borrowed_eval_remainders
-        ):
-            eval_ds = borrowed_eval_remainders[args.eval_dataset]
-            if args.eval_max_samples is not None:
-                eval_ds = eval_ds.select(range(min(args.eval_max_samples, len(eval_ds))))
+        if args.eval_dataset in OPENCOMPASS_PPL_EVAL_DATASETS:
+            eval_ds = make_opencompass_ppl_eval_dataset(
+                args.eval_dataset,
+                tokenizer,
+                args,
+                args.eval_split,
+                None if (
+                    bool(args.stage2_include_validation_in_train)
+                    and args.eval_split == args.stage2_validation_train_split
+                    and args.eval_dataset in borrowed_eval_remainders
+                ) else args.eval_max_samples,
+            )
+            if (
+                bool(args.stage2_include_validation_in_train)
+                and args.eval_split == args.stage2_validation_train_split
+                and args.eval_dataset in borrowed_eval_remainders
+            ):
+                _, eval_ds = split_dataset_by_ratio(
+                    eval_ds,
+                    ratio=float(args.stage2_validation_train_ratio),
+                    seed=int(args.stage_split_seed),
+                )
+                if args.eval_max_samples is not None:
+                    eval_ds = eval_ds.select(range(min(args.eval_max_samples, len(eval_ds))))
+            if is_main_process():
+                print(f"[stage2][eval] using OpenCompass-style PPL ranking for {args.eval_dataset}")
         else:
             eval_ds = make_dataset(args.eval_dataset, tokenizer, args, args.eval_split, args.eval_max_samples, stage=stage)
     return train_ds, eval_ds
