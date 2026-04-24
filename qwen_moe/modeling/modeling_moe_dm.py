@@ -22,7 +22,6 @@ from dataclasses import dataclass
 import math
 from typing import List, Optional, Tuple, Union
 import torch
-import torch.distributed as dist
 import torch.utils.checkpoint
 from torch import nn
 from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss, MSELoss
@@ -67,14 +66,11 @@ class MoECausalLMOutputWithPast(CausalLMOutputWithPast):
         router_budget_loss (`torch.FloatTensor`, *optional*):
             Router budget loss placeholder kept for API compatibility. Fixed
             top-k routing disables the dynamic-count budget and returns zero.
-        router_value_anchor_loss (`torch.FloatTensor`, *optional*):
-            Expert-value to value-anchor alignment loss.
     """
     router_aux_loss: Optional[torch.FloatTensor] = None
     router_z_loss: Optional[torch.FloatTensor] = None
     router_pull_loss: Optional[torch.FloatTensor] = None
     router_budget_loss: Optional[torch.FloatTensor] = None
-    router_value_anchor_loss: Optional[torch.FloatTensor] = None
 
 
 # Copied from transformers.models.bart.modeling_bart._make_causal_mask
@@ -350,7 +346,7 @@ def _pairwise_cosine_stats(vectors: torch.Tensor) -> Tuple[Optional[float], Opti
 
 class CrossAttentionRouter(nn.Module):
     """
-    Router that scores experts by token-query to projected expert-value similarity.
+    Router that scores experts by token-query to projected expert-weight embedding similarity.
 
     Input:
         hidden_states: (batch, seq, hidden)
@@ -379,12 +375,9 @@ class CrossAttentionRouter(nn.Module):
         self.softmax_temperature = float(softmax_temperature)
 
         self.query = nn.Linear(self.hidden_size, self.d_router, bias=False)
+        self.expert_weight_proj = nn.Linear(3 * self.hidden_size, self.d_router, bias=False)
         self.key_proj = nn.Linear(self.d_router, self.d_router, bias=False)
         self.key_proj._router_identity_init = True
-        init_expert_state = torch.randn(self.num_experts, self.d_router)
-        self.expert_value = nn.Parameter(init_expert_state.clone())
-        self.register_buffer("value_anchor", self.expert_value.detach().clone())
-        self.anchor_momentum = 0.99
         self.last_router_forward_stats = {}
         with torch.no_grad():
             self.key_proj.weight.zero_()
@@ -392,7 +385,6 @@ class CrossAttentionRouter(nn.Module):
             self.key_proj.weight[:diag, :diag].copy_(
                 torch.eye(diag, dtype=self.key_proj.weight.dtype, device=self.key_proj.weight.device)
             )
-            self.value_anchor.copy_(self.expert_value.detach())
 
     @staticmethod
     def _reshape_legacy_router_weight(
@@ -416,28 +408,122 @@ class CrossAttentionRouter(nn.Module):
         reshaped[:rows, :cols] = best[:rows, :cols]
         return reshaped
 
-    def initialize_expert_value_from_legacy_router(self, legacy_router_weight: torch.Tensor) -> torch.Tensor:
-        target = self.expert_value
-        reshaped = self._reshape_legacy_router_weight(legacy_router_weight, tuple(target.shape))
-        reshaped = reshaped.to(dtype=target.dtype, device=target.device)
-        with torch.no_grad():
-            target.copy_(reshaped)
-            self.value_anchor.copy_(reshaped.to(dtype=self.value_anchor.dtype, device=self.value_anchor.device))
-        return target
+    @staticmethod
+    def _resize_feature(vector: torch.Tensor, target_size: int) -> torch.Tensor:
+        vector = vector.reshape(-1)
+        if vector.numel() == target_size:
+            return vector
+        out = vector.new_zeros((target_size,))
+        n = min(vector.numel(), target_size)
+        out[:n] = vector[:n]
+        return out
 
-    def get_projected_key(self) -> torch.Tensor:
-        expert_value = self.expert_value.to(dtype=self.key_proj.weight.dtype)
-        return self.key_proj(expert_value)
+    @staticmethod
+    def _active_lora_adapters(module: nn.Module, lora_a) -> List[str]:
+        active_adapter = getattr(module, "active_adapter", None)
+        if isinstance(active_adapter, str):
+            return [active_adapter] if active_adapter in lora_a else []
+        if isinstance(active_adapter, (list, tuple)):
+            return [name for name in active_adapter if name in lora_a]
+        return list(lora_a.keys())
+
+    @staticmethod
+    def _effective_linear_weight(module: nn.Module) -> torch.Tensor:
+        base_layer = getattr(module, "base_layer", None)
+        base_weight = getattr(base_layer, "weight", None) if base_layer is not None else getattr(module, "weight", None)
+        if base_weight is None:
+            raise AttributeError(f"Cannot find weight for expert projection module {module.__class__.__name__}.")
+
+        weight = base_weight
+        lora_a = getattr(module, "lora_A", None)
+        lora_b = getattr(module, "lora_B", None)
+        if (
+            lora_a is None
+            or lora_b is None
+            or bool(getattr(module, "disable_adapters", False))
+            or bool(getattr(module, "merged", False))
+        ):
+            return weight.detach()
+
+        scaling = getattr(module, "scaling", {})
+        weight_with_lora = weight
+        for adapter_name in CrossAttentionRouter._active_lora_adapters(module, lora_a):
+            if adapter_name not in lora_b:
+                continue
+            lora_a_weight = lora_a[adapter_name].weight
+            lora_b_weight = lora_b[adapter_name].weight
+            delta = torch.matmul(lora_b_weight, lora_a_weight)
+            if bool(getattr(module, "fan_in_fan_out", False)):
+                delta = delta.transpose(0, 1)
+            scale = scaling.get(adapter_name, 1.0) if isinstance(scaling, dict) else scaling
+            weight_with_lora = weight_with_lora + delta.to(device=weight.device, dtype=weight.dtype) * float(scale)
+        return weight_with_lora.detach()
+
+    def get_raw_expert_weight_features(self, expert_modules: nn.ModuleList) -> torch.Tensor:
+        features = []
+        for expert in expert_modules:
+            gate_weight = self._effective_linear_weight(expert.gate_proj).detach().float()
+            up_weight = self._effective_linear_weight(expert.up_proj).detach().float()
+            down_weight = self._effective_linear_weight(expert.down_proj).detach().float()
+            gate_pool = self._resize_feature(gate_weight.abs().mean(dim=0), self.hidden_size)
+            up_pool = self._resize_feature(up_weight.abs().mean(dim=0), self.hidden_size)
+            down_pool = self._resize_feature(down_weight.abs().mean(dim=1), self.hidden_size)
+            features.append(torch.cat([gate_pool, up_pool, down_pool], dim=0))
+        if len(features) != self.num_experts:
+            raise RuntimeError(f"Expected {self.num_experts} experts, got {len(features)}.")
+        return torch.stack(features, dim=0)
+
+    def get_expert_weight_embeddings(self, expert_modules: nn.ModuleList) -> torch.Tensor:
+        raw_features = self.get_raw_expert_weight_features(expert_modules)
+        raw_features = raw_features.to(
+            device=self.expert_weight_proj.weight.device,
+            dtype=self.expert_weight_proj.weight.dtype,
+        )
+        return self.expert_weight_proj(raw_features)
+
+    def initialize_expert_weight_projection_from_legacy_router(
+        self,
+        legacy_router_weight: torch.Tensor,
+        expert_modules: nn.ModuleList,
+        ridge: float = 1e-4,
+    ) -> torch.Tensor:
+        target = self._reshape_legacy_router_weight(
+            legacy_router_weight,
+            (self.num_experts, self.d_router),
+        ).to(device=self.expert_weight_proj.weight.device, dtype=torch.float32)
+        raw_features = self.get_raw_expert_weight_features(expert_modules).to(
+            device=self.expert_weight_proj.weight.device,
+            dtype=torch.float32,
+        )
+        gram = raw_features.matmul(raw_features.transpose(0, 1))
+        ridge_scale = float(ridge) * max(float(gram.diag().mean().abs().item()), 1.0)
+        eye = torch.eye(gram.size(0), device=gram.device, dtype=gram.dtype)
+        coeff = torch.linalg.solve(gram + ridge_scale * eye, target)
+        weight = target.transpose(0, 1).new_empty((self.d_router, raw_features.size(1)))
+        weight.copy_(coeff.transpose(0, 1).matmul(raw_features))
+        with torch.no_grad():
+            self.expert_weight_proj.weight.copy_(
+                weight.to(dtype=self.expert_weight_proj.weight.dtype, device=self.expert_weight_proj.weight.device)
+            )
+        return self.expert_weight_proj.weight
+
+    def get_projected_key(self, expert_modules: nn.ModuleList) -> torch.Tensor:
+        expert_embedding = self.get_expert_weight_embeddings(expert_modules)
+        return self.key_proj(expert_embedding.to(dtype=self.key_proj.weight.dtype))
 
     def forward(
         self,
         hidden_states: torch.Tensor,
+        expert_modules: Optional[nn.ModuleList] = None,
         return_token_q: bool = False,
     ) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
+        if expert_modules is None:
+            raise RuntimeError("CrossAttentionRouter.forward requires expert_modules for dynamic expert embeddings.")
         # Keep router params in fp32 while allowing upstream hidden states in fp16/bf16.
         router_in = hidden_states.to(self.query.weight.dtype)
         q = self.query(router_in).float()                  # (b, s, d)
-        k = self.key_proj(self.expert_value.to(dtype=self.key_proj.weight.dtype)).float()  # (e, d)
+        expert_embedding = self.get_expert_weight_embeddings(expert_modules)
+        k = self.key_proj(expert_embedding.to(dtype=self.key_proj.weight.dtype)).float()  # (e, d)
         attn_scores = torch.matmul(q, k.transpose(0, 1))  # (b, s, e)
         if self.use_entmax:
             route_probs = entmax_bisect(attn_scores, alpha=self.alpha, dim=-1)
@@ -451,17 +537,13 @@ class CrossAttentionRouter(nn.Module):
         attn_scores_f = attn_scores.detach().float()
         route_probs_f = route_probs.detach().float()
         token_q_norms = q.detach().float().norm(dim=-1)
-        expert_value_pairwise_cos_mean, expert_value_pairwise_cos_max = _pairwise_cosine_stats(self.expert_value)
-        value_anchor_pairwise_cos_mean, value_anchor_pairwise_cos_max = _pairwise_cosine_stats(self.value_anchor)
+        expert_embedding_f = expert_embedding.detach().float()
+        expert_embedding_pairwise_cos_mean, expert_embedding_pairwise_cos_max = _pairwise_cosine_stats(expert_embedding_f)
+        expert_embedding_norms = expert_embedding_f.norm(dim=-1)
         row_sums = route_probs_f.sum(dim=-1)
         probs_clamped = route_probs_f.clamp_min(1e-9)
         attn_entropy = -(probs_clamped * probs_clamped.log()).sum(dim=-1)
         attn_top1_mass = route_probs_f.max(dim=-1).values
-        value_anchor_cos = F.cosine_similarity(
-            self.expert_value.detach().float(),
-            self.value_anchor.detach().float(),
-            dim=-1,
-        )
         self.last_router_forward_stats = {
             "attn_scores_mean": float(attn_scores_f.mean().item()),
             "attn_scores_std": float(attn_scores_f.std().item()),
@@ -475,11 +557,10 @@ class CrossAttentionRouter(nn.Module):
             "route_prob_has_neg": float(route_probs_f.lt(0).any().item()),
             "route_prob_row_sum_mean": float(row_sums.mean().item()),
             "route_prob_row_sum_abs_err": float((row_sums - 1.0).abs().mean().item()),
-            "expert_value_pairwise_cos_mean": expert_value_pairwise_cos_mean,
-            "expert_value_pairwise_cos_max": expert_value_pairwise_cos_max,
-            "value_anchor_pairwise_cos_mean": value_anchor_pairwise_cos_mean,
-            "value_anchor_pairwise_cos_max": value_anchor_pairwise_cos_max,
-            "value_anchor_cosine_mean": float(value_anchor_cos.mean().item()),
+            "expert_embedding_pairwise_cos_mean": expert_embedding_pairwise_cos_mean,
+            "expert_embedding_pairwise_cos_max": expert_embedding_pairwise_cos_max,
+            "expert_embedding_norm_mean": float(expert_embedding_norms.mean().item()),
+            "expert_embedding_norm_std": float(expert_embedding_norms.std(unbiased=False).item()),
             "token_q_norm_mean": float(token_q_norms.mean().item()),
             "token_q_norm_std": float(token_q_norms.std(unbiased=False).item()),
         }
@@ -497,17 +578,12 @@ class SwitchMLP(nn.Module):
         self.last_topk_active_expert_count = 0
         self.last_router_aux_loss = None
         self.last_router_z_loss = None
-        self.last_router_value_anchor_loss = None
         self.last_router_budget_loss = None
         self.last_router_forward_stats = {}
         self.last_router_dispatch_stats = {}
-        self.last_router_value_anchor_stats = {}
         self.router_anchor_momentum = float(getattr(config, "router_anchor_momentum", 0.99))
         self.router_budget_target_count = float(getattr(config, "router_budget_target_count", 0.0))
         self.router_budget_tau = float(getattr(config, "router_budget_tau", 0.05))
-        self._pending_value_proto_sums = None
-        self._pending_value_proto_counts = None
-        self.enable_router_value_anchor_collection = True
 
         if self.use_switch:
             self.experts = nn.ModuleList()
@@ -556,66 +632,6 @@ class SwitchMLP(nn.Module):
                 config.hidden_act,
             )
 
-    @torch.no_grad()
-    def apply_pending_router_value_anchor_update(self) -> None:
-        proto_sums = self._pending_value_proto_sums
-        proto_counts = self._pending_value_proto_counts
-        self._pending_value_proto_sums = None
-        self._pending_value_proto_counts = None
-
-        if proto_sums is None or proto_counts is None or not self.use_cross_attention_router:
-            self.last_router_value_anchor_stats = {}
-            return
-
-        proto_sums = proto_sums.detach().float()
-        proto_counts = proto_counts.detach().float()
-        if dist.is_available() and dist.is_initialized():
-            dist.all_reduce(proto_sums, op=dist.ReduceOp.SUM)
-            dist.all_reduce(proto_counts, op=dist.ReduceOp.SUM)
-
-        active_mask = proto_counts > 0
-        if not torch.any(active_mask):
-            self.last_router_value_anchor_stats = {
-                "proto_counts": proto_counts.detach().float(),
-                "active_expert_count": 0.0,
-                "proto_count_mean": float(proto_counts.mean().item()),
-                "proto_count_min": float(proto_counts.min().item()),
-                "proto_count_max": float(proto_counts.max().item()),
-                "value_anchor_cosine_mean": float(
-                    F.cosine_similarity(
-                        self.router.expert_value.detach().float(),
-                        self.router.value_anchor.detach().float(),
-                        dim=-1,
-                    ).mean().item()
-                ),
-            }
-            return
-
-        anchor = self.router.value_anchor
-        batch_proto = proto_sums.new_zeros(anchor.shape)
-        batch_proto[active_mask] = proto_sums[active_mask] / proto_counts[active_mask].unsqueeze(-1).clamp_min(1e-12)
-        batch_proto[active_mask] = F.normalize(batch_proto[active_mask], dim=-1)
-
-        old_anchor = F.normalize(anchor[active_mask].detach().float(), dim=-1)
-        momentum = float(self.router_anchor_momentum)
-        updated = momentum * old_anchor + (1.0 - momentum) * batch_proto[active_mask]
-        updated = F.normalize(updated, dim=-1)
-        anchor[active_mask].copy_(updated.to(device=anchor.device, dtype=anchor.dtype))
-
-        value_anchor_cos = F.cosine_similarity(
-            self.router.expert_value.detach().float(),
-            self.router.value_anchor.detach().float(),
-            dim=-1,
-        )
-        self.last_router_value_anchor_stats = {
-            "proto_counts": proto_counts.detach().float(),
-            "active_expert_count": float(active_mask.sum().item()),
-            "proto_count_mean": float(proto_counts.mean().item()),
-            "proto_count_min": float(proto_counts.min().item()),
-            "proto_count_max": float(proto_counts.max().item()),
-            "value_anchor_cosine_mean": float(value_anchor_cos.mean().item()),
-        }
-    
     def forward(self, hidden_states):
         """
         hidden_states: (batch, seq, hidden)
@@ -623,13 +639,9 @@ class SwitchMLP(nn.Module):
         if not self.use_switch:
             self.last_router_aux_loss = None
             self.last_router_z_loss = None
-            self.last_router_value_anchor_loss = None
             self.last_router_budget_loss = None
             self.last_router_forward_stats = {}
             self.last_router_dispatch_stats = {}
-            self.last_router_value_anchor_stats = {}
-            self._pending_value_proto_sums = None
-            self._pending_value_proto_counts = None
             return self.mlp(hidden_states)
 
         bsz, seq_len, hidden_dim = hidden_states.size()
@@ -638,6 +650,7 @@ class SwitchMLP(nn.Module):
         if self.use_cross_attention_router:
             router_logits, route_probs, _token_q = self.router(
                 hidden_states,
+                expert_modules=self.experts,
                 return_token_q=False,
             )
             self.last_router_forward_stats = dict(getattr(self.router, "last_router_forward_stats", {}))
@@ -703,15 +716,6 @@ class SwitchMLP(nn.Module):
         else:
             self.last_router_budget_loss = None
 
-        if self.training and self.use_cross_attention_router and bool(self.enable_router_value_anchor_collection):
-            expert_value = F.normalize(self.router.expert_value.float(), dim=-1)
-            value_anchor = F.normalize(self.router.value_anchor.float(), dim=-1)
-            value_anchor_cos = (expert_value * value_anchor).sum(dim=-1)
-            self.last_router_value_anchor_loss = (1.0 - value_anchor_cos).mean()
-        else:
-            self.last_router_value_anchor_loss = None
-            self.last_router_value_anchor_stats = {}
-
         # 3) flatten tokens then sparse expert dispatch.
         flat_hidden = hidden_states.reshape(-1, hidden_dim)                  # (b*s, h)
         flat_topk_weights = topk_weights.reshape(-1, topk_weights.size(-1))  # (b*s, num_experts)
@@ -729,19 +733,6 @@ class SwitchMLP(nn.Module):
             expert_weight = flat_topk_weights[token_idx, slot_idx].unsqueeze(-1)
             expert_weight = expert_weight.to(expert_output.dtype)
             output_total[token_idx] += expert_output * expert_weight
-            if self.training and self.use_cross_attention_router and bool(self.enable_router_value_anchor_collection):
-                if self._pending_value_proto_sums is None:
-                    self._pending_value_proto_sums = hidden_states.new_zeros(
-                        (self.num_experts, expert_output.size(-1)),
-                        dtype=torch.float32,
-                    )
-                    self._pending_value_proto_counts = hidden_states.new_zeros((self.num_experts,), dtype=torch.float32)
-                self._pending_value_proto_sums[expert_num] += expert_output.detach().float().sum(dim=0)
-                self._pending_value_proto_counts[expert_num] += float(expert_output.size(0))
-
-        if not (self.training and self.use_cross_attention_router and bool(self.enable_router_value_anchor_collection)):
-            self._pending_value_proto_sums = None
-            self._pending_value_proto_counts = None
 
         output_total = output_total.view(bsz, seq_len, hidden_dim)
         # print(f"switch output finite: {torch.isfinite(output_total).all().item()}")
@@ -1048,11 +1039,9 @@ class MoEModel(MoEPreTrainedModel):
         self.vocab_size = config.vocab_size
 
         self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size, self.padding_idx)
-        self.last_router_value_anchor_loss = None
         self.last_router_budget_loss = None
         self.last_router_forward_stats = {}
         self.last_router_dispatch_stats = {}
-        self.last_router_value_anchor_stats = {}
 
         self.layers = nn.ModuleList([LlamaDecoderLayer(config, layer_idx) for layer_idx in range(config.num_hidden_layers)])
 
@@ -1168,11 +1157,9 @@ class MoEModel(MoEPreTrainedModel):
         next_decoder_cache = () if use_cache else None
         self.last_router_aux_loss = None
         self.last_router_z_loss = None
-        self.last_router_value_anchor_loss = None
         self.last_router_budget_loss = None
         self.last_router_forward_stats = {}
         self.last_router_dispatch_stats = {}
-        self.last_router_value_anchor_stats = {}
 
         for idx, decoder_layer in enumerate(self.layers):
             # print(f"layer {idx} input finite             : {torch.isfinite(hidden_states).all().item()}")
@@ -1222,11 +1209,9 @@ class MoEModel(MoEPreTrainedModel):
         if self.training:
             aux_terms = []
             z_terms = []
-            value_anchor_terms = []
             budget_terms = []
             forward_stat_terms = []
             dispatch_stat_terms = []
-            value_anchor_stat_terms = []
 
             for layer in self.layers:
                 mlp = getattr(layer, "mlp", None)
@@ -1238,9 +1223,6 @@ class MoEModel(MoEPreTrainedModel):
                 if z_loss is not None:
                     z_terms.append(z_loss)
 
-                value_anchor_loss = getattr(mlp, "last_router_value_anchor_loss", None)
-                if value_anchor_loss is not None:
-                    value_anchor_terms.append(value_anchor_loss)
                 budget_loss = getattr(mlp, "last_router_budget_loss", None)
                 if budget_loss is not None:
                     budget_terms.append(budget_loss)
@@ -1250,9 +1232,6 @@ class MoEModel(MoEPreTrainedModel):
                 dispatch_stats = getattr(mlp, "last_router_dispatch_stats", None)
                 if dispatch_stats:
                     dispatch_stat_terms.append(dispatch_stats)
-                value_anchor_stats = getattr(mlp, "last_router_value_anchor_stats", None)
-                if value_anchor_stats:
-                    value_anchor_stat_terms.append(value_anchor_stats)
 
             if aux_terms:
                 self.last_router_aux_loss = torch.stack(aux_terms).mean()
@@ -1263,11 +1242,6 @@ class MoEModel(MoEPreTrainedModel):
                 self.last_router_z_loss = torch.stack(z_terms).mean()
             else:
                 self.last_router_z_loss = hidden_states.new_zeros(())
-
-            if value_anchor_terms:
-                self.last_router_value_anchor_loss = torch.stack(value_anchor_terms).mean()
-            else:
-                self.last_router_value_anchor_loss = hidden_states.new_zeros(())
 
             if budget_terms:
                 self.last_router_budget_loss = torch.stack(budget_terms).mean()
@@ -1287,11 +1261,10 @@ class MoEModel(MoEPreTrainedModel):
                 "route_prob_has_neg",
                 "route_prob_row_sum_mean",
                 "route_prob_row_sum_abs_err",
-                "expert_value_pairwise_cos_mean",
-                "expert_value_pairwise_cos_max",
-                "value_anchor_pairwise_cos_mean",
-                "value_anchor_pairwise_cos_max",
-                "value_anchor_cosine_mean",
+                "expert_embedding_pairwise_cos_mean",
+                "expert_embedding_pairwise_cos_max",
+                "expert_embedding_norm_mean",
+                "expert_embedding_norm_std",
                 "token_q_norm_mean",
                 "token_q_norm_std",
             )
@@ -1318,22 +1291,6 @@ class MoEModel(MoEPreTrainedModel):
             if dispatch_stat_terms:
                 self.last_router_dispatch_stats["soft_load"] = _mean_tensor_stat(dispatch_stat_terms, "soft_load")
                 self.last_router_dispatch_stats["hard_load"] = _mean_tensor_stat(dispatch_stat_terms, "hard_load")
-
-            value_anchor_scalar_keys = (
-                "active_expert_count",
-                "proto_count_mean",
-                "proto_count_min",
-                "proto_count_max",
-                "value_anchor_cosine_mean",
-            )
-            self.last_router_value_anchor_stats = (
-                {key: _mean_scalar_stat(value_anchor_stat_terms, key) for key in value_anchor_scalar_keys}
-                if value_anchor_stat_terms else {}
-            )
-            if value_anchor_stat_terms:
-                self.last_router_value_anchor_stats["proto_counts"] = _mean_tensor_stat(
-                    value_anchor_stat_terms, "proto_counts"
-                )
 
         # add hidden states from the last decoder layer
         if output_hidden_states:
@@ -1457,11 +1414,10 @@ class MoEForCausalLM(MoEPreTrainedModel):
         router_aux_loss = getattr(self.model, "last_router_aux_loss", None)
         router_z_loss = getattr(self.model, "last_router_z_loss", None)
         router_budget_loss = getattr(self.model, "last_router_budget_loss", None)
-        router_value_anchor_loss = getattr(self.model, "last_router_value_anchor_loss", None)
 
         if not return_dict:
             output = (logits,) + outputs[1:]
-            router_terms = (router_aux_loss, router_z_loss, router_budget_loss, router_value_anchor_loss)
+            router_terms = (router_aux_loss, router_z_loss, router_budget_loss)
             return ((loss,) + output + router_terms) if loss is not None else (output + router_terms)
 
         return MoECausalLMOutputWithPast(
@@ -1473,7 +1429,6 @@ class MoEForCausalLM(MoEPreTrainedModel):
             router_aux_loss=router_aux_loss,
             router_z_loss=router_z_loss,
             router_budget_loss=router_budget_loss,
-            router_value_anchor_loss=router_value_anchor_loss,
         )
 
     def prepare_inputs_for_generation(

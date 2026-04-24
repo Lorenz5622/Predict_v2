@@ -157,8 +157,8 @@ def _init_cross_attention_router_from_legacy_dense(
 
     Rules:
     - query: partial copy from legacy dense router weight
-    - expert_value: initialized from the matching legacy dense router weight
-    - value_anchor: copied from expert_value after initialization
+    - expert_weight_proj: least-squares initialized to map expert-weight features
+      toward the matching legacy dense router weight
     """
     num_inited = 0
     per_layer_init_messages = []
@@ -176,9 +176,9 @@ def _init_cross_attention_router_from_legacy_dense(
             router = mlp.router
             dense_w = legacy_sd.get(f"model.layers.{layer_idx}.mlp.router.weight")
             if dense_w is None:
-                if getattr(router, "expert_value", None) is not None:
+                if getattr(router, "expert_weight_proj", None) is not None:
                     per_layer_init_messages.append(
-                        f"[init] layer {layer_idx} expert_value kept random init (legacy router.weight not found)"
+                        f"[init] layer {layer_idx} expert_weight_proj kept random init (legacy router.weight not found)"
                     )
                 continue
 
@@ -196,11 +196,11 @@ def _init_cross_attention_router_from_legacy_dense(
                     dense_w[:rows, :cols].to(dtype=query.weight.dtype, device=query.weight.device)
                 )
 
-            if hasattr(router, "_reshape_legacy_router_weight"):
-                if getattr(router, "expert_value", None) is not None:
-                    router.initialize_expert_value_from_legacy_router(dense_w)
+            if hasattr(router, "initialize_expert_weight_projection_from_legacy_router"):
+                if getattr(router, "expert_weight_proj", None) is not None:
+                    router.initialize_expert_weight_projection_from_legacy_router(dense_w, mlp.experts)
                     per_layer_init_messages.append(
-                        f"[init] layer {layer_idx} expert_value/value_anchor initialized from legacy router.weight"
+                        f"[init] layer {layer_idx} expert_weight_proj initialized from legacy router.weight"
                     )
 
             num_inited += 1
@@ -215,7 +215,7 @@ def _enable_new_router_params_trainable(model: nn.Module) -> int:
     keys = (
         "router.query",
         "router.key_proj",
-        "router.expert_value",
+        "router.expert_weight_proj",
     )
     n_params = 0
     for name, param in model.named_parameters():
@@ -233,11 +233,12 @@ def _cast_selected_trainable_params_to_fp32(model: nn.Module) -> int:
     leaves LoRA weights in the model/autocast dtype, and promotes only:
     - router.query
     - router.key_proj
+    - router.expert_weight_proj
     """
     fp32_keys = (
         "router.query",
         "router.key_proj",
-        "router.expert_value",
+        "router.expert_weight_proj",
     )
     n_params = 0
     with torch.no_grad():
@@ -337,7 +338,7 @@ def enable_cross_attention_router_only(model: nn.Module) -> int:
                 for key in (
                     "query",
                     "key_proj",
-                    "expert_value",
+                    "expert_weight_proj",
                 )
             ):
                 continue
@@ -430,25 +431,6 @@ def save_full_model_checkpoint(model: nn.Module, output_dir: str, tokenizer, con
     model_to_save.save_pretrained(output_dir, state_dict=state_dict, safe_serialization=True)
     tokenizer.save_pretrained(output_dir)
     config.save_pretrained(output_dir)
-
-
-def _apply_pending_router_value_anchor_updates(model: nn.Module) -> None:
-    model_for_updates = model.module if hasattr(model, "module") else model
-    base_model = model_for_updates.get_base_model() if hasattr(model_for_updates, "get_base_model") else model_for_updates
-    moe_model = getattr(base_model, "model", None)
-    if moe_model is None:
-        return
-
-    for layer in getattr(moe_model, "layers", []):
-        mlp = getattr(layer, "mlp", None)
-        apply_value_fn = getattr(mlp, "apply_pending_router_value_anchor_update", None)
-        if callable(apply_value_fn):
-            apply_value_fn()
-
-
-def _set_runtime_router_value_anchor_collection(model: nn.Module, enabled: bool) -> None:
-    for _layer_idx, mlp in get_switch_layers(model):
-        setattr(mlp, "enable_router_value_anchor_collection", bool(enabled))
 
 
 def _is_pairwise_dataset(ds) -> bool:
@@ -618,11 +600,6 @@ def _forward_stage2_batch(
     if not is_pairwise:
         out = _run_model(batch)
         raw_loss = out.loss
-        value_anchor_loss = getattr(out, "router_value_anchor_loss", None)
-        if value_anchor_loss is None:
-            value_anchor_loss = raw_loss.new_zeros(())
-        else:
-            value_anchor_loss = value_anchor_loss.to(device=raw_loss.device, dtype=raw_loss.dtype)
         budget_loss = getattr(out, "router_budget_loss", None)
         if budget_loss is None:
             budget_loss = raw_loss.new_zeros(())
@@ -631,7 +608,6 @@ def _forward_stage2_batch(
         return {
             "ce_loss": raw_loss,
             "pairwise_loss": raw_loss.new_zeros(()),
-            "value_anchor_loss": value_anchor_loss,
             "budget_loss": budget_loss,
             "pairwise_acc": raw_loss.new_zeros(()),
             "pairwise_margin": raw_loss.new_zeros(()),
@@ -652,16 +628,10 @@ def _forward_stage2_batch(
         "attention_mask": torch.cat([chosen_attention_mask, rejected_attention_mask], dim=0),
     }
     chosen_batch = chosen_input_ids.size(0)
-    _set_runtime_router_value_anchor_collection(model, True)
     out = _run_model(combined_inputs)
 
     chosen_logits, rejected_logits = out.logits.split([chosen_batch, rejected_input_ids.size(0)], dim=0)
     ce_loss = _causal_lm_ce_loss(chosen_logits, chosen_labels)
-    value_anchor_loss = getattr(out, "router_value_anchor_loss", None)
-    if value_anchor_loss is None:
-        value_anchor_loss = ce_loss.new_zeros(())
-    else:
-        value_anchor_loss = value_anchor_loss.to(device=ce_loss.device, dtype=ce_loss.dtype)
     budget_loss = getattr(out, "router_budget_loss", None)
     if budget_loss is None:
         budget_loss = ce_loss.new_zeros(())
@@ -685,7 +655,6 @@ def _forward_stage2_batch(
     return {
         "ce_loss": ce_loss,
         "pairwise_loss": pairwise_loss,
-        "value_anchor_loss": value_anchor_loss,
         "budget_loss": budget_loss,
         "pairwise_acc": pairwise_acc,
         "pairwise_margin": margin.mean(),
@@ -741,7 +710,6 @@ def evaluate_stage2(model: nn.Module, dl: DataLoader, device: torch.device, fp16
             totals["rejected_score"] += rejected_score * batch_size
             totals["count"] += batch_size
     finally:
-        _set_runtime_router_value_anchor_collection(model, True)
         if was_training:
             model.train()
 
@@ -850,6 +818,8 @@ def _warn_ignored_legacy_router_settings(args) -> None:
         ignored.append("router_z_loss_coef")
     if float(getattr(args, "router_pull_loss_coef", 0.0)) > 0.0:
         ignored.append("router_pull_loss_coef")
+    if float(getattr(args, "router_value_anchor_loss_coef", 0.0)) > 0.0:
+        ignored.append("router_value_anchor_loss_coef")
 
     if ignored and is_main_process():
         print(
@@ -961,7 +931,7 @@ def _is_stage2_router_param(name: str) -> bool:
     router_keys = (
         "router.query",
         "router.key_proj",
-        "router.expert_value",
+        "router.expert_weight_proj",
     )
     return any(key in name for key in router_keys)
 
@@ -1100,24 +1070,21 @@ def train(
             ]) + "\n")
         metrics_f.write("\t".join([
             "time", "epoch", "global_step", "optim_step", "lr",
-            "loss", "loss_ce", "loss_pairwise", "loss_value_anchor", "loss_budget",
+            "loss", "loss_ce", "loss_pairwise", "loss_budget",
             f"loss_ma{ma_win}", "loss_ema", "loss_ce_ema", "eval_pairwise_acc",
-            "pairwise_coef", "router_top_k", "router_value_anchor_loss_coef",
-            "expert_value_grad_norm",
+            "pairwise_coef", "router_top_k",
+            "expert_weight_proj_grad_norm",
             "train_pairwise_acc", "train_pairwise_margin", "train_chosen_score", "train_rejected_score",
             "router_score_mean", "router_score_std", "router_score_min", "router_score_max",
             "router_weight_row_sum_mean", "router_weight_row_sum_abs_err",
             "router_weight_entropy", "router_weight_top1_mass",
             "route_prob_min", "route_prob_has_neg", "route_prob_row_sum_mean", "route_prob_row_sum_abs_err",
-            "expert_value_pairwise_cos_mean", "expert_value_pairwise_cos_max",
-            "value_anchor_pairwise_cos_mean", "value_anchor_pairwise_cos_max",
-            "value_anchor_cosine_mean",
+            "expert_embedding_pairwise_cos_mean", "expert_embedding_pairwise_cos_max",
+            "expert_embedding_norm_mean", "expert_embedding_norm_std",
             "token_q_norm_mean", "token_q_norm_std",
             "dispatch_avg_selected_count", "dispatch_soft_selected_count", "dispatch_dead_expert_ratio", "dispatch_top1_top2_margin",
             "dispatch_topk_pre_mass_mean", "dispatch_topk_post_sum_mean", "dispatch_topk_post_sum_abs_err", "expert_token_count_cv",
             "dispatch_soft_load", "dispatch_hard_load",
-            "value_anchor_active_expert_count", "value_anchor_proto_count_mean", "value_anchor_proto_count_min",
-            "value_anchor_proto_count_max", "value_anchor_cosine_mean_stat", "value_anchor_proto_counts",
         ]) + "\n")
         metrics_f.flush()
 
@@ -1141,12 +1108,10 @@ def train(
             loss_stats = _forward_stage2_batch(model, batch, amp_dtype=amp_dtype, device=device)
             ce_loss = loss_stats["ce_loss"]
             pairwise_loss = loss_stats["pairwise_loss"].to(device=ce_loss.device, dtype=ce_loss.dtype)
-            value_anchor_loss = loss_stats["value_anchor_loss"].to(device=ce_loss.device, dtype=ce_loss.dtype)
             budget_loss = loss_stats["budget_loss"].to(device=ce_loss.device, dtype=ce_loss.dtype)
             total_loss = (
                 ce_loss
                 + PIQA_PAIRWISE_COEF * pairwise_loss
-                + float(run_args.router_value_anchor_loss_coef) * value_anchor_loss
                 + float(getattr(run_args, "router_budget_loss_coef", 0.0)) * budget_loss_scale * budget_loss
             )
             loss = total_loss / max(1, grad_accum)
@@ -1162,7 +1127,7 @@ def train(
                 if scaler.is_enabled():
                     scaler.unscale_(optimizer)
 
-                expert_value_grad_norm = _named_param_grad_norm(model, "router.expert_value")
+                expert_weight_proj_grad_norm = _named_param_grad_norm(model, "router.expert_weight_proj")
 
                 if max_grad_norm > 0:
                     nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
@@ -1186,14 +1151,12 @@ def train(
                         )
                     continue
 
-                _apply_pending_router_value_anchor_updates(model)
                 optim_step += 1
                 scheduler.step()
 
                 loss_real = float(total_loss.detach().float().item())
                 ce_loss_real = float(ce_loss.detach().float().item())
                 pairwise_loss_real = float(pairwise_loss.detach().float().item())
-                value_anchor_loss_real = float(value_anchor_loss.detach().float().item())
                 budget_loss_real = float(budget_loss.detach().float().item())
                 pairwise_acc_real = float(loss_stats["pairwise_acc"].detach().float().item())
                 pairwise_margin_real = float(loss_stats["pairwise_margin"].detach().float().item())
@@ -1218,7 +1181,6 @@ def train(
                 cur_lr = scheduler.get_last_lr()[0]
                 router_forward_stats = _get_moe_stat_dict(model, "last_router_forward_stats")
                 router_dispatch_stats = _get_moe_stat_dict(model, "last_router_dispatch_stats")
-                router_value_anchor_stats = _get_moe_stat_dict(model, "last_router_value_anchor_stats")
                 should_eval = eval_dl is not None and (optim_step % eval_every == 0)
                 eval_pairwise_acc_real = None
                 if should_eval:
@@ -1231,8 +1193,7 @@ def train(
                             "loss": f"{loss_real:.4f}",
                             "ce": f"{ce_loss_real:.4f}",
                             "pw": f"{pairwise_loss_real:.4f}",
-                            "v_anchor": f"{value_anchor_loss_real:.4f}",
-                            "ev_gn": f"{expert_value_grad_norm:.3e}",
+                            "ewp_gn": f"{expert_weight_proj_grad_norm:.3e}",
                             "budget": f"{budget_loss_real:.4f}",
                             f"ma{ma_win}": f"{loss_ma:.4f}",
                             "ema": f"{ema_loss:.4f}",
@@ -1254,7 +1215,6 @@ def train(
                             f"{loss_real:.6f}",
                             f"{ce_loss_real:.6f}",
                             f"{pairwise_loss_real:.6f}",
-                            f"{value_anchor_loss_real:.6f}",
                             f"{budget_loss_real:.6f}",
                             f"{loss_ma:.6f}",
                             f"{ema_loss:.6f}",
@@ -1262,8 +1222,7 @@ def train(
                             "" if eval_pairwise_acc_real is None else f"{eval_pairwise_acc_real:.6f}",
                             f"{PIQA_PAIRWISE_COEF:.6f}",
                             str(int(current_router_top_k)),
-                            f"{float(run_args.router_value_anchor_loss_coef):.6f}",
-                            _metric_cell(expert_value_grad_norm),
+                            _metric_cell(expert_weight_proj_grad_norm),
                             f"{pairwise_acc_real:.6f}",
                             f"{pairwise_margin_real:.6f}",
                             f"{chosen_score_real:.6f}",
@@ -1284,11 +1243,10 @@ def train(
                             _metric_cell(router_forward_stats.get("route_prob_has_neg")),
                             _metric_cell(router_forward_stats.get("route_prob_row_sum_mean")),
                             _metric_cell(router_forward_stats.get("route_prob_row_sum_abs_err")),
-                            _metric_cell(router_forward_stats.get("expert_value_pairwise_cos_mean")),
-                            _metric_cell(router_forward_stats.get("expert_value_pairwise_cos_max")),
-                            _metric_cell(router_forward_stats.get("value_anchor_pairwise_cos_mean")),
-                            _metric_cell(router_forward_stats.get("value_anchor_pairwise_cos_max")),
-                            _metric_cell(router_forward_stats.get("value_anchor_cosine_mean")),
+                            _metric_cell(router_forward_stats.get("expert_embedding_pairwise_cos_mean")),
+                            _metric_cell(router_forward_stats.get("expert_embedding_pairwise_cos_max")),
+                            _metric_cell(router_forward_stats.get("expert_embedding_norm_mean")),
+                            _metric_cell(router_forward_stats.get("expert_embedding_norm_std")),
                             _metric_cell(router_forward_stats.get("token_q_norm_mean")),
                             _metric_cell(router_forward_stats.get("token_q_norm_std")),
                             _metric_cell(router_dispatch_stats.get("avg_selected_expert_count")),
@@ -1301,12 +1259,6 @@ def train(
                             _metric_cell(router_dispatch_stats.get("expert_token_count_cv")),
                             _metric_cell(router_dispatch_stats.get("soft_load")),
                             _metric_cell(router_dispatch_stats.get("hard_load")),
-                            _metric_cell(router_value_anchor_stats.get("active_expert_count")),
-                            _metric_cell(router_value_anchor_stats.get("proto_count_mean")),
-                            _metric_cell(router_value_anchor_stats.get("proto_count_min")),
-                            _metric_cell(router_value_anchor_stats.get("proto_count_max")),
-                            _metric_cell(router_value_anchor_stats.get("value_anchor_cosine_mean")),
-                            _metric_cell(router_value_anchor_stats.get("proto_counts")),
                         ]) + "\n")
                         metrics_f.flush()
 
@@ -1315,8 +1267,7 @@ def train(
                     "loss": f"{loss_real:.4f}",
                     "ce": f"{ce_loss_real:.4f}",
                     "pw": f"{pairwise_loss_real:.4f}",
-                    "v_anchor": f"{value_anchor_loss_real:.4f}",
-                    "ev_gn": f"{expert_value_grad_norm:.3e}",
+                    "ewp_gn": f"{expert_weight_proj_grad_norm:.3e}",
                     "budget": f"{budget_loss_real:.4f}",
                     "ce_ema": f"{ema_ce_loss:.4f}",
                     "top_k": str(int(current_router_top_k)),
@@ -1329,10 +1280,9 @@ def train(
                         f"[train] epoch={epoch+1}/{epochs} step={optim_step}/{total_optim_steps} "
                         f"loss={loss_real:.4f} ce={ce_loss_real:.4f} ce_ema={ema_ce_loss:.4f} "
                         f"pairwise={pairwise_loss_real:.4f} pairwise_acc={pairwise_acc_real:.4f} "
-                        f"v_anchor={value_anchor_loss_real:.4f} ev_gn={expert_value_grad_norm:.3e} "
+                        f"ewp_gn={expert_weight_proj_grad_norm:.3e} "
                         f"budget={budget_loss_real:.4f} "
                         f"top_k={int(current_router_top_k)} "
-                        f"value_anchor_cos={float(router_value_anchor_stats.get('value_anchor_cosine_mean', 0.0)):.4f} "
                         f"lr={cur_lr:.3e} elapsed={elapsed/60:.1f}m"
                     )
 
@@ -2193,7 +2143,7 @@ def stage1_train_cross_attention_router(
 
                     teacher_weight = teacher_weight_cpu.to(device=device, dtype=hidden_states.dtype)
                     teacher_logits = F.linear(hidden_states.to(dtype=teacher_weight.dtype), teacher_weight).float()
-                    student_logits, _, _ = mlp.router(hidden_states)
+                    student_logits, _, _ = mlp.router(hidden_states, expert_modules=mlp.experts)
                     student_logits = student_logits.float()
 
                     mask = valid_mask
@@ -2485,8 +2435,8 @@ def parse_args():
     ap.add_argument(
         "--router_value_anchor_loss_coef",
         type=float,
-        default=0.01,
-        help="Coefficient for expert-value to value-anchor alignment loss.",
+        default=0.0,
+        help="Deprecated. Value-anchor loss was removed by dynamic expert-weight embeddings.",
     )
     ap.add_argument(
         "--router_anchor_momentum",
