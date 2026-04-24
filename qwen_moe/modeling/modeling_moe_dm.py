@@ -419,6 +419,13 @@ class CrossAttentionRouter(nn.Module):
         return out
 
     @staticmethod
+    def _standardize_feature(vector: torch.Tensor, eps: float = 1e-6) -> torch.Tensor:
+        vector = vector.float()
+        mean = vector.mean(dim=-1, keepdim=True)
+        var = (vector - mean).pow(2).mean(dim=-1, keepdim=True)
+        return (vector - mean) * torch.rsqrt(var + eps)
+
+    @staticmethod
     def _active_lora_adapters(module: nn.Module, lora_a) -> List[str]:
         active_adapter = getattr(module, "active_adapter", None)
         if isinstance(active_adapter, str):
@@ -465,9 +472,15 @@ class CrossAttentionRouter(nn.Module):
             gate_weight = self._effective_linear_weight(expert.gate_proj).detach().float()
             up_weight = self._effective_linear_weight(expert.up_proj).detach().float()
             down_weight = self._effective_linear_weight(expert.down_proj).detach().float()
-            gate_pool = self._resize_feature(gate_weight.abs().mean(dim=0), self.hidden_size)
-            up_pool = self._resize_feature(up_weight.abs().mean(dim=0), self.hidden_size)
-            down_pool = self._resize_feature(down_weight.abs().mean(dim=1), self.hidden_size)
+            gate_pool = self._standardize_feature(
+                self._resize_feature(gate_weight.abs().mean(dim=0), self.hidden_size)
+            )
+            up_pool = self._standardize_feature(
+                self._resize_feature(up_weight.abs().mean(dim=0), self.hidden_size)
+            )
+            down_pool = self._standardize_feature(
+                self._resize_feature(down_weight.abs().mean(dim=1), self.hidden_size)
+            )
             features.append(torch.cat([gate_pool, up_pool, down_pool], dim=0))
         if len(features) != self.num_experts:
             raise RuntimeError(f"Expected {self.num_experts} experts, got {len(features)}.")
