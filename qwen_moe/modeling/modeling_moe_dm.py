@@ -687,7 +687,10 @@ class SwitchMLP(nn.Module):
         soft_load = route_probs_for_stats.mean(dim=(0, 1))
         top1_experts = route_probs_for_stats.argmax(dim=-1)
         hard_load = F.one_hot(top1_experts, num_classes=self.num_experts).to(route_probs_for_stats.dtype).mean(dim=(0, 1))
-        self.last_router_aux_loss = None
+        if self.training:
+            self.last_router_aux_loss = self.num_experts * torch.sum(soft_load * hard_load)
+        else:
+            self.last_router_aux_loss = None
 
         # 2) fixed top-k routing.
         topk_weights, topk_ind = top_k_routing_batched_all_sequence(

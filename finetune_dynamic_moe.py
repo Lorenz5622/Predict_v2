@@ -600,6 +600,11 @@ def _forward_stage2_batch(
     if not is_pairwise:
         out = _run_model(batch)
         raw_loss = out.loss
+        aux_loss = getattr(out, "router_aux_loss", None)
+        if aux_loss is None:
+            aux_loss = raw_loss.new_zeros(())
+        else:
+            aux_loss = aux_loss.to(device=raw_loss.device, dtype=raw_loss.dtype)
         budget_loss = getattr(out, "router_budget_loss", None)
         if budget_loss is None:
             budget_loss = raw_loss.new_zeros(())
@@ -608,6 +613,7 @@ def _forward_stage2_batch(
         return {
             "ce_loss": raw_loss,
             "pairwise_loss": raw_loss.new_zeros(()),
+            "aux_loss": aux_loss,
             "budget_loss": budget_loss,
             "pairwise_acc": raw_loss.new_zeros(()),
             "pairwise_margin": raw_loss.new_zeros(()),
@@ -632,6 +638,11 @@ def _forward_stage2_batch(
 
     chosen_logits, rejected_logits = out.logits.split([chosen_batch, rejected_input_ids.size(0)], dim=0)
     ce_loss = _causal_lm_ce_loss(chosen_logits, chosen_labels)
+    aux_loss = getattr(out, "router_aux_loss", None)
+    if aux_loss is None:
+        aux_loss = ce_loss.new_zeros(())
+    else:
+        aux_loss = aux_loss.to(device=ce_loss.device, dtype=ce_loss.dtype)
     budget_loss = getattr(out, "router_budget_loss", None)
     if budget_loss is None:
         budget_loss = ce_loss.new_zeros(())
@@ -655,6 +666,7 @@ def _forward_stage2_batch(
     return {
         "ce_loss": ce_loss,
         "pairwise_loss": pairwise_loss,
+        "aux_loss": aux_loss,
         "budget_loss": budget_loss,
         "pairwise_acc": pairwise_acc,
         "pairwise_margin": margin.mean(),
@@ -812,8 +824,6 @@ def _warn_ignored_legacy_router_settings(args) -> None:
         ignored.append("router_context_scale")
     if int(getattr(args, "share_router_expert_embedding", 0)) not in (-1, 0):
         ignored.append("share_router_expert_embedding")
-    if float(getattr(args, "router_aux_loss_coef", 0.0)) > 0.0:
-        ignored.append("router_aux_loss_coef")
     if float(getattr(args, "router_z_loss_coef", 0.0)) > 0.0:
         ignored.append("router_z_loss_coef")
     if float(getattr(args, "router_pull_loss_coef", 0.0)) > 0.0:
@@ -1070,9 +1080,9 @@ def train(
             ]) + "\n")
         metrics_f.write("\t".join([
             "time", "epoch", "global_step", "optim_step", "lr",
-            "loss", "loss_ce", "loss_pairwise", "loss_budget",
+            "loss", "loss_ce", "loss_pairwise", "loss_aux", "loss_budget",
             f"loss_ma{ma_win}", "loss_ema", "loss_ce_ema", "eval_pairwise_acc",
-            "pairwise_coef", "router_top_k",
+            "pairwise_coef", "router_aux_loss_coef", "router_top_k",
             "expert_weight_proj_grad_norm",
             "train_pairwise_acc", "train_pairwise_margin", "train_chosen_score", "train_rejected_score",
             "router_score_mean", "router_score_std", "router_score_min", "router_score_max",
@@ -1108,10 +1118,12 @@ def train(
             loss_stats = _forward_stage2_batch(model, batch, amp_dtype=amp_dtype, device=device)
             ce_loss = loss_stats["ce_loss"]
             pairwise_loss = loss_stats["pairwise_loss"].to(device=ce_loss.device, dtype=ce_loss.dtype)
+            aux_loss = loss_stats["aux_loss"].to(device=ce_loss.device, dtype=ce_loss.dtype)
             budget_loss = loss_stats["budget_loss"].to(device=ce_loss.device, dtype=ce_loss.dtype)
             total_loss = (
                 ce_loss
                 + PIQA_PAIRWISE_COEF * pairwise_loss
+                + float(getattr(run_args, "router_aux_loss_coef", 0.0)) * aux_loss
                 + float(getattr(run_args, "router_budget_loss_coef", 0.0)) * budget_loss_scale * budget_loss
             )
             loss = total_loss / max(1, grad_accum)
@@ -1157,6 +1169,7 @@ def train(
                 loss_real = float(total_loss.detach().float().item())
                 ce_loss_real = float(ce_loss.detach().float().item())
                 pairwise_loss_real = float(pairwise_loss.detach().float().item())
+                aux_loss_real = float(aux_loss.detach().float().item())
                 budget_loss_real = float(budget_loss.detach().float().item())
                 pairwise_acc_real = float(loss_stats["pairwise_acc"].detach().float().item())
                 pairwise_margin_real = float(loss_stats["pairwise_margin"].detach().float().item())
@@ -1193,6 +1206,7 @@ def train(
                             "loss": f"{loss_real:.4f}",
                             "ce": f"{ce_loss_real:.4f}",
                             "pw": f"{pairwise_loss_real:.4f}",
+                            "aux": f"{aux_loss_real:.4f}",
                             "ewp_gn": f"{expert_weight_proj_grad_norm:.3e}",
                             "budget": f"{budget_loss_real:.4f}",
                             f"ma{ma_win}": f"{loss_ma:.4f}",
@@ -1215,12 +1229,14 @@ def train(
                             f"{loss_real:.6f}",
                             f"{ce_loss_real:.6f}",
                             f"{pairwise_loss_real:.6f}",
+                            f"{aux_loss_real:.6f}",
                             f"{budget_loss_real:.6f}",
                             f"{loss_ma:.6f}",
                             f"{ema_loss:.6f}",
                             f"{ema_ce_loss:.6f}",
                             "" if eval_pairwise_acc_real is None else f"{eval_pairwise_acc_real:.6f}",
                             f"{PIQA_PAIRWISE_COEF:.6f}",
+                            f"{float(getattr(run_args, 'router_aux_loss_coef', 0.0)):.6f}",
                             str(int(current_router_top_k)),
                             _metric_cell(expert_weight_proj_grad_norm),
                             f"{pairwise_acc_real:.6f}",
@@ -1267,6 +1283,7 @@ def train(
                     "loss": f"{loss_real:.4f}",
                     "ce": f"{ce_loss_real:.4f}",
                     "pw": f"{pairwise_loss_real:.4f}",
+                    "aux": f"{aux_loss_real:.4f}",
                     "ewp_gn": f"{expert_weight_proj_grad_norm:.3e}",
                     "budget": f"{budget_loss_real:.4f}",
                     "ce_ema": f"{ema_ce_loss:.4f}",
@@ -1280,6 +1297,7 @@ def train(
                         f"[train] epoch={epoch+1}/{epochs} step={optim_step}/{total_optim_steps} "
                         f"loss={loss_real:.4f} ce={ce_loss_real:.4f} ce_ema={ema_ce_loss:.4f} "
                         f"pairwise={pairwise_loss_real:.4f} pairwise_acc={pairwise_acc_real:.4f} "
+                        f"aux={aux_loss_real:.4f} "
                         f"ewp_gn={expert_weight_proj_grad_norm:.3e} "
                         f"budget={budget_loss_real:.4f} "
                         f"top_k={int(current_router_top_k)} "
@@ -2448,7 +2466,7 @@ def parse_args():
         "--router_aux_loss_coef",
         type=float,
         default=0.0,
-        help="Deprecated. Kept only so older configs still parse.",
+        help="Coefficient for Switch-style router load-balancing auxiliary loss.",
     )
     ap.add_argument(
         "--router_z_loss_coef",
