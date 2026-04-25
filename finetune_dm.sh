@@ -77,10 +77,10 @@ CONFIGS=(
   # "configs/CB_lowlr_norestrict.json" # 68.39
   # "configs/CB_lowlr_norestrict_abl_newlr01_ctx03_pruned.json" # 68.02
   # "configs/CB_lowlr_norestrict_abl_newlr005_ctx03_pruned.json" # 68.81
-  "configs/CB_oqa.json" # 73.61，疑似掺多了
+  # "configs/CB_oqa.json" # 73.61，疑似掺多了
   # "configs/CB_siqa.json" # 71.49
   # "configs/CB_wino.json" # 70.28
-  # "configs/CB_arce.json" # 70.28
+  "configs/CB_arce.json" # 70.28
   # "configs/CB_arcc.json" # 70.28
   # "configs/CB.json" # 70.28
 )

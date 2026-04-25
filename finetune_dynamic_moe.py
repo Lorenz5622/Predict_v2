@@ -13,7 +13,7 @@ Datasets, collator, and the main training loop are reused from `finetune.py`
 to avoid duplicating the entire training stack.
 """
 from __future__ import annotations
-
+PIQA_PAIRWISE_COEF = 0.2
 import argparse
 import gc
 import inspect
@@ -44,20 +44,46 @@ from finetune import (
     is_main_process,
     is_quantized_model,
     load_and_pack_arc_challenge_ppl_opencompass,
+    load_and_pack_arc_challenge_pairwise_opencompass,
     load_and_pack_arc_easy_ppl_opencompass,
+    load_and_pack_arc_easy_pairwise_opencompass,
     load_and_pack_bbh_ppl_opencompass,
     load_and_pack_commonsenseqa_ppl_opencompass,
     load_and_pack_hellaswag_ppl_opencompass,
     load_and_pack_mmlu_ppl_opencompass,
     load_and_pack_openbookqa_ppl_opencompass,
+    load_and_pack_openbookqa_pairwise_opencompass,
     load_and_pack_piqa_ppl_opencompass,
+    load_and_pack_piqa_pairwise_opencompass,
     load_and_pack_siqa_ppl_opencompass,
+    load_and_pack_siqa_pairwise_opencompass,
     load_and_pack_winogrande_ppl_opencompass,
+    load_and_pack_winogrande_pairwise_opencompass,
     set_seed,
 )
 
+PAIRWISE_LOSS_DATASETS: Set[str] = {
+    "piqa",
+    "siqa",
+    "winogrande",
+    "arc-c",
+    "arc-e",
+    "openbookqa"
+}
 
-PIQA_PAIRWISE_COEF = 0.0
+PAIRWISE_BATCH_KEYS: Set[str] = {
+    "chosen_input_ids",
+    "chosen_labels",
+    "chosen_attention_mask",
+    "chosen_answer_mask",
+    "rejected_input_ids",
+    "rejected_labels",
+    "rejected_attention_mask",
+    "rejected_answer_mask",
+}
+
+
+
 
 
 def setup_distributed_safe():
@@ -440,6 +466,18 @@ def _is_pairwise_dataset(ds) -> bool:
     return isinstance(column_names, list) and "chosen_input_ids" in column_names
 
 
+def _resolve_requested_dataset_names(dataset: str, mix_datasets: str) -> Set[str]:
+    if dataset == "mix":
+        return {name.strip() for name in mix_datasets.split(",") if name.strip()}
+    dataset = str(dataset).strip()
+    return {dataset} if dataset else set()
+
+
+def _should_use_pairwise_loss(dataset: str, mix_datasets: str) -> bool:
+    requested = _resolve_requested_dataset_names(dataset, mix_datasets)
+    return bool(requested & PAIRWISE_LOSS_DATASETS)
+
+
 def _is_ranking_eval_dataset(ds) -> bool:
     if ds is None:
         return False
@@ -586,18 +624,17 @@ def _forward_stage2_batch(
     model: nn.Module,
     batch: Dict[str, torch.Tensor],
     *,
+    use_pairwise_loss: bool,
     amp_dtype,
     device: torch.device,
 ):
-    is_pairwise = "chosen_input_ids" in batch
-
     def _run_model(inputs: Dict[str, torch.Tensor]):
         if amp_dtype is not None and device.type == "cuda":
             with torch.autocast(device_type="cuda", dtype=amp_dtype):
                 return model(**inputs)
         return model(**inputs)
 
-    if not is_pairwise:
+    if not use_pairwise_loss:
         out = _run_model(batch)
         raw_loss = out.loss
         aux_loss = getattr(out, "router_aux_loss", None)
@@ -620,6 +657,13 @@ def _forward_stage2_batch(
             "chosen_score": raw_loss.new_zeros(()),
             "rejected_score": raw_loss.new_zeros(()),
         }
+
+    missing_pairwise_keys = sorted(PAIRWISE_BATCH_KEYS.difference(batch.keys()))
+    if missing_pairwise_keys:
+        raise KeyError(
+            "Pairwise loss is enabled for the current stage2 dataset selection, "
+            f"but the batch is missing pairwise fields: {missing_pairwise_keys}"
+        )
 
     chosen_input_ids = batch["chosen_input_ids"]
     chosen_labels = batch["chosen_labels"]
@@ -676,7 +720,15 @@ def _forward_stage2_batch(
 
 
 @torch.no_grad()
-def evaluate_stage2(model: nn.Module, dl: DataLoader, device: torch.device, fp16: bool, bf16: bool) -> Dict[str, float]:
+def evaluate_stage2(
+    model: nn.Module,
+    dl: DataLoader,
+    device: torch.device,
+    fp16: bool,
+    bf16: bool,
+    *,
+    use_pairwise_loss: bool,
+) -> Dict[str, float]:
     was_training = model.training
     model.eval()
     amp_dtype = torch.float16 if fp16 else (torch.bfloat16 if bf16 else None)
@@ -703,7 +755,13 @@ def evaluate_stage2(model: nn.Module, dl: DataLoader, device: torch.device, fp16
                 totals["ranking_count"] += float(stats["count"].detach().float().item())
                 continue
 
-            stats = _forward_stage2_batch(model, batch, amp_dtype=amp_dtype, device=device)
+            stats = _forward_stage2_batch(
+                model,
+                batch,
+                use_pairwise_loss=use_pairwise_loss,
+                amp_dtype=amp_dtype,
+                device=device,
+            )
             batch_size = float(next(iter(batch.values())).shape[0])
             ce_loss = float(stats["ce_loss"].detach().float().item())
             pairwise_loss = float(stats["pairwise_loss"].detach().float().item())
@@ -1099,6 +1157,7 @@ def train(
         metrics_f.flush()
 
     amp_dtype = torch.float16 if fp16 else (torch.bfloat16 if bf16 else None)
+    use_pairwise_loss = _should_use_pairwise_loss(run_args.dataset, run_args.mix_datasets)
 
     for epoch in range(epochs):
         if isinstance(train_dl.sampler, DistributedSampler):
@@ -1115,7 +1174,13 @@ def train(
 
             batch = {k: v.to(device, non_blocking=True) for k, v in batch.items()}
 
-            loss_stats = _forward_stage2_batch(model, batch, amp_dtype=amp_dtype, device=device)
+            loss_stats = _forward_stage2_batch(
+                model,
+                batch,
+                use_pairwise_loss=use_pairwise_loss,
+                amp_dtype=amp_dtype,
+                device=device,
+            )
             ce_loss = loss_stats["ce_loss"]
             pairwise_loss = loss_stats["pairwise_loss"].to(device=ce_loss.device, dtype=ce_loss.dtype)
             aux_loss = loss_stats["aux_loss"].to(device=ce_loss.device, dtype=ce_loss.dtype)
@@ -1197,7 +1262,17 @@ def train(
                 should_eval = eval_dl is not None and (optim_step % eval_every == 0)
                 eval_pairwise_acc_real = None
                 if should_eval:
-                    eval_stats = evaluate_stage2(model, eval_dl, device, fp16=fp16, bf16=bf16)
+                    eval_stats = evaluate_stage2(
+                        model,
+                        eval_dl,
+                        device,
+                        fp16=fp16,
+                        bf16=bf16,
+                        use_pairwise_loss=_should_use_pairwise_loss(
+                            run_args.eval_dataset,
+                            run_args.mix_datasets,
+                        ),
+                    )
                     eval_pairwise_acc_real = eval_stats["pairwise_acc"]
 
                 if is_main_process() and (optim_step % log_every == 0):
@@ -1618,8 +1693,19 @@ def load_and_pack_redpajama_local(
 
 def make_dataset(name: str, tokenizer, args, split: str, max_samples: Optional[int], *, stage: str):
     use_label = bool(args.use_label)
+    use_pairwise_loader = stage == "stage2" and name in PAIRWISE_LOSS_DATASETS
 
     if name == "piqa":
+        if use_pairwise_loader:
+            return load_and_pack_piqa_pairwise_opencompass(
+                tokenizer=tokenizer,
+                block_size=args.block_size,
+                split=split,
+                num_proc=args.num_proc,
+                bos=True,
+                eos=False,
+                max_samples=max_samples,
+            )
         return load_and_pack_piqa_ppl_opencompass(
             tokenizer=tokenizer,
             block_size=args.block_size,
@@ -1631,6 +1717,16 @@ def make_dataset(name: str, tokenizer, args, split: str, max_samples: Optional[i
             use_label=use_label,
         )
     if name == "siqa":
+        if use_pairwise_loader:
+            return load_and_pack_siqa_pairwise_opencompass(
+                tokenizer=tokenizer,
+                block_size=args.block_size,
+                split=split,
+                num_proc=args.num_proc,
+                bos=True,
+                eos=False,
+                max_samples=max_samples,
+            )
         return load_and_pack_siqa_ppl_opencompass(
             tokenizer=tokenizer,
             block_size=args.block_size,
@@ -1653,6 +1749,16 @@ def make_dataset(name: str, tokenizer, args, split: str, max_samples: Optional[i
             use_label=use_label,
         )
     if name == "arc-e":
+        if use_pairwise_loader:
+            return load_and_pack_arc_easy_pairwise_opencompass(
+                tokenizer=tokenizer,
+                block_size=args.block_size,
+                split=split,
+                num_proc=args.num_proc,
+                bos=True,
+                eos=False,
+                max_samples=max_samples,
+            )
         return load_and_pack_arc_easy_ppl_opencompass(
             tokenizer=tokenizer,
             block_size=args.block_size,
@@ -1686,6 +1792,17 @@ def make_dataset(name: str, tokenizer, args, split: str, max_samples: Optional[i
             task=args.bbh_task,
         )
     if name == "winogrande":
+        if use_pairwise_loader:
+            return load_and_pack_winogrande_pairwise_opencompass(
+                tokenizer=tokenizer,
+                block_size=args.block_size,
+                split=split,
+                num_proc=args.num_proc,
+                bos=True,
+                eos=False,
+                max_samples=max_samples,
+                config_name=args.winogrande_config,
+            )
         return load_and_pack_winogrande_ppl_opencompass(
             tokenizer=tokenizer,
             block_size=args.block_size,
@@ -1713,6 +1830,16 @@ def make_dataset(name: str, tokenizer, args, split: str, max_samples: Optional[i
             answer_mode=args.mmlu_answer_mode,
         )
     if name == "arc-c":
+        if use_pairwise_loader:
+            return load_and_pack_arc_challenge_pairwise_opencompass(
+                tokenizer=tokenizer,
+                block_size=args.block_size,
+                split=split,
+                num_proc=args.num_proc,
+                bos=True,
+                eos=False,
+                max_samples=max_samples,
+            )
         return load_and_pack_arc_challenge_ppl_opencompass(
             tokenizer=tokenizer,
             block_size=args.block_size,
@@ -1724,6 +1851,16 @@ def make_dataset(name: str, tokenizer, args, split: str, max_samples: Optional[i
             use_label=use_label,
         )
     if name == "openbookqa":
+        if use_pairwise_loader:
+            return load_and_pack_openbookqa_pairwise_opencompass(
+                tokenizer=tokenizer,
+                block_size=args.block_size,
+                split=split,
+                num_proc=args.num_proc,
+                bos=True,
+                eos=False,
+                max_samples=max_samples,
+            )
         return load_and_pack_openbookqa_ppl_opencompass(
             tokenizer=tokenizer,
             block_size=args.block_size,

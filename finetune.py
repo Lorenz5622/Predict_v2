@@ -43,7 +43,7 @@ import torch.distributed as dist
 from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
 from collections import deque
-from datasets import load_dataset, concatenate_datasets
+from datasets import Dataset, load_dataset, concatenate_datasets
 from transformers import AutoTokenizer
 
 from peft import LoraConfig, get_peft_model, TaskType
@@ -178,6 +178,43 @@ def _pad_pairwise_to_block(
         "answer_mask": answer_mask,
     }
 
+
+def _build_pairwise_sequence(
+    tokenizer,
+    prompt: str,
+    answer: str,
+    *,
+    block_size: int,
+    bos: bool,
+    eos: bool,
+    bos_id: Optional[int],
+    eos_id: Optional[int],
+    pad_id: int = 0,
+) -> Dict[str, List[int]]:
+    prompt_ids = tokenizer(prompt, add_special_tokens=False)["input_ids"]
+    ans_ids = tokenizer(" " + answer, add_special_tokens=False)["input_ids"]
+
+    input_ids = prompt_ids + ans_ids
+    labels = list(input_ids)
+    answer_mask = ([0] * len(prompt_ids)) + ([1] * len(ans_ids))
+
+    if bos and bos_id is not None:
+        input_ids = [bos_id] + input_ids
+        labels = [-100] + labels
+        answer_mask = [0] + answer_mask
+    if eos and eos_id is not None and eos:
+        input_ids = input_ids + [eos_id]
+        labels = labels + [eos_id]
+        answer_mask = answer_mask + [1]
+
+    return _pad_pairwise_to_block(
+        input_ids,
+        labels,
+        answer_mask,
+        block_size=block_size,
+        pad_id=pad_id,
+    )
+
 def shuffle_select(ds, max_samples, seed: int):
     if max_samples is None:
         return ds
@@ -272,27 +309,15 @@ def load_and_pack_piqa_pairwise_opencompass(
     pad_id = 0
 
     def _build_sequence(prompt: str, answer: str) -> Dict[str, List[int]]:
-        prompt_ids = tokenizer(prompt, add_special_tokens=False)["input_ids"]
-        ans_ids = tokenizer(" " + answer, add_special_tokens=False)["input_ids"]
-
-        input_ids = prompt_ids + ans_ids
-        labels = list(input_ids)
-        answer_mask = ([0] * len(prompt_ids)) + ([1] * len(ans_ids))
-
-        if bos and bos_id is not None:
-            input_ids = [bos_id] + input_ids
-            labels = [-100] + labels
-            answer_mask = [0] + answer_mask
-        if eos and eos_id is not None and eos:
-            input_ids = input_ids + [eos_id]
-            labels = labels + [eos_id]
-            answer_mask = answer_mask + [1]
-
-        return _pad_pairwise_to_block(
-            input_ids,
-            labels,
-            answer_mask,
+        return _build_pairwise_sequence(
+            tokenizer,
+            prompt,
+            answer,
             block_size=block_size,
+            bos=bos,
+            eos=eos,
+            bos_id=bos_id,
+            eos_id=eos_id,
             pad_id=pad_id,
         )
 
@@ -313,6 +338,91 @@ def load_and_pack_piqa_pairwise_opencompass(
 
         chosen_seq = _build_sequence(prompt, chosen)
         rejected_seq = _build_sequence(prompt, rejected)
+        return {
+            "chosen_input_ids": chosen_seq["input_ids"],
+            "chosen_labels": chosen_seq["labels"],
+            "chosen_answer_mask": chosen_seq["answer_mask"],
+            "rejected_input_ids": rejected_seq["input_ids"],
+            "rejected_labels": rejected_seq["labels"],
+            "rejected_answer_mask": rejected_seq["answer_mask"],
+        }
+
+    ds = ds.map(build, num_proc=num_proc, remove_columns=ds.column_names)
+    ds.set_format(
+        type="torch",
+        columns=[
+            "chosen_input_ids",
+            "chosen_labels",
+            "chosen_answer_mask",
+            "rejected_input_ids",
+            "rejected_labels",
+            "rejected_answer_mask",
+        ],
+    )
+    return ds
+
+
+def load_and_pack_siqa_pairwise_opencompass(
+    tokenizer,
+    block_size: int,
+    split: str = "train",
+    num_proc: int = 1,
+    bos: bool = True,
+    eos: bool = False,
+    max_samples: Optional[int] = None,
+    seed: int = 42,
+):
+    ds = load_dataset("allenai/social_i_qa", split=split, trust_remote_code=True)
+    ds = shuffle_select(ds, max_samples=max_samples, seed=seed)
+
+    bos_id = tokenizer.bos_token_id
+    eos_id = tokenizer.eos_token_id
+    pad_id = 0
+
+    def build(ex):
+        ctx = (ex.get("context") or "").strip()
+        q = (ex.get("question") or "").strip()
+        choices = [
+            (ex.get("answerA") or "").strip(),
+            (ex.get("answerB") or "").strip(),
+            (ex.get("answerC") or "").strip(),
+        ]
+        try:
+            gold_idx = int(str(ex.get("label", "1")).strip()) - 1
+        except Exception:
+            gold_idx = 0
+        gold_idx = min(max(gold_idx, 0), len(choices) - 1)
+        wrong_idx = next((idx for idx in range(len(choices)) if idx != gold_idx), 0)
+
+        prompt = (
+            "Social commonsense question:\n"
+            f"Context: {ctx}\n"
+            f"Question: {q}\n"
+            "Answer:"
+        )
+
+        chosen_seq = _build_pairwise_sequence(
+            tokenizer,
+            prompt,
+            choices[gold_idx],
+            block_size=block_size,
+            bos=bos,
+            eos=eos,
+            bos_id=bos_id,
+            eos_id=eos_id,
+            pad_id=pad_id,
+        )
+        rejected_seq = _build_pairwise_sequence(
+            tokenizer,
+            prompt,
+            choices[wrong_idx],
+            block_size=block_size,
+            bos=bos,
+            eos=eos,
+            bos_id=bos_id,
+            eos_id=eos_id,
+            pad_id=pad_id,
+        )
         return {
             "chosen_input_ids": chosen_seq["input_ids"],
             "chosen_labels": chosen_seq["labels"],
@@ -526,6 +636,78 @@ def load_and_pack_arc_easy_ppl_opencompass(
     return ds
 
 
+def load_and_pack_arc_easy_pairwise_opencompass(
+    tokenizer,
+    block_size: int,
+    split: str = "train",
+    num_proc: int = 1,
+    bos: bool = True,
+    eos: bool = False,
+    max_samples: Optional[int] = None,
+):
+    ds = load_dataset("allenai/ai2_arc", "ARC-Easy", split=split)
+    if max_samples is not None:
+        ds = ds.select(range(min(max_samples, len(ds))))
+
+    bos_id = tokenizer.bos_token_id
+    eos_id = tokenizer.eos_token_id
+    pad_id = 0
+
+    def build(ex):
+        q = (ex.get("question") or "").strip()
+        ch = ex.get("choices") or {}
+        texts = list(ch.get("text") or [])
+        labels_ = list(ch.get("label") or [])
+        ak = ex.get("answerKey", None)
+        if not texts:
+            return {"pairwise_records": []}
+
+        gold_idx = _answerkey_to_index(ak, labels_) if ak is not None else 0
+        gold_idx = 0 if gold_idx is None else max(0, min(gold_idx, len(texts) - 1))
+        prompt = _build_prompt_mcq(q, texts, labels_)
+        records = []
+        chosen_seq = _build_pairwise_sequence(
+            tokenizer, prompt, str(texts[gold_idx]).strip(),
+            block_size=block_size, bos=bos, eos=eos,
+            bos_id=bos_id, eos_id=eos_id, pad_id=pad_id,
+        )
+        for wrong_idx, wrong_text in enumerate(texts):
+            if wrong_idx == gold_idx:
+                continue
+            rejected_seq = _build_pairwise_sequence(
+                tokenizer, prompt, str(wrong_text).strip(),
+                block_size=block_size, bos=bos, eos=eos,
+                bos_id=bos_id, eos_id=eos_id, pad_id=pad_id,
+            )
+            records.append({
+                "chosen_input_ids": chosen_seq["input_ids"],
+                "chosen_labels": chosen_seq["labels"],
+                "chosen_answer_mask": chosen_seq["answer_mask"],
+                "rejected_input_ids": rejected_seq["input_ids"],
+                "rejected_labels": rejected_seq["labels"],
+                "rejected_answer_mask": rejected_seq["answer_mask"],
+            })
+        return {"pairwise_records": records}
+
+    ds = ds.map(build, num_proc=num_proc, remove_columns=ds.column_names)
+    flattened_records = []
+    for ex in ds:
+        flattened_records.extend(ex["pairwise_records"])
+    ds = Dataset.from_list(flattened_records)
+    ds.set_format(
+        type="torch",
+        columns=[
+            "chosen_input_ids",
+            "chosen_labels",
+            "chosen_answer_mask",
+            "rejected_input_ids",
+            "rejected_labels",
+            "rejected_answer_mask",
+        ],
+    )
+    return ds
+
+
 def load_and_pack_commonsenseqa_ppl_opencompass(
     tokenizer,
     block_size: int,
@@ -701,6 +883,78 @@ def load_and_pack_winogrande_ppl_opencompass(
     ds.set_format(type="torch", columns=["input_ids", "labels"])
     return ds
 
+
+def load_and_pack_winogrande_pairwise_opencompass(
+    tokenizer,
+    block_size: int,
+    split: str = "train",
+    num_proc: int = 1,
+    bos: bool = True,
+    eos: bool = False,
+    max_samples: Optional[int] = None,
+    config_name: str = "winogrande_xl",
+):
+    ds = load_dataset("allenai/winogrande", config_name, split=split, trust_remote_code=True)
+    if max_samples is not None:
+        ds = ds.select(range(min(max_samples, len(ds))))
+
+    pad_id = tokenizer.pad_token_id if tokenizer.pad_token_id is not None else 0
+    bos_id = tokenizer.bos_token_id
+    eos_id = tokenizer.eos_token_id
+
+    def build(ex):
+        sent = (ex.get("sentence") or "").strip()
+        o1 = (ex.get("option1") or "").strip()
+        o2 = (ex.get("option2") or "").strip()
+        try:
+            gold_idx = int(str(ex.get("answer", "1")).strip()) - 1
+        except Exception:
+            gold_idx = 0
+        gold_idx = 0 if gold_idx not in (0, 1) else gold_idx
+        chosen = o1 if gold_idx == 0 else o2
+        rejected = o2 if gold_idx == 0 else o1
+
+        prompt = (
+            "Fill in the blank:\n"
+            f"{sent}\n"
+            "Options:\n"
+            f"A. {o1}\n"
+            f"B. {o2}\n"
+            "Answer:"
+        )
+        chosen_seq = _build_pairwise_sequence(
+            tokenizer, prompt, chosen,
+            block_size=block_size, bos=bos, eos=eos,
+            bos_id=bos_id, eos_id=eos_id, pad_id=pad_id,
+        )
+        rejected_seq = _build_pairwise_sequence(
+            tokenizer, prompt, rejected,
+            block_size=block_size, bos=bos, eos=eos,
+            bos_id=bos_id, eos_id=eos_id, pad_id=pad_id,
+        )
+        return {
+            "chosen_input_ids": chosen_seq["input_ids"],
+            "chosen_labels": chosen_seq["labels"],
+            "chosen_answer_mask": chosen_seq["answer_mask"],
+            "rejected_input_ids": rejected_seq["input_ids"],
+            "rejected_labels": rejected_seq["labels"],
+            "rejected_answer_mask": rejected_seq["answer_mask"],
+        }
+
+    ds = ds.map(build, num_proc=num_proc, remove_columns=ds.column_names)
+    ds.set_format(
+        type="torch",
+        columns=[
+            "chosen_input_ids",
+            "chosen_labels",
+            "chosen_answer_mask",
+            "rejected_input_ids",
+            "rejected_labels",
+            "rejected_answer_mask",
+        ],
+    )
+    return ds
+
 def load_and_pack_mmlu_ppl_opencompass(
     tokenizer,
     block_size: int,
@@ -854,6 +1108,78 @@ def load_and_pack_arc_challenge_ppl_opencompass(
     return ds
 
 
+def load_and_pack_arc_challenge_pairwise_opencompass(
+    tokenizer,
+    block_size: int,
+    split: str = "train",
+    num_proc: int = 1,
+    bos: bool = True,
+    eos: bool = False,
+    max_samples: Optional[int] = None,
+):
+    ds = load_dataset("allenai/ai2_arc", "ARC-Challenge", split=split)
+    if max_samples is not None:
+        ds = ds.select(range(min(max_samples, len(ds))))
+
+    bos_id = tokenizer.bos_token_id
+    eos_id = tokenizer.eos_token_id
+    pad_id = 0
+
+    def build(ex):
+        q = (ex.get("question") or "").strip()
+        ch = ex.get("choices") or {}
+        texts = list(ch.get("text") or [])
+        labels_ = list(ch.get("label") or [])
+        ak = ex.get("answerKey", None)
+        if not texts:
+            return {"pairwise_records": []}
+
+        gold_idx = _answerkey_to_index(ak, labels_) if ak is not None else 0
+        gold_idx = 0 if gold_idx is None else max(0, min(gold_idx, len(texts) - 1))
+        prompt = _build_prompt_mcq(q, texts, labels_)
+        records = []
+        chosen_seq = _build_pairwise_sequence(
+            tokenizer, prompt, str(texts[gold_idx]).strip(),
+            block_size=block_size, bos=bos, eos=eos,
+            bos_id=bos_id, eos_id=eos_id, pad_id=pad_id,
+        )
+        for wrong_idx, wrong_text in enumerate(texts):
+            if wrong_idx == gold_idx:
+                continue
+            rejected_seq = _build_pairwise_sequence(
+                tokenizer, prompt, str(wrong_text).strip(),
+                block_size=block_size, bos=bos, eos=eos,
+                bos_id=bos_id, eos_id=eos_id, pad_id=pad_id,
+            )
+            records.append({
+                "chosen_input_ids": chosen_seq["input_ids"],
+                "chosen_labels": chosen_seq["labels"],
+                "chosen_answer_mask": chosen_seq["answer_mask"],
+                "rejected_input_ids": rejected_seq["input_ids"],
+                "rejected_labels": rejected_seq["labels"],
+                "rejected_answer_mask": rejected_seq["answer_mask"],
+            })
+        return {"pairwise_records": records}
+
+    ds = ds.map(build, num_proc=num_proc, remove_columns=ds.column_names)
+    flattened_records = []
+    for ex in ds:
+        flattened_records.extend(ex["pairwise_records"])
+    ds = Dataset.from_list(flattened_records)
+    ds.set_format(
+        type="torch",
+        columns=[
+            "chosen_input_ids",
+            "chosen_labels",
+            "chosen_answer_mask",
+            "rejected_input_ids",
+            "rejected_labels",
+            "rejected_answer_mask",
+        ],
+    )
+    return ds
+
+
 def load_and_pack_openbookqa_ppl_opencompass(
     tokenizer,
     block_size: int,
@@ -908,6 +1234,78 @@ def load_and_pack_openbookqa_ppl_opencompass(
 
     ds = ds.map(build, num_proc=num_proc, remove_columns=ds.column_names)
     ds.set_format(type="torch", columns=["input_ids", "labels"])
+    return ds
+
+
+def load_and_pack_openbookqa_pairwise_opencompass(
+    tokenizer,
+    block_size: int,
+    split: str = "train",
+    num_proc: int = 1,
+    bos: bool = True,
+    eos: bool = False,
+    max_samples: Optional[int] = None,
+):
+    ds = load_dataset("allenai/openbookqa", "main", split=split)
+    if max_samples is not None:
+        ds = ds.select(range(min(max_samples, len(ds))))
+
+    bos_id = tokenizer.bos_token_id
+    eos_id = tokenizer.eos_token_id
+    pad_id = 0
+
+    def build(ex):
+        q = (ex.get("question_stem") or "").strip()
+        ch = ex.get("choices") or {}
+        texts = list(ch.get("text") or [])
+        labels_ = list(ch.get("label") or [])
+        ak = ex.get("answerKey", None)
+        if not texts:
+            return {"pairwise_records": []}
+
+        gold_idx = _answerkey_to_index(ak, labels_) if ak is not None else 0
+        gold_idx = 0 if gold_idx is None else max(0, min(gold_idx, len(texts) - 1))
+        prompt = _build_prompt_mcq(q, texts, labels_)
+        records = []
+        chosen_seq = _build_pairwise_sequence(
+            tokenizer, prompt, str(texts[gold_idx]).strip(),
+            block_size=block_size, bos=bos, eos=eos,
+            bos_id=bos_id, eos_id=eos_id, pad_id=pad_id,
+        )
+        for wrong_idx, wrong_text in enumerate(texts):
+            if wrong_idx == gold_idx:
+                continue
+            rejected_seq = _build_pairwise_sequence(
+                tokenizer, prompt, str(wrong_text).strip(),
+                block_size=block_size, bos=bos, eos=eos,
+                bos_id=bos_id, eos_id=eos_id, pad_id=pad_id,
+            )
+            records.append({
+                "chosen_input_ids": chosen_seq["input_ids"],
+                "chosen_labels": chosen_seq["labels"],
+                "chosen_answer_mask": chosen_seq["answer_mask"],
+                "rejected_input_ids": rejected_seq["input_ids"],
+                "rejected_labels": rejected_seq["labels"],
+                "rejected_answer_mask": rejected_seq["answer_mask"],
+            })
+        return {"pairwise_records": records}
+
+    ds = ds.map(build, num_proc=num_proc, remove_columns=ds.column_names)
+    flattened_records = []
+    for ex in ds:
+        flattened_records.extend(ex["pairwise_records"])
+    ds = Dataset.from_list(flattened_records)
+    ds.set_format(
+        type="torch",
+        columns=[
+            "chosen_input_ids",
+            "chosen_labels",
+            "chosen_answer_mask",
+            "rejected_input_ids",
+            "rejected_labels",
+            "rejected_answer_mask",
+        ],
+    )
     return ds
 # def load_and_pack_winogrande_ppl_opencompass(
 #     tokenizer,

@@ -537,7 +537,7 @@ class CrossAttentionRouter(nn.Module):
         q = self.query(router_in).float()                  # (b, s, d)
         expert_embedding = self.get_expert_weight_embeddings(expert_modules)
         k = self.key_proj(expert_embedding.to(dtype=self.key_proj.weight.dtype)).float()  # (e, d)
-        attn_scores = torch.matmul(q, k.transpose(0, 1))  # (b, s, e)
+        attn_scores = torch.matmul(q, k.transpose(0, 1)) / math.sqrt(self.d_router)  # (b, s, e)
         if self.use_entmax:
             route_probs = entmax_bisect(attn_scores, alpha=self.alpha, dim=-1)
         else:
