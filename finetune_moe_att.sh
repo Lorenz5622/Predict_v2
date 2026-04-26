@@ -7,7 +7,7 @@ LAUNCHER="$SCRIPT_DIR/launch_two_stage_torchrun_moe_att.py"
 EXTRA_ARGS=("$@")
 
 CONFIGS=(
-  "configs/moe_att_example.json"
+  "configs/attmoe/moe_att_piqa.json"
 )
 
 LOGDIR="$SCRIPT_DIR/logs/sweep_$(date +%Y%m%d_%H%M%S)" 

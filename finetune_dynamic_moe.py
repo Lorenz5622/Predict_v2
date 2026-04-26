@@ -13,7 +13,7 @@ Datasets, collator, and the main training loop are reused from `finetune.py`
 to avoid duplicating the entire training stack.
 """
 from __future__ import annotations
-PIQA_PAIRWISE_COEF = 0.2
+PIQA_PAIRWISE_COEF = 0.05
 import argparse
 import gc
 import inspect
@@ -718,6 +718,29 @@ def _forward_stage2_batch(
         "rejected_score": rejected_score.mean(),
     }
 
+def _batch_max_effective_token_length(batch: Dict[str, torch.Tensor], *, pad_id: int = 0) -> Dict[str, int]:
+    if "chosen_input_ids" in batch and "rejected_input_ids" in batch:
+        chosen_lengths = batch["chosen_input_ids"].ne(pad_id).sum(dim=-1)
+        rejected_lengths = batch["rejected_input_ids"].ne(pad_id).sum(dim=-1)
+        return {
+            "max_token_len": int(torch.maximum(chosen_lengths, rejected_lengths).max().item()),
+            "max_chosen_token_len": int(chosen_lengths.max().item()),
+            "max_rejected_token_len": int(rejected_lengths.max().item()),
+        }
+
+    if "input_ids" in batch:
+        lengths = batch["input_ids"].ne(pad_id).sum(dim=-1)
+        return {
+            "max_token_len": int(lengths.max().item()),
+            "max_chosen_token_len": 0,
+            "max_rejected_token_len": 0,
+        }
+
+    return {
+        "max_token_len": 0,
+        "max_chosen_token_len": 0,
+        "max_rejected_token_len": 0,
+    }
 
 @torch.no_grad()
 def evaluate_stage2(
@@ -1143,6 +1166,7 @@ def train(
             "pairwise_coef", "router_aux_loss_coef", "router_top_k",
             "expert_weight_proj_grad_norm",
             "train_pairwise_acc", "train_pairwise_margin", "train_chosen_score", "train_rejected_score",
+            "train_max_token_len", "train_max_chosen_token_len", "train_max_rejected_token_len",
             "router_score_mean", "router_score_std", "router_score_min", "router_score_max",
             "router_weight_row_sum_mean", "router_weight_row_sum_abs_err",
             "router_weight_entropy", "router_weight_top1_mass",
@@ -1240,6 +1264,10 @@ def train(
                 pairwise_margin_real = float(loss_stats["pairwise_margin"].detach().float().item())
                 chosen_score_real = float(loss_stats["chosen_score"].detach().float().item())
                 rejected_score_real = float(loss_stats["rejected_score"].detach().float().item())
+                token_len_stats = _batch_max_effective_token_length(batch, pad_id=0)
+                max_token_len_real = int(token_len_stats["max_token_len"])
+                max_chosen_token_len_real = int(token_len_stats["max_chosen_token_len"])
+                max_rejected_token_len_real = int(token_len_stats["max_rejected_token_len"])
 
                 if len(ma_loss_buf) == ma_loss_buf.maxlen:
                     ma_loss_sum -= ma_loss_buf[0]
@@ -1318,6 +1346,9 @@ def train(
                             f"{pairwise_margin_real:.6f}",
                             f"{chosen_score_real:.6f}",
                             f"{rejected_score_real:.6f}",
+                            str(max_token_len_real),
+                            str(max_chosen_token_len_real),
+                            str(max_rejected_token_len_real),
                             _metric_cell(router_forward_stats.get("attn_scores_mean")),
                             _metric_cell(router_forward_stats.get("attn_scores_std")),
                             _metric_cell(router_forward_stats.get("attn_scores_min")),

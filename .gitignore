@@ -12,3 +12,4 @@
 records/
 /Qwen_MoE.egg-info/
 /figures/
+*.txt

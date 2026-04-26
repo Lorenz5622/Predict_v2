@@ -2918,7 +2918,7 @@ def main():
             stage2_model,
             device_ids=[local_rank],
             output_device=local_rank,
-            find_unused_parameters=True,
+            find_unused_parameters=False,
         )
     train(
         model=stage2_model,
