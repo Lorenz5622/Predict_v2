@@ -17,28 +17,63 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
 """ PyTorch LLaMA model."""
+from dataclasses import dataclass
 import math
 from typing import List, Optional, Tuple, Union
 import torch
 import torch.utils.checkpoint
 from torch import nn
 from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss, MSELoss
+
 import torch.nn.functional as F
-
-
 from transformers import PreTrainedModel
 from transformers.activations import ACT2FN
 from transformers.modeling_outputs import BaseModelOutputWithPast, CausalLMOutputWithPast
 from transformers.modeling_outputs import SequenceClassifierOutputWithPast
 from transformers.utils import logging, add_start_docstrings, add_start_docstrings_to_model_forward, replace_return_docstrings
 
-from .configuration_moe_yuan import MoEConfig
+from .configuration_moe_att_dm import MoEConfig
 
 logger = logging.get_logger(__name__)
 
 _CONFIG_FOR_DOC = "LlamaConfig"
+
+
+@dataclass
+class MoECausalLMOutputWithPast(CausalLMOutputWithPast):
+    """
+    Base class for causal language model outputs with past key values and
+    router-side auxiliary losses.
+
+    Parameters:
+        loss (`torch.FloatTensor` of shape `(1,)`, *optional*):
+            Language modeling loss.
+        logits (`torch.FloatTensor` of shape `(batch_size, sequence_length, config.vocab_size)`):
+            Prediction scores of the language modeling head.
+        past_key_values (`tuple(tuple(torch.FloatTensor))`, *optional*):
+            Cached key/value states for fast autoregressive decoding.
+        hidden_states (`tuple(torch.FloatTensor)`, *optional*):
+            Hidden states from the embedding output and each decoder layer.
+        attentions (`tuple(torch.FloatTensor)`, *optional*):
+            Attention weights after the attention softmax.
+        router_aux_loss (`torch.FloatTensor`, *optional*):
+            Router load-balancing auxiliary loss.
+        router_z_loss (`torch.FloatTensor`, *optional*):
+            Router z-loss regularizer.
+        router_pull_loss (`torch.FloatTensor`, *optional*):
+            Prototype pull loss for expert embeddings.
+        router_budget_loss (`torch.FloatTensor`, *optional*):
+            Router budget loss placeholder kept for API compatibility. Fixed
+            top-k routing disables the dynamic-count budget and returns zero.
+    """
+    router_aux_loss: Optional[torch.FloatTensor] = None
+    router_z_loss: Optional[torch.FloatTensor] = None
+    router_pull_loss: Optional[torch.FloatTensor] = None
+    router_budget_loss: Optional[torch.FloatTensor] = None
+    final_ce_loss: Optional[torch.FloatTensor] = None
+    expert_loss: Optional[torch.FloatTensor] = None
+    router_kl_loss: Optional[torch.FloatTensor] = None
 
 
 # Copied from transformers.models.bart.modeling_bart._make_causal_mask
@@ -156,93 +191,419 @@ class LlamaMLP(nn.Module):
     def forward(self, x):
         return self.down_proj(self.act_fn(self.gate_proj(x)) * self.up_proj(x))
 
-class ParallelAttention_router(nn.Module):
-    def __init__(self, config: MoEConfig):
+# def top_p_sampling_batched_all_sequence(logits, top_p=0.9, temperature=1.0):
+#     """
+#     Apply Top-p sampling to every element in the sequence for each item in the batch.
+#     Returns the selected token indices and the corresponding threshold indices.
+    
+#     :param logits: Logits from a language model with shape (sequence length, batch size, L)
+#     :param top_p: Cumulative probability threshold (float)
+#     :param temperature: Sampling temperature (float)
+#     :return: Tuple of tensors (selected token indices, threshold indices) for each position in each sequence in the batch
+#     """
+#     # Apply temperature
+#     logits = logits / temperature
+    
+#     # Convert logits to probabilities
+#     # probabilities = torch.softmax(logits, dim=-1)
+#     # Sort probabilities and their indices in descending order
+#     sorted_probs, sorted_indices = torch.sort(logits, descending=True)
+#     # print(f"Sorted probabilities: {sorted_probs}")
+#     # print(f"top_p: {top_p}")
+#     # Compute cumulative probabilities
+#     cumulative_probs = torch.cumsum(sorted_probs, dim=-1)
+#     mask = cumulative_probs > top_p
+
+#     # Find the threshold indices
+#     threshold_indices = mask.long().argmax(dim=-1)
+#     threshold_mask = torch.nn.functional.one_hot(threshold_indices, num_classes=sorted_indices.size(-1)).bool()
+    
+#     mask = mask & ~threshold_mask
+#     sorted_indices = torch.where(mask, -1, sorted_indices)
+#     sorted_probs = torch.where(mask, 0.0, sorted_probs)   
+
+#     denom = sorted_probs.sum(dim=-1, keepdim=True).clamp_min(1e-9)
+#     sorted_probs = sorted_probs / denom
+
+#     return sorted_probs, sorted_indices
+
+def top_p_sampling_batched_all_sequence(probs, top_p=0.9, temperature=1.0, eps=1e-9):
+    """
+    probs: (..., num_experts)
+    返回:
+        selected_probs:  形状同 probs，未选中的位置为 0，选中的位置重新归一化后和为 1
+        selected_indices:形状同 probs，未选中的位置为 -1
+    """
+    # 如果输入已经是概率分布（你当前就是 route_probs），一般不建议再除 temperature。
+    # 如果你后面想支持 logits，再单独在外面处理。
+    probs = probs.float()
+    # probs = torch.nan_to_num(probs, nan=0.0, posinf=0.0, neginf=0.0)
+    # probs = probs.clamp_min(0.0)
+    # probs_sum = probs.sum(dim=-1, keepdim=True)
+    # uniform_probs = torch.full_like(probs, 1.0 / probs.size(-1))
+    # probs = torch.where(probs_sum > eps, probs / probs_sum.clamp_min(eps), uniform_probs)
+
+    # 按概率从大到小排序
+    sorted_probs, sorted_indices = torch.sort(probs, dim=-1, descending=True)
+    # print(f"sorted_probs: {sorted_probs}")
+    # 计算 cumulative sum，保留使累计概率刚超过 top_p 的那个专家
+    cumulative_probs = torch.cumsum(sorted_probs, dim=-1)
+    mask = cumulative_probs > top_p
+
+    threshold_indices = mask.long().argmax(dim=-1)
+    threshold_mask = torch.nn.functional.one_hot(
+        threshold_indices, num_classes=sorted_indices.size(-1)
+    ).bool()
+
+    # 超过 top_p 的去掉，但第一次超过阈值的那个保留
+    mask = mask & ~threshold_mask
+
+    selected_indices = torch.where(mask, -1, sorted_indices)
+    selected_probs = torch.where(mask, 0.0, sorted_probs)
+
+    # 关键：对保留下来的专家权重重新归一化到 1
+    denom = selected_probs.sum(dim=-1, keepdim=True).clamp_min(eps)
+    selected_probs = selected_probs / denom
+
+    return selected_probs, selected_indices
+
+def top_k_routing_batched_all_sequence(probs, top_k: int):
+    """
+    probs: (seq_len, batch_size, num_experts)
+    返回:
+        topk_probs: (seq_len, batch_size, top_k)
+        topk_idx:   (seq_len, batch_size, top_k)
+    """
+    topk_probs, topk_idx = torch.topk(probs, k=top_k, dim=-1)
+
+    # 重新归一化，只在选中的 top-k 上归一化
+    denom = topk_probs.sum(dim=-1, keepdim=True).clamp_min(1e-9)
+    topk_probs = topk_probs / denom
+    return topk_probs, topk_idx
+
+def entmax_bisect(
+    inputs: torch.Tensor,
+    alpha: float = 1.5,
+    dim: int = -1,
+    n_iter: int = 32,
+    eps: float = 1e-12,
+) -> torch.Tensor:
+    """
+    Differentiable alpha-entmax via bisection.
+    alpha in (1, 2], where:
+      alpha -> 1 : softmax
+      alpha = 2  : sparsemax
+    """
+    if not (1.0 < alpha <= 2.0):
+        raise ValueError(f"alpha must be in (1, 2], got {alpha}")
+
+    alpha_m1 = alpha - 1.0
+    inv_alpha_m1 = 1.0 / alpha_m1
+
+    # Shift for numerical stability.
+    x = inputs - inputs.max(dim=dim, keepdim=True).values
+
+    # Search tau s.t. sum(((alpha-1)*(x - tau))_+^(1/(alpha-1))) = 1.
+    tau_lo = x.min(dim=dim, keepdim=True).values - 1.0
+    tau_hi = x.max(dim=dim, keepdim=True).values
+
+    for _ in range(n_iter):
+        tau_mid = (tau_lo + tau_hi) * 0.5
+        p_mid = torch.clamp(alpha_m1 * (x - tau_mid), min=0.0) ** inv_alpha_m1
+        sum_p = p_mid.sum(dim=dim, keepdim=True)
+        tau_lo = torch.where(sum_p > 1.0, tau_mid, tau_lo)
+        tau_hi = torch.where(sum_p <= 1.0, tau_mid, tau_hi)
+
+    tau_star = (tau_lo + tau_hi) * 0.5
+    probs = torch.clamp(alpha_m1 * (x - tau_star), min=0.0) ** inv_alpha_m1
+    probs = probs / probs.sum(dim=dim, keepdim=True).clamp_min(eps)
+    return probs
+
+
+def _mean_scalar_stat(stat_dicts, key: str):
+    values = [float(stats[key]) for stats in stat_dicts if stats and stats.get(key) is not None]
+    if not values:
+        return None
+    return sum(values) / float(len(values))
+
+
+def _mean_tensor_stat(stat_dicts, key: str):
+    values = [stats[key].detach().float() for stats in stat_dicts if stats and torch.is_tensor(stats.get(key))]
+    if not values:
+        return None
+    return torch.stack(values, dim=0).mean(dim=0)
+
+
+def _pairwise_cosine_stats(vectors: torch.Tensor) -> Tuple[Optional[float], Optional[float]]:
+    vectors = vectors.detach().float()
+    num_vectors = int(vectors.size(0))
+    if num_vectors < 2:
+        return None, None
+    vectors = F.normalize(vectors, dim=-1)
+    cosine = torch.matmul(vectors, vectors.transpose(0, 1))
+    mask = ~torch.eye(num_vectors, dtype=torch.bool, device=cosine.device)
+    pairwise = cosine[mask]
+    if pairwise.numel() == 0:
+        return None, None
+    return float(pairwise.mean().item()), float(pairwise.max().item())
+
+class CrossAttentionRouter(nn.Module):
+    """Attention-style router over per-token expert embeddings."""
+
+    def __init__(
+        self,
+        hidden_size: int,
+        num_experts: int,
+        d_router: Optional[int] = None,
+        use_entmax: bool = False,
+        alpha: float = 1.5,
+        use_softmax_temperature: bool = False,
+        softmax_temperature: float = 1.0,
+    ):
         super().__init__()
-        self.hidden_size = config.hidden_size
-        self.projection_size = config.num_experts
+        self.hidden_size = int(hidden_size)
+        self.num_experts = int(num_experts)
+        self.d_router = int(d_router if d_router is not None else hidden_size)
+        # print(f"d_router in CrossAttentionRouter: {self.d_router}")
+        self.use_entmax = bool(use_entmax)
+        self.alpha = alpha
+        self.use_softmax_temperature = bool(use_softmax_temperature)
+        self.softmax_temperature = float(softmax_temperature)
 
-        self.query = nn.Linear(self.hidden_size, self.projection_size, bias=False)
-        self.key = nn.Linear(self.hidden_size, self.projection_size, bias=False)
-        self.value = nn.Linear(self.hidden_size, self.projection_size, bias=False)
+        self.query = nn.Linear(self.hidden_size, self.d_router, bias=False)
+        self.expert_embedding_proj = nn.Linear(self.hidden_size, self.d_router, bias=False)
+        self.key_proj = nn.Linear(self.d_router, self.d_router, bias=False)
+        self.key_proj._router_identity_init = True
+        self.last_router_forward_stats = {}
+        with torch.no_grad():
+            self.key_proj.weight.zero_()
+            diag = min(self.key_proj.weight.shape)
+            self.key_proj.weight[:diag, :diag].copy_(
+                torch.eye(diag, dtype=self.key_proj.weight.dtype, device=self.key_proj.weight.device)
+            )
 
-    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
-        query_layer = self.query(hidden_states)
-        key_layer = self.key(hidden_states)
-        value_layer = self.value(hidden_states)
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        expert_hidden_states: Optional[torch.Tensor] = None,
+        return_token_q: bool = False,
+    ) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
+        if expert_hidden_states is None:
+            raise RuntimeError("CrossAttentionRouter.forward requires expert_hidden_states.")
+        router_in = hidden_states.to(self.query.weight.dtype)
+        q = self.query(router_in).float()
+        expert_proj_in = expert_hidden_states.to(self.expert_embedding_proj.weight.dtype)
+        expert_embedding = self.expert_embedding_proj(expert_proj_in)
+        k = self.key_proj(expert_embedding.to(dtype=self.key_proj.weight.dtype)).float()
+        attn_scores = (q.unsqueeze(-2) * k).sum(dim=-1)
+        if self.use_entmax:
+            route_probs = entmax_bisect(attn_scores, alpha=self.alpha, dim=-1)
+        else:
+            softmax_scores = attn_scores
+            if self.use_softmax_temperature:
+                softmax_scores = softmax_scores / max(self.softmax_temperature, 1e-6)
+            route_probs = F.softmax(softmax_scores, dim=-1, dtype=torch.float32)
 
-        batch_size, sequence_length, num_experts = query_layer.shape
+        route_scores = attn_scores
+        attn_scores_f = attn_scores.detach().float()
+        route_probs_f = route_probs.detach().float()
+        token_q_norms = q.detach().float().norm(dim=-1)
+        expert_embedding_f = expert_hidden_states.detach().float().mean(dim=(0, 1))
+        expert_embedding_pairwise_cos_mean, expert_embedding_pairwise_cos_max = _pairwise_cosine_stats(expert_embedding_f)
+        expert_embedding_norms = expert_embedding_f.norm(dim=-1)
+        row_sums = route_probs_f.sum(dim=-1)
+        probs_clamped = route_probs_f.clamp_min(1e-9)
+        attn_entropy = -(probs_clamped * probs_clamped.log()).sum(dim=-1)
+        attn_top1_mass = route_probs_f.max(dim=-1).values
+        self.last_router_forward_stats = {
+            "attn_scores_mean": float(attn_scores_f.mean().item()),
+            "attn_scores_std": float(attn_scores_f.std().item()),
+            "attn_scores_min": float(attn_scores_f.min().item()),
+            "attn_scores_max": float(attn_scores_f.max().item()),
+            "attn_weights_row_sum_mean": float(row_sums.mean().item()),
+            "attn_weights_row_sum_abs_err": float((row_sums - 1.0).abs().mean().item()),
+            "attn_weights_entropy": float(attn_entropy.mean().item()),
+            "attn_weights_top1_mass": float(attn_top1_mass.mean().item()),
+            "route_prob_min": float(route_probs_f.min().item()),
+            "route_prob_has_neg": float(route_probs_f.lt(0).any().item()),
+            "route_prob_row_sum_mean": float(row_sums.mean().item()),
+            "route_prob_row_sum_abs_err": float((row_sums - 1.0).abs().mean().item()),
+            "expert_embedding_pairwise_cos_mean": expert_embedding_pairwise_cos_mean,
+            "expert_embedding_pairwise_cos_max": expert_embedding_pairwise_cos_max,
+            "expert_embedding_norm_mean": float(expert_embedding_norms.mean().item()),
+            "expert_embedding_norm_std": float(expert_embedding_norms.std(unbiased=False).item()),
+            "token_q_norm_mean": float(token_q_norms.mean().item()),
+            "token_q_norm_std": float(token_q_norms.std(unbiased=False).item()),
+        }
+        token_q = q if return_token_q else None
+        return route_scores, route_probs, token_q
 
-        # Strictly follow Yuan's router path: route in fp32 over the expert dimension.
-        query_layer = query_layer.float().view(batch_size, sequence_length, num_experts, 1)
-        key_layer = key_layer.float().view(batch_size, sequence_length, num_experts, 1)
-        value_layer = value_layer.float().view(batch_size, sequence_length, num_experts, 1)
-
-        attn_weights = torch.matmul(query_layer, key_layer.transpose(2, 3))
-        attn_weights = torch.nan_to_num(attn_weights, nan=0.0, posinf=1e4, neginf=-1e4).clamp_(-1e4, 1e4)
-        attn_weights = F.softmax(attn_weights, dim=-1)
-        attn_weights = torch.nan_to_num(attn_weights, nan=0.0, posinf=1.0, neginf=0.0)
-        attn_output = torch.matmul(attn_weights, value_layer)
-        attn_output = torch.nan_to_num(attn_output, nan=0.0, posinf=1e4, neginf=-1e4).clamp_(-1e4, 1e4)
-
-        return attn_output.view(batch_size * sequence_length, num_experts)
 
 class SwitchMLP(nn.Module):
-    """
-    Routes input to one of N MLP "experts"
-    """
+    """Routes tokens to experts using expert outputs as router keys."""
+
     def __init__(self, config, layer_idx):
         super(SwitchMLP, self).__init__()
         self.layer_num = layer_idx
-        self.use_switch = (layer_idx % config.expert_frequency) == 0 # Ensure the first layer use switch mlp
+        self.use_switch = (layer_idx % config.expert_frequency) == 0
+        self.last_topk_active_expert_count = 0
+        self.last_router_aux_loss = None
+        self.last_router_z_loss = None
+        self.last_router_budget_loss = None
+        self.last_router_forward_stats = {}
+        self.last_router_dispatch_stats = {}
+        self.last_router_weights = None
+        self.last_expert_outputs = None
+        self.last_router_logits = None
+        self.router_anchor_momentum = float(getattr(config, "router_anchor_momentum", 0.99))
+        self.router_budget_target_count = float(getattr(config, "router_budget_target_count", 0.0))
+        self.router_budget_tau = float(getattr(config, "router_budget_tau", 0.05))
+
         if self.use_switch:
-            self.router_topk = int(getattr(config, "router_topk", getattr(config, "experts_topk", 2)))
-            self.norm_topk_prob = bool(getattr(config, "norm_topk_prob", True))
-            self.router = ParallelAttention_router(config)
-            self.experts = torch.nn.ModuleList()
+            self.experts = nn.ModuleList()
             self.num_experts = config.num_experts
-            for i in range(config.num_experts):
-                self.experts.append(LlamaMLP(config.hidden_size, config.intermediate_size, config.hidden_act))
+            for _ in range(config.num_experts):
+                self.experts.append(
+                    LlamaMLP(
+                        config.hidden_size,
+                        config.intermediate_size,
+                        config.hidden_act,
+                    )
+                )
+
+            self.router_top_k = 2
+
+            self.use_cross_attention_router = getattr(config, "use_cross_attention_router", True)
+            self.router_use_entmax = bool(getattr(config, "router_use_entmax", False))
+            self.router_entmax_alpha = float(getattr(config, "router_entmax_alpha", 1.5))
+            if self.router_use_entmax and not (1.0 < self.router_entmax_alpha <= 2.0):
+                raise ValueError(
+                    f"`router_entmax_alpha` must be in (1, 2] when `router_use_entmax=True`, "
+                    f"got {self.router_entmax_alpha}"
+                )
+
+            if self.use_cross_attention_router:
+                self.router = CrossAttentionRouter(
+                    hidden_size=config.hidden_size,
+                    num_experts=config.num_experts,
+                    d_router=getattr(config, "router_dim", config.hidden_size),
+                    use_entmax=self.router_use_entmax,
+                    alpha=self.router_entmax_alpha,
+                    use_softmax_temperature=bool(getattr(config, "router_use_softmax_temperature", False)),
+                    softmax_temperature=float(getattr(config, "router_softmax_temperature", 1.0)),
+                )
+            else:
+                self.router = nn.Linear(
+                    config.hidden_size,
+                    config.num_experts,
+                    bias=False,
+                )
+
         else:
-            self.mlp = LlamaMLP(config.hidden_size, config.intermediate_size, config.hidden_act)
-        
+            self.mlp = LlamaMLP(
+                config.hidden_size,
+                config.intermediate_size,
+                config.hidden_act,
+            )
+
     def forward(self, hidden_states):
+        """
+        hidden_states: (batch, seq, hidden)
+        """
         if not self.use_switch:
-            output = self.mlp(hidden_states)
-            return output
+            self.last_router_aux_loss = None
+            self.last_router_z_loss = None
+            self.last_router_budget_loss = None
+            self.last_router_forward_stats = {}
+            self.last_router_dispatch_stats = {}
+            self.last_router_weights = None
+            self.last_expert_outputs = None
+            self.last_router_logits = None
+            return self.mlp(hidden_states)
 
-        batch_size, sequence_length, hidden_dim = hidden_states.shape
-        router_logits = self.router(hidden_states)
-        router_logits = torch.nan_to_num(router_logits.float(), nan=0.0, posinf=1e4, neginf=-1e4).clamp_(-1e4, 1e4)
-        hidden_states = hidden_states.view(-1, hidden_dim)
+        bsz, seq_len, hidden_dim = hidden_states.size()
+        flat_hidden = hidden_states.reshape(-1, hidden_dim)
+        expert_outputs = []
+        for expert in self.experts:
+            expert_outputs.append(expert(flat_hidden).view(bsz, seq_len, hidden_dim))
+        expert_outputs = torch.stack(expert_outputs, dim=2)
 
-        routing_weights = F.softmax(router_logits, dim=1, dtype=torch.float32)
-        routing_weights = torch.nan_to_num(routing_weights, nan=0.0, posinf=1.0, neginf=0.0)
-        top_k = min(self.router_topk, self.num_experts)
-        routing_weights, selected_experts = torch.topk(routing_weights, top_k, dim=-1)
-        if self.norm_topk_prob:
-            routing_weights = routing_weights / routing_weights.sum(dim=-1, keepdim=True).clamp_min(1e-9)
-            routing_weights = torch.nan_to_num(routing_weights, nan=0.0, posinf=1.0, neginf=0.0)
-        routing_weights = routing_weights.to(hidden_states.dtype)
+        if self.use_cross_attention_router:
+            router_logits, route_probs, _token_q = self.router(
+                hidden_states,
+                expert_hidden_states=expert_outputs,
+                return_token_q=False,
+            )
+            self.last_router_forward_stats = dict(getattr(self.router, "last_router_forward_stats", {}))
+            router_logits = router_logits.float()
+            route_probs = route_probs.float()
+            if route_probs.shape != router_logits.shape:
+                raise RuntimeError(
+                    "CrossAttentionRouter must return per-expert probabilities with shape "
+                    f"{tuple(router_logits.shape)}, got {tuple(route_probs.shape)}"
+                )
+            self.last_router_z_loss = None
+        else:
+            router_logits = self.router(hidden_states)
+            route_probs = F.softmax(router_logits, dim=-1, dtype=torch.float)
+            if self.router_use_entmax:
+                route_probs = entmax_bisect(router_logits.float(), alpha=self.router_entmax_alpha, dim=-1)
+            self.last_router_z_loss = None
+            self.last_router_forward_stats = {}
 
-        final_hidden_states = torch.zeros(
-            (batch_size * sequence_length, hidden_dim), dtype=hidden_states.dtype, device=hidden_states.device
+        route_probs_for_stats = route_probs.float()
+        soft_load = route_probs_for_stats.mean(dim=(0, 1))
+        top1_experts = route_probs_for_stats.argmax(dim=-1)
+        hard_load = F.one_hot(top1_experts, num_classes=self.num_experts).to(route_probs_for_stats.dtype).mean(dim=(0, 1))
+        if self.training:
+            self.last_router_aux_loss = self.num_experts * torch.sum(soft_load * hard_load)
+        else:
+            self.last_router_aux_loss = None
+
+        topk_weights, topk_ind = top_k_routing_batched_all_sequence(
+            route_probs,
+            min(self.router_top_k, route_probs.size(-1)),
         )
+        dense_topk_weights = route_probs.new_zeros(route_probs.shape)
+        dense_topk_weights.scatter_(-1, topk_ind, topk_weights)
+        selected_expert_count_per_token = (topk_ind >= 0).sum(dim=-1)  # (b, s)
+        self.last_topk_avg_expert_count = selected_expert_count_per_token.float().mean().item()
+        top2_k = min(2, route_probs_for_stats.size(-1))
+        top2_values = torch.topk(route_probs_for_stats, k=top2_k, dim=-1).values
+        top1_top2_margin = top2_values[..., 0] - top2_values[..., 1] if top2_k == 2 else top2_values[..., 0]
+        selected_mask = topk_ind >= 0
+        gathered_route_probs = route_probs_for_stats.gather(-1, topk_ind.clamp_min(0))
+        topk_pre_mass = (gathered_route_probs * selected_mask.to(gathered_route_probs.dtype)).sum(dim=-1)
+        topk_post_sum = topk_weights.sum(dim=-1)
+        hard_counts = torch.bincount(
+            topk_ind.reshape(-1)[topk_ind.reshape(-1) >= 0],
+            minlength=self.num_experts,
+        ).to(torch.float32)
 
-        expert_mask = F.one_hot(selected_experts, num_classes=self.num_experts).permute(2, 1, 0)
-        for expert_idx, expert_layer in enumerate(self.experts):
-            idx, top_x = torch.where(expert_mask[expert_idx])
-            if top_x.numel() == 0:
-                continue
+        self.last_router_dispatch_stats = {
+            "avg_selected_expert_count": float(selected_expert_count_per_token.float().mean().item()),
+            "soft_selected_expert_count": float(selected_expert_count_per_token.float().mean().item()),
+            "soft_load": soft_load.detach().float(),
+            "hard_load": hard_load.detach().float(),
+            "dead_expert_ratio": float((hard_load <= 0).float().mean().item()),
+            "top1_top2_margin": float(top1_top2_margin.mean().item()),
+            "topk_pre_mass_mean": float(topk_pre_mass.mean().item()),
+            "topk_post_sum_mean": float(topk_post_sum.mean().item()),
+            "topk_post_sum_abs_err": float((topk_post_sum - 1.0).abs().mean().item()),
+            "router_top_k": float(self.router_top_k),
+            "expert_token_count_cv": float(
+                (hard_counts.std(unbiased=False) / hard_counts.mean().clamp_min(1e-12)).item()
+            ),
+        }
 
-            top_x_list = top_x.tolist()
-            idx_list = idx.tolist()
-            current_state = hidden_states[None, top_x_list].reshape(-1, hidden_dim)
-            current_hidden_states = expert_layer(current_state) * routing_weights[top_x_list, idx_list, None]
-            final_hidden_states.index_add_(0, top_x, current_hidden_states.to(hidden_states.dtype))
+        self.last_router_budget_loss = hidden_states.new_zeros(()) if self.training else None
+        self.last_router_weights = dense_topk_weights
+        self.last_expert_outputs = expert_outputs
+        self.last_router_logits = router_logits
 
-        return final_hidden_states.reshape(batch_size, sequence_length, hidden_dim)
-                
+        output_total = (dense_topk_weights.unsqueeze(-1).to(expert_outputs.dtype) * expert_outputs).sum(dim=2)
+        return output_total
+
 class LlamaAttention(nn.Module):
     """Multi-headed attention from 'Attention Is All You Need' paper"""
 
@@ -369,10 +730,12 @@ class LlamaDecoderLayer(nn.Module):
                 (see `past_key_values`).
             past_key_value (`Tuple(torch.FloatTensor)`, *optional*): cached past key and value projection states
         """
+        # print(f"decoder hidden_states in finite      : {torch.isfinite(hidden_states).all().item()}")
         residual = hidden_states
 
         # hidden_states = self.input_layernorm(hidden_states)
         hidden_states = self.input_norm(hidden_states)
+        # print(f"after input_norm finite             : {torch.isfinite(hidden_states).all().item()}")
 
 
         # Self Attention
@@ -384,12 +747,15 @@ class LlamaDecoderLayer(nn.Module):
             output_attentions=output_attentions,
             use_cache=use_cache,
         )
+        # print(f"self_attn output finite             : {torch.isfinite(hidden_states).all().item()}")
         hidden_states = residual + hidden_states
+        # print(f"after attn residual add finite      : {torch.isfinite(hidden_states).all().item()}")
 
         # Fully Connected
         residual = hidden_states
         # hidden_states = self.post_attention_layernorm(hidden_states)
         hidden_states = self.post_attention_norm(hidden_states)
+        # print(f"after post_attention_norm finite    : {torch.isfinite(hidden_states).all().item()}")
         hidden_states = self.mlp(hidden_states)
         hidden_states = residual + hidden_states
 
@@ -433,7 +799,21 @@ class MoEPreTrainedModel(PreTrainedModel):
     def _init_weights(self, module):
         std = self.config.initializer_range
         if isinstance(module, nn.Linear):
-            module.weight.data.normal_(mean=0.0, std=std)
+            if not module.weight.dtype.is_floating_point:
+                raise RuntimeError(
+                    "Tried to initialize a non-floating Linear weight: "
+                    f"module_cls={module.__class__.__name__}, "
+                    f"dtype={module.weight.dtype}, "
+                    f"shape={tuple(module.weight.shape)}"
+                )
+            if bool(getattr(module, "_router_identity_init", False)):
+                module.weight.data.zero_()
+                diag = min(module.weight.shape)
+                module.weight.data[:diag, :diag].copy_(
+                    torch.eye(diag, dtype=module.weight.dtype, device=module.weight.device)
+                )
+            else:
+                module.weight.data.normal_(mean=0.0, std=std)
             if module.bias is not None:
                 module.bias.data.zero_()
         elif isinstance(module, nn.Embedding):
@@ -442,7 +822,7 @@ class MoEPreTrainedModel(PreTrainedModel):
                 module.weight.data[module.padding_idx].zero_()
 
     def _set_gradient_checkpointing(self, module, value=False):
-        if isinstance(module, LlamaModel):
+        if isinstance(module, MoEModel):
             module.gradient_checkpointing = value
 
 LLAMA_INPUTS_DOCSTRING = r"""
@@ -525,8 +905,16 @@ class MoEModel(MoEPreTrainedModel):
         self.vocab_size = config.vocab_size
 
         self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size, self.padding_idx)
+        self.last_router_budget_loss = None
+        self.last_router_forward_stats = {}
+        self.last_router_dispatch_stats = {}
+
         self.layers = nn.ModuleList([LlamaDecoderLayer(config, layer_idx) for layer_idx in range(config.num_hidden_layers)])
+
         self.norm = LlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        self.last_router_aux_loss = None
+        self.last_router_z_loss = None
+        self.last_router_budget_loss = None
 
         self.gradient_checkpointing = False
         # Initialize weights and apply final processing
@@ -609,6 +997,7 @@ class MoEModel(MoEPreTrainedModel):
 
         if inputs_embeds is None:
             inputs_embeds = self.embed_tokens(input_ids)
+        # print(f"inputs_embeds finite                 : {torch.isfinite(inputs_embeds).all().item()}")
         # embed positions
         if attention_mask is None:
             attention_mask = torch.ones(
@@ -619,6 +1008,7 @@ class MoEModel(MoEPreTrainedModel):
         )
 
         hidden_states = inputs_embeds
+        # print(f"hidden_states before layers finite   : {torch.isfinite(hidden_states).all().item()}")
 
         if self.gradient_checkpointing and self.training:
             if use_cache:
@@ -631,8 +1021,14 @@ class MoEModel(MoEPreTrainedModel):
         all_hidden_states = () if output_hidden_states else None
         all_self_attns = () if output_attentions else None
         next_decoder_cache = () if use_cache else None
+        self.last_router_aux_loss = None
+        self.last_router_z_loss = None
+        self.last_router_budget_loss = None
+        self.last_router_forward_stats = {}
+        self.last_router_dispatch_stats = {}
 
         for idx, decoder_layer in enumerate(self.layers):
+            # print(f"layer {idx} input finite             : {torch.isfinite(hidden_states).all().item()}")
             if output_hidden_states:
                 all_hidden_states += (hidden_states,)
 
@@ -653,6 +1049,7 @@ class MoEModel(MoEPreTrainedModel):
                     attention_mask,
                     position_ids,
                     None,
+                    use_reentrant=False,
                 )
             else:
                 layer_outputs = decoder_layer(
@@ -665,6 +1062,7 @@ class MoEModel(MoEPreTrainedModel):
                 )
 
             hidden_states = layer_outputs[0]
+            # print(f"layer {idx} output finite            : {torch.isfinite(hidden_states).all().item()}")
 
             if use_cache:
                 next_decoder_cache += (layer_outputs[2 if output_attentions else 1],)
@@ -673,6 +1071,92 @@ class MoEModel(MoEPreTrainedModel):
                 all_self_attns += (layer_outputs[1],)
 
         hidden_states = self.norm(hidden_states)
+
+        if self.training:
+            aux_terms = []
+            z_terms = []
+            budget_terms = []
+            forward_stat_terms = []
+            dispatch_stat_terms = []
+
+            for layer in self.layers:
+                mlp = getattr(layer, "mlp", None)
+                aux = getattr(mlp, "last_router_aux_loss", None)
+                if aux is not None:
+                    aux_terms.append(aux)
+
+                z_loss = getattr(mlp, "last_router_z_loss", None)
+                if z_loss is not None:
+                    z_terms.append(z_loss)
+
+                budget_loss = getattr(mlp, "last_router_budget_loss", None)
+                if budget_loss is not None:
+                    budget_terms.append(budget_loss)
+                forward_stats = getattr(mlp, "last_router_forward_stats", None)
+                if forward_stats:
+                    forward_stat_terms.append(forward_stats)
+                dispatch_stats = getattr(mlp, "last_router_dispatch_stats", None)
+                if dispatch_stats:
+                    dispatch_stat_terms.append(dispatch_stats)
+
+            if aux_terms:
+                self.last_router_aux_loss = torch.stack(aux_terms).mean()
+            else:
+                self.last_router_aux_loss = hidden_states.new_zeros(())
+
+            if z_terms:
+                self.last_router_z_loss = torch.stack(z_terms).mean()
+            else:
+                self.last_router_z_loss = hidden_states.new_zeros(())
+
+            if budget_terms:
+                self.last_router_budget_loss = torch.stack(budget_terms).mean()
+            else:
+                self.last_router_budget_loss = hidden_states.new_zeros(())
+
+            forward_scalar_keys = (
+                "attn_scores_mean",
+                "attn_scores_std",
+                "attn_scores_min",
+                "attn_scores_max",
+                "attn_weights_row_sum_mean",
+                "attn_weights_row_sum_abs_err",
+                "attn_weights_entropy",
+                "attn_weights_top1_mass",
+                "route_prob_min",
+                "route_prob_has_neg",
+                "route_prob_row_sum_mean",
+                "route_prob_row_sum_abs_err",
+                "expert_embedding_pairwise_cos_mean",
+                "expert_embedding_pairwise_cos_max",
+                "expert_embedding_norm_mean",
+                "expert_embedding_norm_std",
+                "token_q_norm_mean",
+                "token_q_norm_std",
+            )
+            self.last_router_forward_stats = (
+                {key: _mean_scalar_stat(forward_stat_terms, key) for key in forward_scalar_keys}
+                if forward_stat_terms else {}
+            )
+
+            dispatch_scalar_keys = (
+                "avg_selected_expert_count",
+                "soft_selected_expert_count",
+                "dead_expert_ratio",
+                "top1_top2_margin",
+                "topk_pre_mass_mean",
+                "topk_post_sum_mean",
+                "topk_post_sum_abs_err",
+                "router_top_k",
+                "expert_token_count_cv",
+            )
+            self.last_router_dispatch_stats = (
+                {key: _mean_scalar_stat(dispatch_stat_terms, key) for key in dispatch_scalar_keys}
+                if dispatch_stat_terms else {}
+            )
+            if dispatch_stat_terms:
+                self.last_router_dispatch_stats["soft_load"] = _mean_tensor_stat(dispatch_stat_terms, "soft_load")
+                self.last_router_dispatch_stats["hard_load"] = _mean_tensor_stat(dispatch_stat_terms, "hard_load")
 
         # add hidden states from the last decoder layer
         if output_hidden_states:
@@ -716,7 +1200,7 @@ class MoEForCausalLM(MoEPreTrainedModel):
         return self.model
 
     @add_start_docstrings_to_model_forward(LLAMA_INPUTS_DOCSTRING)
-    @replace_return_docstrings(output_type=CausalLMOutputWithPast, config_class=_CONFIG_FOR_DOC)
+    @replace_return_docstrings(output_type=MoECausalLMOutputWithPast, config_class=_CONFIG_FOR_DOC)
     def forward(
         self,
         input_ids: torch.LongTensor = None,
@@ -729,7 +1213,7 @@ class MoEForCausalLM(MoEPreTrainedModel):
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
-    ) -> Union[Tuple, CausalLMOutputWithPast]:
+    ) -> Union[Tuple, MoECausalLMOutputWithPast]:
         r"""
         Args:
             labels (`torch.LongTensor` of shape `(batch_size, sequence_length)`, *optional*):
@@ -778,28 +1262,97 @@ class MoEForCausalLM(MoEPreTrainedModel):
         logits = self.lm_head(hidden_states)
 
         loss = None
+        final_ce_loss = None
+        expert_loss = None
+        router_kl_loss = None
         if labels is not None:
-            # Shift so that tokens < n predict n
             shift_logits = logits[..., :-1, :].contiguous()
             shift_labels = labels[..., 1:].contiguous()
-            # Flatten the tokens
             loss_fct = CrossEntropyLoss()
             shift_logits = shift_logits.view(-1, self.config.vocab_size)
             shift_labels = shift_labels.view(-1)
-            # Enable model parallelism
             shift_labels = shift_labels.to(shift_logits.device)
-            loss = loss_fct(shift_logits, shift_labels)
+            final_ce_loss = loss_fct(shift_logits, shift_labels)
+
+            valid_labels = labels[..., 1:].contiguous()
+            valid_mask = valid_labels.ne(-100)
+            expert_terms = []
+            kl_terms = []
+            for layer in getattr(self.model, "layers", []):
+                mlp = getattr(layer, "mlp", None)
+                if mlp is None or not getattr(mlp, "use_switch", False):
+                    continue
+                expert_outputs = getattr(mlp, "last_expert_outputs", None)
+                router_weights = getattr(mlp, "last_router_weights", None)
+                if expert_outputs is None or router_weights is None:
+                    continue
+
+                expert_logits = self.lm_head(expert_outputs.to(self.lm_head.weight.dtype)).float()
+                shifted_expert_logits = expert_logits[:, :-1, :, :].contiguous()
+                num_experts = shifted_expert_logits.size(2)
+                repeated_labels = valid_labels.unsqueeze(-1).expand(-1, -1, num_experts)
+                token_ce = F.cross_entropy(
+                    shifted_expert_logits.view(-1, shifted_expert_logits.size(-1)),
+                    repeated_labels.reshape(-1).to(shifted_expert_logits.device),
+                    ignore_index=-100,
+                    reduction="none",
+                ).view_as(repeated_labels).to(shifted_expert_logits.dtype)
+                weights = router_weights[:, :-1, :].to(token_ce.dtype)
+                if bool(getattr(self.config, "moe_att_use_detach", True)):
+                    weights = weights.detach()
+                token_mask = valid_mask.unsqueeze(-1).to(token_ce.dtype)
+                denom = token_mask.sum().clamp_min(1.0)
+                expert_terms.append((token_ce * weights * token_mask).sum() / denom)
+
+                eps = float(getattr(self.config, "moe_att_eps", 1e-9))
+                prob = router_weights[:, :-1, :].float().clamp_min(eps)
+                uniform = prob.new_full(prob.shape, 1.0 / float(prob.size(-1)))
+                kl_token = torch.sum(prob * torch.log(prob / uniform), dim=-1)
+                kl_terms.append((kl_token * valid_mask.to(kl_token.dtype)).sum() / denom)
+
+            if expert_terms:
+                expert_loss = torch.stack(expert_terms).mean()
+            else:
+                expert_loss = final_ce_loss.new_zeros(())
+            if kl_terms:
+                router_kl_loss = torch.stack(kl_terms).mean()
+            else:
+                router_kl_loss = final_ce_loss.new_zeros(())
+
+            loss = (
+                final_ce_loss
+                + float(getattr(self.config, "moe_att_expert_loss_coef", 1.0)) * expert_loss
+                + float(getattr(self.config, "moe_att_kl_loss_coef", 1.0)) * router_kl_loss
+            )
+
+        router_aux_loss = router_kl_loss
+        router_z_loss = expert_loss
+        router_budget_loss = getattr(self.model, "last_router_budget_loss", None)
 
         if not return_dict:
             output = (logits,) + outputs[1:]
-            return (loss,) + output if loss is not None else output
+            router_terms = (
+                router_aux_loss,
+                router_z_loss,
+                router_budget_loss,
+                final_ce_loss,
+                expert_loss,
+                router_kl_loss,
+            )
+            return ((loss,) + output + router_terms) if loss is not None else (output + router_terms)
 
-        return CausalLMOutputWithPast(
+        return MoECausalLMOutputWithPast(
             loss=loss,
             logits=logits,
             past_key_values=outputs.past_key_values,
             hidden_states=outputs.hidden_states,
             attentions=outputs.attentions,
+            router_aux_loss=router_aux_loss,
+            router_z_loss=router_z_loss,
+            router_budget_loss=router_budget_loss,
+            final_ce_loss=final_ce_loss,
+            expert_loss=expert_loss,
+            router_kl_loss=router_kl_loss,
         )
 
     def prepare_inputs_for_generation(

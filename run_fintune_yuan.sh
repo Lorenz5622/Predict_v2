@@ -1,86 +1,178 @@
 #!/usr/bin/env bash
-set -uo pipefail
+set -Eeuo pipefail
 
-# Batch launcher for /home/cyx/Predict_MoE/fintune_yuan.py
-#
-# Current template includes only one PIQA experiment, but the structure is
-# intentionally flat so you can add more run_one ... blocks later.
-
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-TRAIN_SCRIPT="/home/cyx/qwen_moe/finetune_yuan.py"
+# Batch launcher for finetune_yuan.py.
+# Style follows /home/cyx/Predict_MoE/run_fintune.sh:
+# shared defaults above, one run_one command per dataset below.
 
 # ====== Shared settings you are expected to edit ======
 MODEL_PATH="/data/cyx/models/Dynamic_MoE"
-LOG_ROOT="$SCRIPT_DIR/logs/fintune_yuan"
+OUT_ROOT="/data/cyx/models"
+LOG_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TRAIN_SCRIPT="$LOG_PATH/finetune_yuan.py"
+NPROC_PER_NODE=2
 
 BLOCK_SIZE=128
 BATCH_SIZE=16
 GRAD_ACCUM=1
 EPOCHS=2
-LR=1e-4
-LORA_R=16
+LR=2e-4
+LORA_R=8
 LORA_ALPHA=16
 LORA_DROPOUT=0.05
 NUM_PROC=16
-NPROC_PER_NODE=2
+EVAL_MAX_SAMPLES=20
+STAGE=0
+STAGE1_EPOCHS=1
+STAGE1_LR=5e-5
+STAGE1_GRAD_ACCUM=2
+STAGE1_DATA_RATIO=0.2
+TRAIN_ROUTER_QKV=0
+FP16=0
+BF16=1
 
-mkdir -p "$LOG_ROOT"
+mkdir -p "$OUT_ROOT" "$LOG_PATH/logs/fintune_yuan"
 
-FAILED_EXPERIMENTS=()
+run_one () {
+  local name="$1"; shift
+  local log="$LOG_PATH/logs/fintune_yuan/${name}_$(date +%Y%m%d_%H%M%S).log"
 
-run_one() {
-  local name="$1"
-  local output_dir="$2"
-  shift 2
+  echo "==== [$name] START $(date) ====" | tee -a "$log"
+  echo "CMD: $*" | tee -a "$log"
 
-  local log_file="$LOG_ROOT/${name}.log"
+  /usr/bin/time -v "$@" 2>&1 | tee -a "$log"
 
-  echo "==== [$name] START $(date) ====" | tee "$log_file"
-  echo "OUTPUT_DIR: $output_dir" | tee -a "$log_file"
-  echo "CMD: torchrun --nproc_per_node ${NPROC_PER_NODE} ${TRAIN_SCRIPT} $*" | tee -a "$log_file"
-
-  if /usr/bin/time -v \
-    torchrun --nproc_per_node "${NPROC_PER_NODE}" "${TRAIN_SCRIPT}" "$@" \
-    2>&1 | tee -a "$log_file"; then
-    echo "==== [$name] DONE $(date) ====" | tee -a "$log_file"
-  else
-    local status=${PIPESTATUS[0]}
-    echo "==== [$name] FAILED (exit=${status}) $(date) ====" | tee -a "$log_file"
-    FAILED_EXPERIMENTS+=("${name}")
-  fi
-
-  echo | tee -a "$log_file"
+  echo "==== [$name] DONE  $(date) ====" | tee -a "$log"
+  echo
 }
 
-# -----------------------------------------------------------------------------
-# PIQA example
-# Edit OUTPUT_DIR below to wherever you want the merged inference model saved.
-# Duplicate this block and change dataset / eval_dataset / splits for more runs.
-# -----------------------------------------------------------------------------
-run_one "piqa" "/data/cyx/models/out_piqa_yuan_lora" \
-  --model_path "$MODEL_PATH" \
-  --output_dir "/data/cyx/models/out_piqa_yuan_lora" \
-  --dataset piqa \
-  --eval_dataset piqa \
-  --train_split train \
-  --eval_split validation \
-  --block_size "$BLOCK_SIZE" \
-  --batch_size "$BATCH_SIZE" \
-  --grad_accum "$GRAD_ACCUM" \
-  --epochs "$EPOCHS" \
-  --lr "$LR" \
-  --lora_r "$LORA_R" \
-  --lora_alpha "$LORA_ALPHA" \
-  --lora_dropout "$LORA_DROPOUT" \
-  --num_proc "$NUM_PROC"
+# ====== Run datasets sequentially ======
 
-echo "==== Sweep Summary $(date) ===="
-if ((${#FAILED_EXPERIMENTS[@]} == 0)); then
-  echo "All experiments finished successfully."
-else
-  echo "Failed experiments:"
-  for name in "${FAILED_EXPERIMENTS[@]}"; do
-    echo "  - $name"
-  done
-  exit 1
-fi
+# run_one "piqa_yuan" torchrun --nproc_per_node "$NPROC_PER_NODE" "$TRAIN_SCRIPT" \
+#   --model_path "$MODEL_PATH" \
+#   --output_dir "$OUT_ROOT/out_piqa_yuan_lora" \
+#   --dataset piqa --eval_dataset piqa \
+#   --train_split train --eval_split validation \
+#   --block_size "$BLOCK_SIZE" --batch_size "$BATCH_SIZE" --grad_accum "$GRAD_ACCUM" --epochs "$EPOCHS" \
+#   --lr "$LR" --lora_r "$LORA_R" --lora_alpha "$LORA_ALPHA" --lora_dropout "$LORA_DROPOUT" \
+#   --num_proc "$NUM_PROC" --eval_max_samples "$EVAL_MAX_SAMPLES"
+
+run_one "arc_easy_yuan" torchrun --nproc_per_node "$NPROC_PER_NODE" "$TRAIN_SCRIPT" \
+  --model_path "$MODEL_PATH" \
+  --output_dir "$OUT_ROOT/out_arc_easy_yuan_lora" \
+  --stage "$STAGE" \
+  --dataset arc-e --eval_dataset arc-e \
+  --train_split train --eval_split validation \
+  --block_size "$BLOCK_SIZE" --batch_size "$BATCH_SIZE" --grad_accum "$GRAD_ACCUM" --epochs "$EPOCHS" \
+  --lr "$LR" --lora_r "$LORA_R" --lora_alpha "$LORA_ALPHA" --lora_dropout "$LORA_DROPOUT" \
+  --train_router_qkv "$TRAIN_ROUTER_QKV" --fp16 "$FP16" --bf16 "$BF16" \
+  --num_proc "$NUM_PROC" --eval_max_samples "$EVAL_MAX_SAMPLES" \
+  --stage1_epochs "$STAGE1_EPOCHS" --stage1_lr "$STAGE1_LR" \
+  --stage1_grad_accum "$STAGE1_GRAD_ACCUM" --stage1_data_ratio "$STAGE1_DATA_RATIO"
+
+run_one "arc_challenge_yuan" torchrun --nproc_per_node "$NPROC_PER_NODE" "$TRAIN_SCRIPT" \
+  --model_path "$MODEL_PATH" \
+  --output_dir "$OUT_ROOT/out_arc_challenge_yuan_lora" \
+  --stage "$STAGE" \
+  --dataset arc-c --eval_dataset arc-c \
+  --train_split train --eval_split validation \
+  --block_size "$BLOCK_SIZE" --batch_size "$BATCH_SIZE" --grad_accum "$GRAD_ACCUM" --epochs "$EPOCHS" \
+  --lr "$LR" --lora_r "$LORA_R" --lora_alpha "$LORA_ALPHA" --lora_dropout "$LORA_DROPOUT" \
+  --train_router_qkv "$TRAIN_ROUTER_QKV" --fp16 "$FP16" --bf16 "$BF16" \
+  --num_proc "$NUM_PROC" --eval_max_samples "$EVAL_MAX_SAMPLES" \
+  --stage1_epochs "$STAGE1_EPOCHS" --stage1_lr "$STAGE1_LR" \
+  --stage1_grad_accum "$STAGE1_GRAD_ACCUM" --stage1_data_ratio "$STAGE1_DATA_RATIO"
+
+run_one "siqa_yuan" torchrun --nproc_per_node "$NPROC_PER_NODE" "$TRAIN_SCRIPT" \
+  --model_path "$MODEL_PATH" \
+  --output_dir "$OUT_ROOT/out_siqa_yuan_lora" \
+  --stage "$STAGE" \
+  --dataset siqa --eval_dataset siqa \
+  --train_split train --eval_split validation \
+  --block_size "$BLOCK_SIZE" --batch_size "$BATCH_SIZE" --grad_accum "$GRAD_ACCUM" --epochs "$EPOCHS" \
+  --lr "$LR" --lora_r "$LORA_R" --lora_alpha "$LORA_ALPHA" --lora_dropout "$LORA_DROPOUT" \
+  --train_router_qkv "$TRAIN_ROUTER_QKV" --fp16 "$FP16" --bf16 "$BF16" \
+  --num_proc "$NUM_PROC" --eval_max_samples "$EVAL_MAX_SAMPLES" \
+  --stage1_epochs "$STAGE1_EPOCHS" --stage1_lr "$STAGE1_LR" \
+  --stage1_grad_accum "$STAGE1_GRAD_ACCUM" --stage1_data_ratio "$STAGE1_DATA_RATIO"
+
+run_one "oqa_yuan" torchrun --nproc_per_node "$NPROC_PER_NODE" "$TRAIN_SCRIPT" \
+  --model_path "$MODEL_PATH" \
+  --output_dir "$OUT_ROOT/out_oqa_yuan_lora" \
+  --stage "$STAGE" \
+  --dataset openbookqa --eval_dataset openbookqa \
+  --train_split train --eval_split validation \
+  --block_size "$BLOCK_SIZE" --batch_size "$BATCH_SIZE" --grad_accum "$GRAD_ACCUM" --epochs "$EPOCHS" \
+  --lr "$LR" --lora_r "$LORA_R" --lora_alpha "$LORA_ALPHA" --lora_dropout "$LORA_DROPOUT" \
+  --train_router_qkv "$TRAIN_ROUTER_QKV" --fp16 "$FP16" --bf16 "$BF16" \
+  --num_proc "$NUM_PROC" --eval_max_samples "$EVAL_MAX_SAMPLES" \
+  --stage1_epochs "$STAGE1_EPOCHS" --stage1_lr "$STAGE1_LR" \
+  --stage1_grad_accum "$STAGE1_GRAD_ACCUM" --stage1_data_ratio "$STAGE1_DATA_RATIO"
+
+
+# run_one "hellaswag_yuan" torchrun --nproc_per_node "$NPROC_PER_NODE" "$TRAIN_SCRIPT" \
+#   --model_path "$MODEL_PATH" \
+#   --output_dir "$OUT_ROOT/out_hellaswag_yuan_lora" \
+#   --dataset hellaswag --eval_dataset hellaswag \
+#   --train_split train --eval_split validation \
+#   --block_size "$BLOCK_SIZE" --batch_size "$BATCH_SIZE" --grad_accum "$GRAD_ACCUM" --epochs "$EPOCHS" \
+#   --lr "$LR" --lora_r "$LORA_R" --lora_alpha "$LORA_ALPHA" --lora_dropout "$LORA_DROPOUT" \
+#   --num_proc "$NUM_PROC" --train_max_samples 15000 --eval_max_samples "$EVAL_MAX_SAMPLES"
+
+# run_one "siqa_yuan" torchrun --nproc_per_node "$NPROC_PER_NODE" "$TRAIN_SCRIPT" \
+#   --model_path "$MODEL_PATH" \
+#   --output_dir "$OUT_ROOT/out_siqa_yuan_lora" \
+#   --dataset siqa --eval_dataset siqa \
+#   --train_split train --eval_split validation \
+#   --block_size "$BLOCK_SIZE" --batch_size "$BATCH_SIZE" --grad_accum "$GRAD_ACCUM" --epochs 2 \
+#   --lr "$LR" --lora_r "$LORA_R" --lora_alpha "$LORA_ALPHA" --lora_dropout "$LORA_DROPOUT" \
+#   --num_proc "$NUM_PROC" --train_max_samples 10000 --eval_max_samples "$EVAL_MAX_SAMPLES"
+
+# run_one "csqa_yuan" torchrun --nproc_per_node "$NPROC_PER_NODE" "$TRAIN_SCRIPT" \
+#   --model_path "$MODEL_PATH" \
+#   --output_dir "$OUT_ROOT/out_csqa_yuan_lora" \
+#   --dataset csqa --eval_dataset csqa \
+#   --train_split train --eval_split validation \
+#   --block_size "$BLOCK_SIZE" --batch_size "$BATCH_SIZE" --grad_accum "$GRAD_ACCUM" --epochs "$EPOCHS" \
+#   --lr "$LR" --lora_r "$LORA_R" --lora_alpha "$LORA_ALPHA" --lora_dropout "$LORA_DROPOUT" \
+#   --num_proc "$NUM_PROC" --eval_max_samples "$EVAL_MAX_SAMPLES"
+
+# run_one "mmlu_yuan" torchrun --nproc_per_node "$NPROC_PER_NODE" "$TRAIN_SCRIPT" \
+#   --model_path "$MODEL_PATH" \
+#   --output_dir "$OUT_ROOT/out_mmlu_yuan_lora" \
+#   --dataset mmlu --eval_dataset mmlu \
+#   --mmlu_subjects all --mmlu_answer_mode text \
+#   --train_split dev --eval_split validation \
+#   --block_size "$BLOCK_SIZE" --batch_size "$BATCH_SIZE" --grad_accum "$GRAD_ACCUM" --epochs "$EPOCHS" \
+#   --lr "$LR" --lora_r "$LORA_R" --lora_alpha "$LORA_ALPHA" --lora_dropout "$LORA_DROPOUT" \
+#   --num_proc "$NUM_PROC" --eval_max_samples "$EVAL_MAX_SAMPLES"
+
+# run_one "winogrande_yuan" torchrun --nproc_per_node "$NPROC_PER_NODE" "$TRAIN_SCRIPT" \
+#   --model_path "$MODEL_PATH" \
+#   --output_dir "$OUT_ROOT/out_winogrande_yuan_lora" \
+#   --dataset winogrande --eval_dataset winogrande --winogrande_config winogrande_xl \
+#   --train_split train --eval_split validation \
+#   --block_size "$BLOCK_SIZE" --batch_size "$BATCH_SIZE" --grad_accum "$GRAD_ACCUM" --epochs 1 \
+#   --lr "$LR" --lora_r "$LORA_R" --lora_alpha "$LORA_ALPHA" --lora_dropout "$LORA_DROPOUT" \
+#   --num_proc "$NUM_PROC" --eval_max_samples "$EVAL_MAX_SAMPLES"
+
+# run_one "bbh_boolean_expressions_yuan" torchrun --nproc_per_node "$NPROC_PER_NODE" "$TRAIN_SCRIPT" \
+#   --model_path "$MODEL_PATH" \
+#   --output_dir "$OUT_ROOT/out_bbh_boolean_expr_yuan_lora" \
+#   --dataset bbh --eval_dataset bbh \
+#   --bbh_task boolean_expressions \
+#   --train_split test --eval_split test \
+#   --block_size "$BLOCK_SIZE" --batch_size "$BATCH_SIZE" --grad_accum "$GRAD_ACCUM" --epochs "$EPOCHS" \
+#   --lr "$LR" --lora_r "$LORA_R" --lora_alpha "$LORA_ALPHA" --lora_dropout "$LORA_DROPOUT" \
+#   --num_proc "$NUM_PROC" --eval_max_samples "$EVAL_MAX_SAMPLES"
+
+# run_one "openbookqa_yuan" torchrun --nproc_per_node "$NPROC_PER_NODE" "$TRAIN_SCRIPT" \
+#   --model_path "$MODEL_PATH" \
+#   --output_dir "$OUT_ROOT/out_openbookqa_yuan_lora" \
+#   --dataset openbookqa --eval_dataset openbookqa \
+#   --train_split train --eval_split validation \
+#   --block_size "$BLOCK_SIZE" --batch_size "$BATCH_SIZE" --grad_accum "$GRAD_ACCUM" --epochs "$EPOCHS" \
+#   --lr "$LR" --lora_r "$LORA_R" --lora_alpha "$LORA_ALPHA" --lora_dropout "$LORA_DROPOUT" \
+#   --num_proc "$NUM_PROC" --eval_max_samples "$EVAL_MAX_SAMPLES"
+
+echo "ALL DONE $(date)"
