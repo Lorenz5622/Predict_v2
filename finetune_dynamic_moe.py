@@ -2147,6 +2147,7 @@ def build_train_eval_datasets(tokenizer, args, *, stage: str):
         train_ds = train_ds_full
         borrowed_eval_remainders = {}
         if bool(args.stage2_include_validation_in_train):
+            print(f"---add validation to train: {args.stage2_validation_train_split} with ratio {args.stage2_validation_train_ratio}---")
             val_source_names = names if args.dataset == "mix" else [args.dataset]
             borrowed_parts = []
             for name in val_source_names:
@@ -2180,6 +2181,8 @@ def build_train_eval_datasets(tokenizer, args, *, stage: str):
                 )
             if borrowed_parts:
                 train_ds = concatenate_datasets([train_ds] + borrowed_parts)
+        else:
+            print(f"---[stage2][data] no validation data will be included in train---")
     else:
         raise ValueError(f"Unknown stage: {stage}")
 

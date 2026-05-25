@@ -1278,6 +1278,9 @@ class MoEForCausalLM(MoEPreTrainedModel):
             valid_mask = valid_labels.ne(-100)
             expert_terms = []
             kl_terms = []
+            expert_loss_coef = float(getattr(self.config, "moe_att_expert_loss_coef", 1.0))
+            kl_loss_coef = float(getattr(self.config, "moe_att_kl_loss_coef", 1.0))
+            expert_loss_chunk_size = int(getattr(self.config, "moe_att_expert_loss_chunk_size", 0) or 0)
             for layer in getattr(self.model, "layers", []):
                 mlp = getattr(layer, "mlp", None)
                 if mlp is None or not getattr(mlp, "use_switch", False):
@@ -1287,28 +1290,42 @@ class MoEForCausalLM(MoEPreTrainedModel):
                 if expert_outputs is None or router_weights is None:
                     continue
 
-                expert_logits = self.lm_head(expert_outputs.to(self.lm_head.weight.dtype)).float()
-                shifted_expert_logits = expert_logits[:, :-1, :, :].contiguous()
-                num_experts = shifted_expert_logits.size(2)
-                repeated_labels = valid_labels.unsqueeze(-1).expand(-1, -1, num_experts)
-                token_ce = F.cross_entropy(
-                    shifted_expert_logits.view(-1, shifted_expert_logits.size(-1)),
-                    repeated_labels.reshape(-1).to(shifted_expert_logits.device),
-                    ignore_index=-100,
-                    reduction="none",
-                ).view_as(repeated_labels).to(shifted_expert_logits.dtype)
-                weights = router_weights[:, :-1, :].to(token_ce.dtype)
-                if bool(getattr(self.config, "moe_att_use_detach", True)):
-                    weights = weights.detach()
-                token_mask = valid_mask.unsqueeze(-1).to(token_ce.dtype)
-                denom = token_mask.sum().clamp_min(1.0)
-                expert_terms.append((token_ce * weights * token_mask).sum() / denom)
+                denom = valid_mask.sum().clamp_min(1).to(dtype=torch.float32)
+                if expert_loss_coef > 0.0:
+                    shifted_expert_outputs = expert_outputs[:, :-1, :, :].contiguous()
+                    num_experts = shifted_expert_outputs.size(2)
+                    chunk_size = num_experts if expert_loss_chunk_size <= 0 else min(expert_loss_chunk_size, num_experts)
+                    if bool(getattr(self.config, "moe_att_use_detach", True)):
+                        weights = router_weights[:, :-1, :].detach()
+                    else:
+                        weights = router_weights[:, :-1, :]
 
-                eps = float(getattr(self.config, "moe_att_eps", 1e-9))
-                prob = router_weights[:, :-1, :].float().clamp_min(eps)
-                uniform = prob.new_full(prob.shape, 1.0 / float(prob.size(-1)))
-                kl_token = torch.sum(prob * torch.log(prob / uniform), dim=-1)
-                kl_terms.append((kl_token * valid_mask.to(kl_token.dtype)).sum() / denom)
+                    token_mask = valid_mask.unsqueeze(-1)
+                    expert_term_sum = denom.new_zeros(())
+
+                    for start in range(0, num_experts, chunk_size):
+                        end = min(start + chunk_size, num_experts)
+                        expert_chunk = shifted_expert_outputs[:, :, start:end, :]
+                        expert_logits = self.lm_head(expert_chunk.to(self.lm_head.weight.dtype)).float()
+                        chunk_labels = valid_labels.unsqueeze(-1).expand(-1, -1, end - start)
+                        token_ce = F.cross_entropy(
+                            expert_logits.view(-1, expert_logits.size(-1)),
+                            chunk_labels.reshape(-1).to(expert_logits.device),
+                            ignore_index=-100,
+                            reduction="none",
+                        ).view_as(chunk_labels).to(expert_logits.dtype)
+                        chunk_weights = weights[:, :, start:end].to(token_ce.dtype)
+                        chunk_mask = token_mask.to(token_ce.dtype)
+                        expert_term_sum = expert_term_sum + (token_ce * chunk_weights * chunk_mask).sum().to(denom.dtype)
+
+                    expert_terms.append(expert_term_sum / denom)
+
+                if kl_loss_coef > 0.0:
+                    eps = float(getattr(self.config, "moe_att_eps", 1e-9))
+                    prob = router_weights[:, :-1, :].float().clamp_min(eps)
+                    uniform = prob.new_full(prob.shape, 1.0 / float(prob.size(-1)))
+                    kl_token = torch.sum(prob * torch.log(prob / uniform), dim=-1)
+                    kl_terms.append((kl_token * valid_mask.to(kl_token.dtype)).sum() / denom)
 
             if expert_terms:
                 expert_loss = torch.stack(expert_terms).mean()
@@ -1321,8 +1338,8 @@ class MoEForCausalLM(MoEPreTrainedModel):
 
             loss = (
                 final_ce_loss
-                + float(getattr(self.config, "moe_att_expert_loss_coef", 1.0)) * expert_loss
-                + float(getattr(self.config, "moe_att_kl_loss_coef", 1.0)) * router_kl_loss
+                + expert_loss_coef * expert_loss
+                + kl_loss_coef * router_kl_loss
             )
 
         router_aux_loss = router_kl_loss

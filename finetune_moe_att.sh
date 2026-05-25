@@ -2,12 +2,16 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-NPROC=2
+NPROC=1
 LAUNCHER="$SCRIPT_DIR/launch_two_stage_torchrun_moe_att.py"
 EXTRA_ARGS=("$@")
 
 CONFIGS=(
-  "configs/attmoe/moe_att_piqa.json"
+  # "configs/attmoe/piqa.json"
+  "configs/attmoe/arcc.json"
+  "configs/attmoe/arce.json"
+  "configs/attmoe/obqa.json"
+  # "configs/attmoe/siqa.json"
 )
 
 LOGDIR="$SCRIPT_DIR/logs/sweep_$(date +%Y%m%d_%H%M%S)" 

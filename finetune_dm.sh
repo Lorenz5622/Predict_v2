@@ -2,8 +2,9 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-NPROC=2
+NPROC=1
 LAUNCHER="$SCRIPT_DIR/launch_two_stage_torchrun.py"
+CLEAN_SCRIPT="$SCRIPT_DIR/clean_stage1.sh"
 EXTRA_ARGS=("$@")
 
 CONFIGS=(
@@ -80,9 +81,27 @@ CONFIGS=(
   # "configs/CB_oqa.json" # 73.61，疑似掺多了
   # "configs/CB_siqa.json" # 71.49
   # "configs/CB_wino.json" # 70.28
-  "configs/CB_arce.json" # 70.28
+  # "configs/CB_arce.json" # 70.28
   # "configs/CB_arcc.json" # 70.28
   # "configs/CB.json" # 70.28
+  # "configs/CB_oqa_s42.json" # 70.28
+  # "configs/CB_oqa_s43.json" # 70.28
+  # "configs/CB_oqa_s44.json" # 70.28
+  # "configs/CB_piqa_s42.json" # 70.28
+  # "configs/CB_piqa_s43.json" # 70.28
+  # "configs/CB_piqa_s44.json" # 70.28
+  # "configs/CB_siqa_s42.json" # 70.28
+  # "configs/CB_siqa_s43.json" # 70.28
+  # "configs/CB_siqa_s44.json" # 70.28
+  "configs/CB_wino_s42.json" # 70.28
+  "configs/CB_wino_s43.json" # 70.28
+  "configs/CB_wino_s44.json" # 70.28
+  "configs/CB_arcc_s42.json" # 70.28
+  "configs/CB_arcc_s43.json" # 70.28
+  "configs/CB_arcc_s44.json" # 70.28
+  "configs/CB_arce_s42.json" # 70.28
+  "configs/CB_arce_s43.json" # 70.28
+  "configs/CB_arce_s44.json" # 70.28
 )
 
 LOGDIR="$SCRIPT_DIR/logs/sweep_$(date +%Y%m%d_%H%M%S)" 
@@ -101,5 +120,6 @@ for cfg in "${CONFIGS[@]}"; do
     1> >(tee "$LOGDIR/${name}.out.log") \
     2> >(tee "$LOGDIR/${name}.err.log" >&2)
 
+  bash "$CLEAN_SCRIPT"
   echo "==== Finished $name ===="
 done
