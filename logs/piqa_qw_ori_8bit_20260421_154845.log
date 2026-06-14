@@ -1,0 +1,153 @@
+==== [piqa_qw_ori_8bit] START 2026年 04月 21日 星期二 15:48:45 CST ====
+CMD: torchrun --nproc_per_node 1 finetune_qwen_moe_qw_ori_8bit.py --model_path /root/models/Qwen_MoE --output_dir /root/models/out_piqa_qw_ori_8bit --dataset piqa --eval_dataset piqa --train_split train --eval_split validation --block_size 72 --batch_size 20 --grad_accum 1 --epochs 2 --lr 2e-4 --piqa_local_dir /root/datasets/PIQA --lora_r 8 --lora_alpha 16 --lora_dropout 0.05 --num_proc 16 --eval_max_samples 64 --gradient_checkpointing 0 --use_bnb_8bit 0 --router_topk 4
+/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/cuda/__init__.py:61: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/cuda/__init__.py:61: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+[load] tokenizer from model_path: /root/models/Qwen_MoE
+[load] distributed=True world_size=1 8bit=True fp16=False bf16=False
+/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/cuda/__init__.py:61: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+Loading checkpoint shards:   0%|          | 0/8 [00:00<?, ?it/s]Loading checkpoint shards:  12%|█▎        | 1/8 [00:07<00:53,  7.60s/it]Loading checkpoint shards:  25%|██▌       | 2/8 [00:18<00:58,  9.69s/it]Loading checkpoint shards:  38%|███▊      | 3/8 [00:27<00:45,  9.04s/it]Loading checkpoint shards:  50%|█████     | 4/8 [00:35<00:35,  9.00s/it]Loading checkpoint shards:  62%|██████▎   | 5/8 [00:43<00:25,  8.60s/it]Loading checkpoint shards:  75%|███████▌  | 6/8 [00:55<00:19,  9.59s/it]Loading checkpoint shards:  88%|████████▊ | 7/8 [01:07<00:10, 10.32s/it]Loading checkpoint shards: 100%|██████████| 8/8 [01:07<00:00,  7.23s/it]Loading checkpoint shards: 100%|██████████| 8/8 [01:07<00:00,  8.47s/it]
+[lora] trainable params: 127413504/14443197696 (0.88%)
+trainable params: 127,413,504 || all params: 14,443,197,696 || trainable%: 0.8822
+Map:   0%|          | 0/16113 [00:00<?, ? examples/s]Map:   2%|▏         | 360/16113 [00:00<00:04, 3564.30 examples/s]Map:   5%|▌         | 846/16113 [00:00<00:04, 3335.02 examples/s]Map:   8%|▊         | 1217/16113 [00:00<00:04, 3284.23 examples/s]Map:  10%|█         | 1677/16113 [00:00<00:03, 3734.40 examples/s]Map:  14%|█▍        | 2258/16113 [00:00<00:03, 3789.72 examples/s]Map:  17%|█▋        | 2690/16113 [00:00<00:03, 3940.91 examples/s]Map:  20%|██        | 3265/16113 [00:00<00:03, 3897.72 examples/s]Map:  23%|██▎       | 3721/16113 [00:00<00:03, 4071.04 examples/s]Map:  27%|██▋       | 4318/16113 [00:01<00:02, 4033.21 examples/s]Map:  30%|██▉       | 4771/16113 [00:01<00:02, 4158.23 examples/s]Map:  33%|███▎      | 5315/16113 [00:01<00:02, 3967.70 examples/s]Map:  36%|███▌      | 5778/16113 [00:01<00:02, 4132.29 examples/s]Map:  39%|███▊      | 6230/16113 [00:01<00:02, 4078.49 examples/s]Map:  41%|████▏     | 6652/16113 [00:01<00:02, 4114.11 examples/s]Map:  45%|████▌     | 7264/16113 [00:01<00:02, 4098.95 examples/s]Map:  48%|████▊     | 7718/16113 [00:01<00:01, 4209.13 examples/s]Map:  52%|█████▏    | 8313/16113 [00:02<00:01, 4119.55 examples/s]Map:  54%|█████▍    | 8767/16113 [00:02<00:01, 4222.00 examples/s]Map:  58%|█████▊    | 9380/16113 [00:02<00:01, 4170.98 examples/s]Map:  61%|██████    | 9832/16113 [00:02<00:01, 4254.82 examples/s]Map:  65%|██████▍   | 10451/16113 [00:02<00:01, 4012.13 examples/s]Map:  68%|██████▊   | 10917/16113 [00:02<00:01, 4166.29 examples/s]Map:  72%|███████▏  | 11524/16113 [00:02<00:01, 4121.88 examples/s]Map:  74%|███████▍  | 11977/16113 [00:02<00:00, 4220.78 examples/s]Map:  78%|███████▊  | 12584/16113 [00:03<00:00, 4156.79 examples/s]Map:  82%|████████▏ | 13226/16113 [00:03<00:00, 4123.50 examples/s]Map:  85%|████████▍ | 13679/16113 [00:03<00:00, 4215.40 examples/s]Map:  89%|████████▊ | 14284/16113 [00:03<00:00, 4151.48 examples/s]Map:  92%|█████████▏| 14747/16113 [00:03<00:00, 4263.48 examples/s]Map:  95%|█████████▍| 15299/16113 [00:03<00:00, 4061.67 examples/s]Map:  98%|█████████▊| 15756/16113 [00:03<00:00, 4183.07 examples/s]Map: 100%|██████████| 16113/16113 [00:03<00:00, 4059.65 examples/s]
+Map:   0%|          | 0/64 [00:00<?, ? examples/s]Map: 100%|██████████| 64/64 [00:00<00:00, 3549.75 examples/s]
+[data] train=16113 eval=64 block_size=72
+/root/Predict_v2/finetune_qwen_moe_qw_ori_8bit.py:564: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler(enabled=(fp16 and device.type == "cuda"))
+train:   0%|          | 0/1610 [00:00<?, ?it/s]
+epoch 1/2:   0%|          | 0/805 [00:00<?, ?it/s][A/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/bitsandbytes/autograd/_functions.py:123: UserWarning: MatMul8bitLt: inputs will be cast from torch.float32 to float16 during quantization
+  warnings.warn(f"MatMul8bitLt: inputs will be cast from {A.dtype} to float16 during quantization")
+[rank0]:[W421 15:50:21.010339932 reducer.cpp:1400] Warning: find_unused_parameters=True was specified in DDP constructor, but did not find any unused parameters in the forward pass. This flag results in an extra traversal of the autograd graph every iteration,  which can adversely affect performance. If your model indeed never has any unused parameters in the forward pass, consider turning this flag off. Note that this warning may be a false positive if your model has flow control causing later iterations to have unused parameters. (function operator())
+train:   0%|          | 1/1610 [00:08<3:35:21,  8.03s/it]
+epoch 1/2:   0%|          | 1/805 [00:07<1:45:52,  7.90s/it][Atrain:   0%|          | 2/1610 [00:15<3:19:03,  7.43s/it, loss=2.3858, ma50=2.3858, ema=2.3858, lr=4.167e-06]
+epoch 1/2:   0%|          | 2/805 [00:14<1:38:42,  7.38s/it][Atrain:   0%|          | 3/1610 [00:22<3:18:41,  7.42s/it, loss=2.8911, ma50=2.6384, ema=2.3959, lr=8.333e-06]
+epoch 1/2:   0%|          | 3/805 [00:22<1:38:47,  7.39s/it][Atrain:   0%|          | 4/1610 [00:29<3:10:36,  7.12s/it, loss=2.1897, ma50=2.4889, ema=2.3918, lr=1.250e-05]
+epoch 1/2:   0%|          | 4/805 [00:28<1:34:49,  7.10s/it][Atrain:   0%|          | 5/1610 [00:35<3:06:13,  6.96s/it, loss=2.4262, ma50=2.4732, ema=2.3924, lr=1.667e-05]
+epoch 1/2:   1%|          | 5/805 [00:35<1:32:41,  6.95s/it][Atrain:   0%|          | 6/1610 [00:42<3:03:20,  6.86s/it, loss=2.4250, ma50=2.4636, ema=2.3931, lr=2.083e-05]
+epoch 1/2:   1%|          | 6/805 [00:42<1:31:13,  6.85s/it][Atrain:   0%|          | 7/1610 [00:49<3:00:40,  6.76s/it, loss=2.5972, ma50=2.4858, ema=2.3972, lr=2.500e-05]
+epoch 1/2:   1%|          | 7/805 [00:48<1:29:52,  6.76s/it][Atrain:   0%|          | 8/1610 [00:56<3:04:21,  6.90s/it, loss=2.5488, ma50=2.4948, ema=2.4002, lr=2.917e-05]
+epoch 1/2:   1%|          | 8/805 [00:56<1:31:40,  6.90s/it][Atrain:   1%|          | 9/1610 [01:02<3:00:22,  6.76s/it, loss=2.4315, ma50=2.4869, ema=2.4008, lr=3.333e-05]
+epoch 1/2:   1%|          | 9/805 [01:02<1:29:37,  6.76s/it][Atrain:   1%|          | 10/1610 [01:09<2:57:55,  6.67s/it, loss=2.8852, ma50=2.5312, ema=2.4105, lr=3.750e-05]
+epoch 1/2:   1%|          | 10/805 [01:09<1:28:23,  6.67s/it][Atrain:   1%|          | 11/1610 [01:15<2:56:10,  6.61s/it, loss=2.2649, ma50=2.5045, ema=2.4076, lr=4.167e-05]
+epoch 1/2:   1%|▏         | 11/805 [01:15<1:27:27,  6.61s/it][Atrain:   1%|          | 12/1610 [01:22<2:55:15,  6.58s/it, loss=2.3474, ma50=2.4903, ema=2.4064, lr=4.583e-05]
+epoch 1/2:   1%|▏         | 12/805 [01:21<1:26:57,  6.58s/it][Atrain:   1%|          | 13/1610 [01:29<3:00:28,  6.78s/it, loss=2.0715, ma50=2.4554, ema=2.3997, lr=5.000e-05]
+epoch 1/2:   2%|▏         | 13/805 [01:29<1:29:29,  6.78s/it][Atrain:   1%|          | 14/1610 [01:35<2:57:47,  6.68s/it, loss=2.0379, ma50=2.4232, ema=2.3925, lr=5.417e-05]
+epoch 1/2:   2%|▏         | 14/805 [01:35<1:28:06,  6.68s/it][Atrain:   1%|          | 15/1610 [01:42<2:56:17,  6.63s/it, loss=2.1788, ma50=2.4058, ema=2.3882, lr=5.833e-05]
+epoch 1/2:   2%|▏         | 15/805 [01:42<1:27:18,  6.63s/it][Atrain:   1%|          | 16/1610 [01:48<2:54:54,  6.58s/it, loss=2.1003, ma50=2.3854, ema=2.3824, lr=6.250e-05]
+epoch 1/2:   2%|▏         | 16/805 [01:48<1:26:34,  6.58s/it][Atrain:   1%|          | 17/1610 [01:55<2:56:11,  6.64s/it, loss=2.7828, ma50=2.4103, ema=2.3904, lr=6.667e-05]
+epoch 1/2:   2%|▏         | 17/805 [01:55<1:27:09,  6.64s/it][Atrain:   1%|          | 18/1610 [02:02<2:59:48,  6.78s/it, loss=2.2273, ma50=2.3995, ema=2.3872, lr=7.083e-05]
+epoch 1/2:   2%|▏         | 18/805 [02:02<1:28:53,  6.78s/it][Atrain:   1%|          | 19/1610 [02:09<2:59:26,  6.77s/it, loss=2.2823, ma50=2.3930, ema=2.3851, lr=7.500e-05]
+epoch 1/2:   2%|▏         | 19/805 [02:09<1:28:38,  6.77s/it][Atrain:   1%|          | 20/1610 [02:15<2:57:38,  6.70s/it, loss=2.3940, ma50=2.3930, ema=2.3853, lr=7.917e-05]
+epoch 1/2:   2%|▏         | 20/805 [02:15<1:27:41,  6.70s/it][Atrain:   1%|▏         | 21/1610 [02:22<2:56:40,  6.67s/it, loss=2.4782, ma50=2.3973, ema=2.3871, lr=8.333e-05]
+epoch 1/2:   3%|▎         | 21/805 [02:22<1:27:10,  6.67s/it][Atrain:   1%|▏         | 22/1610 [02:29<3:01:34,  6.86s/it, loss=2.3447, ma50=2.3948, ema=2.3863, lr=8.750e-05]
+epoch 1/2:   3%|▎         | 22/805 [02:29<1:29:32,  6.86s/it][Atrain:   1%|▏         | 23/1610 [02:36<3:00:32,  6.83s/it, loss=2.3315, ma50=2.3919, ema=2.3852, lr=9.167e-05]
+epoch 1/2:   3%|▎         | 23/805 [02:36<1:28:58,  6.83s/it][Atrain:   1%|▏         | 24/1610 [02:43<2:58:09,  6.74s/it, loss=2.0690, ma50=2.3779, ema=2.3789, lr=9.583e-05]
+epoch 1/2:   3%|▎         | 24/805 [02:43<1:27:43,  6.74s/it][Atrain:   2%|▏         | 25/1610 [02:49<2:56:31,  6.68s/it, loss=2.1475, ma50=2.3683, ema=2.3742, lr=1.000e-04]
+epoch 1/2:   3%|▎         | 25/805 [02:49<1:26:52,  6.68s/it][Atrain:   2%|▏         | 26/1610 [02:56<2:55:34,  6.65s/it, loss=2.0433, ma50=2.3553, ema=2.3676, lr=1.042e-04]
+epoch 1/2:   3%|▎         | 26/805 [02:56<1:26:20,  6.65s/it][Atrain:   2%|▏         | 27/1610 [03:03<2:58:33,  6.77s/it, loss=2.1076, ma50=2.3458, ema=2.3624, lr=1.083e-04]
+epoch 1/2:   3%|▎         | 27/805 [03:03<1:27:44,  6.77s/it][Atrain:   2%|▏         | 28/1610 [03:09<2:55:42,  6.66s/it, loss=2.4016, ma50=2.3478, ema=2.3632, lr=1.125e-04]
+epoch 1/2:   3%|▎         | 28/805 [03:09<1:26:17,  6.66s/it][Atrain:   2%|▏         | 29/1610 [03:16<2:54:16,  6.61s/it, loss=2.1236, ma50=2.3398, ema=2.3584, lr=1.167e-04]
+epoch 1/2:   4%|▎         | 29/805 [03:16<1:25:32,  6.61s/it][Atrain:   2%|▏         | 30/1610 [03:22<2:53:38,  6.59s/it, loss=2.2469, ma50=2.3366, ema=2.3562, lr=1.208e-04]
+epoch 1/2:   4%|▎         | 30/805 [03:22<1:25:10,  6.59s/it][Atrain:   2%|▏         | 31/1610 [03:29<2:52:45,  6.56s/it, loss=1.8871, ma50=2.3216, ema=2.3468, lr=1.250e-04]
+epoch 1/2:   4%|▍         | 31/805 [03:29<1:24:40,  6.56s/it][Atrain:   2%|▏         | 32/1610 [03:36<2:56:23,  6.71s/it, loss=2.3926, ma50=2.3239, ema=2.3477, lr=1.292e-04]
+epoch 1/2:   4%|▍         | 32/805 [03:36<1:26:24,  6.71s/it][Atrain:   2%|▏         | 33/1610 [03:42<2:54:39,  6.65s/it, loss=1.9414, ma50=2.3120, ema=2.3396, lr=1.333e-04]
+epoch 1/2:   4%|▍         | 33/805 [03:42<1:25:29,  6.65s/it][Atrain:   2%|▏         | 34/1610 [03:49<2:52:59,  6.59s/it, loss=2.3009, ma50=2.3116, ema=2.3388, lr=1.375e-04]
+epoch 1/2:   4%|▍         | 34/805 [03:49<1:24:37,  6.59s/it][Atrain:   2%|▏         | 35/1610 [03:55<2:52:16,  6.56s/it, loss=2.0559, ma50=2.3041, ema=2.3331, lr=1.417e-04]
+epoch 1/2:   4%|▍         | 35/805 [03:55<1:24:13,  6.56s/it][Atrain:   2%|▏         | 36/1610 [04:02<2:51:31,  6.54s/it, loss=2.1029, ma50=2.2984, ema=2.3285, lr=1.458e-04]
+epoch 1/2:   4%|▍         | 36/805 [04:02<1:23:47,  6.54s/it][Atrain:   2%|▏         | 37/1610 [04:09<2:55:49,  6.71s/it, loss=2.5265, ma50=2.3047, ema=2.3325, lr=1.500e-04]
+epoch 1/2:   5%|▍         | 37/805 [04:09<1:25:50,  6.71s/it][Atrain:   2%|▏         | 38/1610 [04:15<2:54:22,  6.66s/it, loss=2.2788, ma50=2.3040, ema=2.3314, lr=1.542e-04]
+epoch 1/2:   5%|▍         | 38/805 [04:15<1:25:04,  6.66s/it][Atrain:   2%|▏         | 39/1610 [04:22<2:52:58,  6.61s/it, loss=2.2891, ma50=2.3036, ema=2.3306, lr=1.583e-04]
+epoch 1/2:   5%|▍         | 39/805 [04:22<1:24:20,  6.61s/it][Atrain:   2%|▏         | 40/1610 [04:28<2:52:55,  6.61s/it, loss=1.9165, ma50=2.2937, ema=2.3223, lr=1.625e-04]
+epoch 1/2:   5%|▍         | 40/805 [04:28<1:24:15,  6.61s/it][Atrain:   3%|▎         | 41/1610 [04:36<2:58:35,  6.83s/it, loss=2.1628, ma50=2.2904, ema=2.3191, lr=1.667e-04]
+epoch 1/2:   5%|▌         | 41/805 [04:36<1:26:58,  6.83s/it][Atrain:   3%|▎         | 42/1610 [04:42<2:56:52,  6.77s/it, loss=2.0661, ma50=2.2849, ema=2.3141, lr=1.708e-04]
+epoch 1/2:   5%|▌         | 42/805 [04:42<1:26:04,  6.77s/it][Atrain:   3%|▎         | 43/1610 [04:49<2:55:22,  6.71s/it, loss=2.1376, ma50=2.2814, ema=2.3105, lr=1.750e-04]
+epoch 1/2:   5%|▌         | 43/805 [04:49<1:25:16,  6.71s/it][Atrain:   3%|▎         | 44/1610 [04:56<2:53:52,  6.66s/it, loss=2.0978, ma50=2.2772, ema=2.3063, lr=1.792e-04]
+epoch 1/2:   5%|▌         | 44/805 [04:55<1:24:29,  6.66s/it][Atrain:   3%|▎         | 45/1610 [05:02<2:53:48,  6.66s/it, loss=2.2239, ma50=2.2759, ema=2.3046, lr=1.833e-04]
+epoch 1/2:   6%|▌         | 45/805 [05:02<1:24:24,  6.66s/it][Atrain:   3%|▎         | 46/1610 [05:10<2:59:14,  6.88s/it, loss=2.1251, ma50=2.2726, ema=2.3010, lr=1.875e-04]
+epoch 1/2:   6%|▌         | 46/805 [05:10<1:26:58,  6.88s/it][Atrain:   3%|▎         | 47/1610 [05:16<2:56:07,  6.76s/it, loss=1.9659, ma50=2.2659, ema=2.2943, lr=1.917e-04]
+epoch 1/2:   6%|▌         | 47/805 [05:16<1:25:24,  6.76s/it][Atrain:   3%|▎         | 48/1610 [05:23<2:53:57,  6.68s/it, loss=2.1205, ma50=2.2628, ema=2.2909, lr=1.958e-04]
+epoch 1/2:   6%|▌         | 48/805 [05:22<1:24:18,  6.68s/it][Atrain:   3%|▎         | 49/1610 [05:29<2:53:13,  6.66s/it, loss=1.9059, ma50=2.2554, ema=2.2832, lr=2.000e-04]
+epoch 1/2:   6%|▌         | 49/805 [05:29<1:23:53,  6.66s/it][Atrain:   3%|▎         | 50/1610 [05:36<2:51:40,  6.60s/it, loss=2.0128, ma50=2.2504, ema=2.2777, lr=2.000e-04][train] epoch=1/2 step=50/1610 loss=2.3658 ma50=2.2528 ema=2.2795 aux=4.0591 lr=2.000e-04 elapsed=5.6m
+
+epoch 1/2:   6%|▌         | 50/805 [05:36<1:23:05,  6.60s/it][Atrain:   3%|▎         | 51/1610 [05:43<2:53:58,  6.70s/it, loss=2.3658, ma50=2.2528, ema=2.2795, lr=2.000e-04]
+epoch 1/2:   6%|▋         | 51/805 [05:42<1:24:08,  6.70s/it][Aepoch 1/2:   6%|▋         | 51/805 [05:47<1:25:39,  6.82s/it]
+[rank0]: Traceback (most recent call last):
+[rank0]:   File "/root/Predict_v2/finetune_qwen_moe_qw_ori_8bit.py", line 872, in <module>
+[rank0]:     main()
+[rank0]:   File "/root/Predict_v2/finetune_qwen_moe_qw_ori_8bit.py", line 855, in main
+[rank0]:     train(
+[rank0]:   File "/root/Predict_v2/finetune_qwen_moe_qw_ori_8bit.py", line 605, in train
+[rank0]:     out = model(**batch)
+[rank0]:   File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1736, in _wrapped_call_impl
+[rank0]:     return self._call_impl(*args, **kwargs)
+[rank0]:   File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1747, in _call_impl
+[rank0]:     return forward_call(*args, **kwargs)
+[rank0]:   File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/nn/parallel/distributed.py", line 1645, in forward
+[rank0]:     return self._post_forward(output)
+[rank0]:   File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/nn/parallel/distributed.py", line 1620, in _post_forward
+[rank0]:     passthrough_tensor_list = _DDPSink.apply(
+[rank0]:   File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/autograd/function.py", line 575, in apply
+[rank0]:     return super().apply(*args, **kwargs)  # type: ignore[misc]
+[rank0]:   File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/nn/parallel/distributed.py", line 250, in forward
+[rank0]:     ret = tuple(
+[rank0]:   File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/nn/parallel/distributed.py", line 251, in <genexpr>
+[rank0]:     inp.clone() if isinstance(inp, torch.Tensor) else inp for inp in inputs
+[rank0]: torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 836.00 MiB. GPU 0 has a total capacity of 47.50 GiB of which 765.69 MiB is free. Including non-PyTorch memory, this process has 46.73 GiB memory in use. Of the allocated memory 45.63 GiB is allocated by PyTorch, and 523.99 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+train:   3%|▎         | 51/1610 [05:48<2:57:32,  6.83s/it, loss=2.2259, ma50=2.2496, ema=2.2784, lr=2.000e-04]
+[rank0]:[W421 15:56:04.518307262 ProcessGroupNCCL.cpp:1250] Warning: WARNING: process group has NOT been destroyed before we destruct ProcessGroupNCCL. On normal program exit, the application should call destroy_process_group to ensure that any pending NCCL operations have finished in this process. In rare cases this process can exit before this point and block the progress of another member of the process group. This constraint has always been present,  but this warning has only been added since PyTorch 2.4 (function operator())
+E0421 15:56:07.371847 25189 site-packages/torch/distributed/elastic/multiprocessing/api.py:869] failed (exitcode: 1) local_rank: 0 (pid: 25264) of binary: /home/vipuser/miniconda3/envs/op/bin/python3.10
+Traceback (most recent call last):
+  File "/home/vipuser/miniconda3/envs/op/bin/torchrun", line 6, in <module>
+    sys.exit(main())
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/distributed/elastic/multiprocessing/errors/__init__.py", line 355, in wrapper
+    return f(*args, **kwargs)
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/distributed/run.py", line 919, in main
+    run(args)
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/distributed/run.py", line 910, in run
+    elastic_launch(
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/distributed/launcher/api.py", line 138, in __call__
+    return launch_agent(self._config, self._entrypoint, list(args))
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/distributed/launcher/api.py", line 269, in launch_agent
+    raise ChildFailedError(
+torch.distributed.elastic.multiprocessing.errors.ChildFailedError: 
+============================================================
+finetune_qwen_moe_qw_ori_8bit.py FAILED
+------------------------------------------------------------
+Failures:
+  <NO_OTHER_FAILURES>
+------------------------------------------------------------
+Root Cause (first observed failure):
+[0]:
+  time      : 2026-04-21_15:56:07
+  host      : ubuntu22.04
+  rank      : 0 (local_rank: 0)
+  exitcode  : 1 (pid: 25264)
+  error_file: <N/A>
+  traceback : To enable traceback see: https://pytorch.org/docs/stable/elastic/errors.html
+============================================================
+Command exited with non-zero status 1
+	Command being timed: "torchrun --nproc_per_node 1 finetune_qwen_moe_qw_ori_8bit.py --model_path /root/models/Qwen_MoE --output_dir /root/models/out_piqa_qw_ori_8bit --dataset piqa --eval_dataset piqa --train_split train --eval_split validation --block_size 72 --batch_size 20 --grad_accum 1 --epochs 2 --lr 2e-4 --piqa_local_dir /root/datasets/PIQA --lora_r 8 --lora_alpha 16 --lora_dropout 0.05 --num_proc 16 --eval_max_samples 64 --gradient_checkpointing 0 --use_bnb_8bit 0 --router_topk 4"
+	User time (seconds): 423.25
+	System time (seconds): 48.36
+	Percent of CPU this job got: 106%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 7:22.57
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 30675688
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 1
+	Minor (reclaiming a frame) page faults: 7306086
+	Voluntary context switches: 23180
+	Involuntary context switches: 1560
+	Swaps: 0
+	File system inputs: 160
+	File system outputs: 32
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 1

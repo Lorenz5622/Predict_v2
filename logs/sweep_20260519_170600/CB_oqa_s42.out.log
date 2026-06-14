@@ -1,0 +1,113 @@
+
+[launcher] running:
+  /home/vipuser/miniconda3/envs/op/bin/python -m torch.distributed.run --nproc_per_node 1 /root/Predict_v2/run_stage1_dynamic_moe.py --model_path /root/models/Dynamic_MoE --output_dir /mnt/data/models/fv1_openbookqa_s42 --dataset openbookqa --eval_dataset openbookqa --train_split train --eval_split validation --block_size 150 --batch_size 22 --grad_accum 1 --epochs 3 --lr 8e-05 --lora_r 16 --lora_alpha 16 --lora_dropout 0.05 --num_proc 16 --load_in_4bit 0 --load_in_8bit 0 --use_bnb_8bit 0 --load_in_fp16 0 --fp16 0 --bf16 0 --train_extra_params_in_fp32 1 --router_use_entmax 0 --router_top_k 2 --router_entmax_alpha 1.7 --min_lr_ratio 0.1 --router_lr_mult 1.0 --eval_max_samples 600 --router_use_softmax_temperature 1 --router_softmax_temperature 1.0 --train_new_router_params 1 --router_aux_loss_coef 0.002 --init_new_router_from_legacy 1 --eval_every 3000 --seed 42 --stage_split_seed 42 --stage1_epochs 1 --stage1_lr 0.0001 --stage1_grad_accum 1 --stage1_data_ratio 0.5 --stage1_distill_temperature 2.0 --stage1_kl_coef 2.0 --stage1_logit_coef 0.25 --stage1_use_logit_loss 1
+[load] tokenizer from model_path: /root/models/Dynamic_MoE
+[load] distributed=True world_size=1 4bit=False 8bit=False
+[train] mixed precision: fp16=False bf16=False
+[stage1] loading base model for router distillation
+[load] checkpoint loaded with strict=False: missing=96 unexpected=24 dtype=torch.float32
+[init] layer 0 expert_weight_proj initialized from legacy router.weight
+[init] layer 1 expert_weight_proj initialized from legacy router.weight
+[init] layer 2 expert_weight_proj initialized from legacy router.weight
+[init] layer 3 expert_weight_proj initialized from legacy router.weight
+[init] layer 4 expert_weight_proj initialized from legacy router.weight
+[init] layer 5 expert_weight_proj initialized from legacy router.weight
+[init] layer 6 expert_weight_proj initialized from legacy router.weight
+[init] layer 7 expert_weight_proj initialized from legacy router.weight
+[init] layer 8 expert_weight_proj initialized from legacy router.weight
+[init] layer 9 expert_weight_proj initialized from legacy router.weight
+[init] layer 10 expert_weight_proj initialized from legacy router.weight
+[init] layer 11 expert_weight_proj initialized from legacy router.weight
+[init] layer 12 expert_weight_proj initialized from legacy router.weight
+[init] layer 13 expert_weight_proj initialized from legacy router.weight
+[init] layer 14 expert_weight_proj initialized from legacy router.weight
+[init] layer 15 expert_weight_proj initialized from legacy router.weight
+[init] layer 16 expert_weight_proj initialized from legacy router.weight
+[init] layer 17 expert_weight_proj initialized from legacy router.weight
+[init] layer 18 expert_weight_proj initialized from legacy router.weight
+[init] layer 19 expert_weight_proj initialized from legacy router.weight
+[init] layer 20 expert_weight_proj initialized from legacy router.weight
+[init] layer 21 expert_weight_proj initialized from legacy router.weight
+[init] layer 22 expert_weight_proj initialized from legacy router.weight
+[init] layer 23 expert_weight_proj initialized from legacy router.weight
+[init] initialized new router modules from legacy dense router for 24 layers
+[stage1] trainable cross-attention router params: 125829120
+[stage1][data] train=2478 (ratio=0.500, seed=42)
+[stage1] epoch=1/1 step=50 loss=0.592692 kl=0.281463 logit=0.119059 t_ent=1.6491 s_ent=1.8963 top1=0.7328 topk=0.7295 cos=0.8400 elapsed=0.6m
+[stage1] epoch=1/1 step=100 loss=0.182507 kl=0.085825 logit=0.043432 t_ent=1.6006 s_ent=1.6698 top1=0.8870 topk=0.8622 cos=0.9219 elapsed=1.2m
+[stage1] saving full checkpoint to /mnt/data/models/fv1_openbookqa_s42/ckpt_after_stage1
+[2026-05-19 17:08:43,698] [INFO] [real_accelerator.py:203:get_accelerator] Setting ds_accelerator to cuda (auto detect)
+[93m [WARNING] [0m async_io requires the dev libaio .so object and headers but these were not found.
+[93m [WARNING] [0m async_io: please install the libaio-dev package with apt
+[93m [WARNING] [0m If libaio is already installed (perhaps from source), try setting the CFLAGS and LDFLAGS environment variables to where it can be found.
+[93m [WARNING] [0m Please specify the CUTLASS repo directory as environment variable $CUTLASS_PATH
+[93m [WARNING] [0m sparse_attn requires a torch version >= 1.5 and < 2.0 but detected 2.5
+[93m [WARNING] [0m using untested triton version (3.1.0), only 1.0.0 is known to be compatible
+
+[launcher] running:
+  /home/vipuser/miniconda3/envs/op/bin/python -m torch.distributed.run --nproc_per_node 1 /root/Predict_v2/run_stage2_dynamic_moe.py --model_path /root/models/Dynamic_MoE --output_dir /mnt/data/models/fv1_openbookqa_s42 --dataset openbookqa --eval_dataset openbookqa --train_split train --eval_split validation --block_size 150 --batch_size 22 --grad_accum 1 --epochs 3 --lr 8e-05 --lora_r 16 --lora_alpha 16 --lora_dropout 0.05 --num_proc 16 --load_in_4bit 0 --load_in_8bit 0 --use_bnb_8bit 0 --load_in_fp16 0 --fp16 0 --bf16 0 --train_extra_params_in_fp32 1 --router_use_entmax 0 --router_top_k 2 --router_entmax_alpha 1.7 --min_lr_ratio 0.1 --router_lr_mult 1.0 --eval_max_samples 600 --router_use_softmax_temperature 1 --router_softmax_temperature 1.0 --train_new_router_params 1 --router_aux_loss_coef 0.002 --init_new_router_from_legacy 1 --eval_every 3000 --seed 42 --stage_split_seed 42 --stage2_include_validation_in_train 0 --stage2_validation_train_ratio 0.05 --stage2_init_path /mnt/data/models/fv1_openbookqa_s42/ckpt_after_stage1
+[load] tokenizer from model_path: /root/models/Dynamic_MoE
+[load] distributed=True world_size=1 4bit=False 8bit=False
+[train] mixed precision: fp16=False bf16=False
+[stage2] loading model from /mnt/data/models/fv1_openbookqa_s42/ckpt_after_stage1
+[load] checkpoint loaded with strict=False: missing=0 unexpected=0 dtype=torch.float32
+[stage2] extra trainable new-router params: 125829120
+[stage2] cast selected router params to fp32: 0
+[stage2] trainable params: 199753728/3687891968 (5.42%)
+trainable params: 199,753,728 || all params: 3,687,891,968 || trainable%: 5.4165
+[stage2][eval] using OpenCompass-style PPL ranking for openbookqa
+[stage2][data] train=14871 eval=500 block_size=150
+[stage2][opt] param groups: other=2496 router=72
+[stage2][opt] lrs: other=8.000e-05 router=8.000e-05
+[train] epoch=1/3 step=50/2025 loss=1.8324 ce=1.7939 ce_ema=2.7922 pairwise=0.7024 pairwise_acc=0.6364 aux=1.7331 ewp_gn=9.580e-02 budget=0.0000 top_k=2 lr=6.800e-05 elapsed=1.6m
+[train] epoch=1/3 step=100/2025 loss=1.7742 ce=1.7366 ce_ema=2.1598 pairwise=0.6904 pairwise_acc=0.7273 aux=1.5151 ewp_gn=7.730e-02 budget=0.0000 top_k=2 lr=7.993e-05 elapsed=3.2m
+[train] epoch=1/3 step=150/2025 loss=1.7185 ce=1.6795 ce_ema=1.8786 pairwise=0.7221 pairwise_acc=0.5455 aux=1.4510 ewp_gn=7.447e-02 budget=0.0000 top_k=2 lr=7.963e-05 elapsed=4.8m
+[train] epoch=1/3 step=200/2025 loss=1.6980 ce=1.6569 ce_ema=1.7403 pairwise=0.7650 pairwise_acc=0.5000 aux=1.4282 ewp_gn=6.867e-02 budget=0.0000 top_k=2 lr=7.910e-05 elapsed=6.4m
+[train] epoch=1/3 step=250/2025 loss=1.6665 ce=1.6338 ce_ema=1.6813 pairwise=0.6003 pairwise_acc=0.7273 aux=1.3397 ewp_gn=6.912e-02 budget=0.0000 top_k=2 lr=7.835e-05 elapsed=8.0m
+[train] epoch=1/3 step=300/2025 loss=1.6951 ce=1.6639 ce_ema=1.6451 pairwise=0.5700 pairwise_acc=0.8182 aux=1.3098 ewp_gn=7.048e-02 budget=0.0000 top_k=2 lr=7.738e-05 elapsed=9.6m
+[train] epoch=1/3 step=350/2025 loss=1.6784 ce=1.6496 ce_ema=1.6165 pairwise=0.5242 pairwise_acc=0.8182 aux=1.2696 ewp_gn=5.398e-02 budget=0.0000 top_k=2 lr=7.620e-05 elapsed=11.2m
+[train] epoch=1/3 step=400/2025 loss=1.6090 ce=1.5802 ce_ema=1.5850 pairwise=0.5252 pairwise_acc=0.7273 aux=1.2566 ewp_gn=5.815e-02 budget=0.0000 top_k=2 lr=7.481e-05 elapsed=12.8m
+[train] epoch=1/3 step=450/2025 loss=1.5922 ce=1.5600 ce_ema=1.5648 pairwise=0.5950 pairwise_acc=0.6818 aux=1.2419 ewp_gn=6.617e-02 budget=0.0000 top_k=2 lr=7.323e-05 elapsed=14.4m
+[train] epoch=1/3 step=500/2025 loss=1.6201 ce=1.5959 ce_ema=1.5348 pairwise=0.4349 pairwise_acc=0.8182 aux=1.2307 ewp_gn=6.121e-02 budget=0.0000 top_k=2 lr=7.145e-05 elapsed=15.9m
+[train] epoch=1/3 step=550/2025 loss=1.5062 ce=1.4810 ce_ema=1.5005 pairwise=0.4571 pairwise_acc=0.6818 aux=1.2126 ewp_gn=7.253e-02 budget=0.0000 top_k=2 lr=6.951e-05 elapsed=17.5m
+[train] epoch=1/3 step=600/2025 loss=1.5094 ce=1.4851 ce_ema=1.4804 pairwise=0.4334 pairwise_acc=0.9091 aux=1.2833 ewp_gn=6.960e-02 budget=0.0000 top_k=2 lr=6.740e-05 elapsed=19.1m
+[train] epoch=1/3 step=650/2025 loss=1.4541 ce=1.4277 ce_ema=1.4653 pairwise=0.4753 pairwise_acc=0.7727 aux=1.3362 ewp_gn=6.831e-02 budget=0.0000 top_k=2 lr=6.514e-05 elapsed=20.7m
+[train] epoch=2/3 step=700/2025 loss=1.2920 ce=1.2756 ce_ema=1.4078 pairwise=0.2782 pairwise_acc=0.8636 aux=1.2390 ewp_gn=7.786e-02 budget=0.0000 top_k=2 lr=6.274e-05 elapsed=22.3m
+[train] epoch=2/3 step=750/2025 loss=1.2226 ce=1.2079 ce_ema=1.3401 pairwise=0.2459 pairwise_acc=1.0000 aux=1.2296 ewp_gn=6.780e-02 budget=0.0000 top_k=2 lr=6.023e-05 elapsed=23.9m
+[train] epoch=2/3 step=800/2025 loss=1.1943 ce=1.1760 ce_ema=1.2959 pairwise=0.3184 pairwise_acc=0.8636 aux=1.2337 ewp_gn=8.335e-02 budget=0.0000 top_k=2 lr=5.761e-05 elapsed=25.4m
+[train] epoch=2/3 step=850/2025 loss=1.2926 ce=1.2819 ce_ema=1.2806 pairwise=0.1650 pairwise_acc=1.0000 aux=1.2385 ewp_gn=8.547e-02 budget=0.0000 top_k=2 lr=5.491e-05 elapsed=27.0m
+[train] epoch=2/3 step=900/2025 loss=1.3548 ce=1.3421 ce_ema=1.2595 pairwise=0.2039 pairwise_acc=1.0000 aux=1.2344 ewp_gn=9.299e-02 budget=0.0000 top_k=2 lr=5.213e-05 elapsed=28.6m
+[train] epoch=2/3 step=950/2025 loss=1.3131 ce=1.2936 ce_ema=1.2342 pairwise=0.3404 pairwise_acc=0.9545 aux=1.2024 ewp_gn=8.848e-02 budget=0.0000 top_k=2 lr=4.930e-05 elapsed=30.2m
+[train] epoch=2/3 step=1000/2025 loss=1.1755 ce=1.1650 ce_ema=1.2076 pairwise=0.1614 pairwise_acc=0.9545 aux=1.1982 ewp_gn=8.128e-02 budget=0.0000 top_k=2 lr=4.644e-05 elapsed=31.8m
+[train] epoch=2/3 step=1050/2025 loss=1.1880 ce=1.1757 ce_ema=1.1963 pairwise=0.1970 pairwise_acc=1.0000 aux=1.2110 ewp_gn=9.588e-02 budget=0.0000 top_k=2 lr=4.357e-05 elapsed=33.4m
+[train] epoch=2/3 step=1100/2025 loss=1.2096 ce=1.1959 ce_ema=1.1734 pairwise=0.2249 pairwise_acc=0.9545 aux=1.2074 ewp_gn=9.052e-02 budget=0.0000 top_k=2 lr=4.070e-05 elapsed=35.0m
+[train] epoch=2/3 step=1150/2025 loss=1.2761 ce=1.2668 ce_ema=1.1596 pairwise=0.1389 pairwise_acc=1.0000 aux=1.1921 ewp_gn=8.639e-02 budget=0.0000 top_k=2 lr=3.784e-05 elapsed=36.6m
+[train] epoch=2/3 step=1200/2025 loss=1.2779 ce=1.2677 ce_ema=1.1383 pairwise=0.1573 pairwise_acc=1.0000 aux=1.1823 ewp_gn=1.060e-01 budget=0.0000 top_k=2 lr=3.503e-05 elapsed=38.2m
+[train] epoch=2/3 step=1250/2025 loss=0.9858 ce=0.9745 ce_ema=1.1116 pairwise=0.1796 pairwise_acc=0.9545 aux=1.1641 ewp_gn=1.024e-01 budget=0.0000 top_k=2 lr=3.228e-05 elapsed=39.7m
+[train] epoch=2/3 step=1300/2025 loss=1.1186 ce=1.1054 ce_ema=1.0939 pairwise=0.2169 pairwise_acc=0.9545 aux=1.1683 ewp_gn=1.029e-01 budget=0.0000 top_k=2 lr=2.959e-05 elapsed=41.3m
+[train] epoch=2/3 step=1350/2025 loss=0.9817 ce=0.9727 ce_ema=1.0666 pairwise=0.1344 pairwise_acc=1.0000 aux=1.1773 ewp_gn=8.568e-02 budget=0.0000 top_k=2 lr=2.701e-05 elapsed=42.9m
+[train] epoch=3/3 step=1400/2025 loss=0.8027 ce=0.7922 ce_ema=0.9760 pairwise=0.1633 pairwise_acc=1.0000 aux=1.1770 ewp_gn=9.209e-02 budget=0.0000 top_k=2 lr=2.453e-05 elapsed=44.5m
+[train] epoch=3/3 step=1450/2025 loss=0.9927 ce=0.9825 ce_ema=0.9397 pairwise=0.1571 pairwise_acc=1.0000 aux=1.1662 ewp_gn=9.474e-02 budget=0.0000 top_k=2 lr=2.217e-05 elapsed=46.1m
+[train] epoch=3/3 step=1500/2025 loss=0.9583 ce=0.9490 ce_ema=0.9192 pairwise=0.1393 pairwise_acc=1.0000 aux=1.1668 ewp_gn=1.028e-01 budget=0.0000 top_k=2 lr=1.995e-05 elapsed=47.7m
+[train] epoch=3/3 step=1550/2025 loss=0.7822 ce=0.7729 ce_ema=0.9043 pairwise=0.1393 pairwise_acc=1.0000 aux=1.1457 ewp_gn=7.963e-02 budget=0.0000 top_k=2 lr=1.789e-05 elapsed=49.3m
+[train] epoch=3/3 step=1600/2025 loss=0.8195 ce=0.8116 ce_ema=0.8898 pairwise=0.1102 pairwise_acc=1.0000 aux=1.1553 ewp_gn=9.148e-02 budget=0.0000 top_k=2 lr=1.600e-05 elapsed=50.9m
+[train] epoch=3/3 step=1650/2025 loss=0.9300 ce=0.9216 ce_ema=0.8702 pairwise=0.1234 pairwise_acc=1.0000 aux=1.1465 ewp_gn=1.010e-01 budget=0.0000 top_k=2 lr=1.428e-05 elapsed=52.5m
+[train] epoch=3/3 step=1700/2025 loss=0.9170 ce=0.9083 ce_ema=0.8611 pairwise=0.1274 pairwise_acc=1.0000 aux=1.1562 ewp_gn=1.059e-01 budget=0.0000 top_k=2 lr=1.275e-05 elapsed=54.1m
+[train] epoch=3/3 step=1750/2025 loss=0.9120 ce=0.9049 ce_ema=0.8607 pairwise=0.0971 pairwise_acc=1.0000 aux=1.1438 ewp_gn=9.942e-02 budget=0.0000 top_k=2 lr=1.142e-05 elapsed=55.7m
+[train] epoch=3/3 step=1800/2025 loss=0.8873 ce=0.8785 ce_ema=0.8549 pairwise=0.1290 pairwise_acc=1.0000 aux=1.1457 ewp_gn=1.079e-01 budget=0.0000 top_k=2 lr=1.030e-05 elapsed=57.3m
+[train] epoch=3/3 step=1850/2025 loss=0.8008 ce=0.7942 ce_ema=0.8447 pairwise=0.0859 pairwise_acc=1.0000 aux=1.1439 ewp_gn=9.085e-02 budget=0.0000 top_k=2 lr=9.400e-06 elapsed=58.9m
+[train] epoch=3/3 step=1900/2025 loss=0.8044 ce=0.7977 ce_ema=0.8378 pairwise=0.0894 pairwise_acc=1.0000 aux=1.1470 ewp_gn=9.976e-02 budget=0.0000 top_k=2 lr=8.717e-06 elapsed=60.5m
+[train] epoch=3/3 step=1950/2025 loss=0.8025 ce=0.7944 ce_ema=0.8362 pairwise=0.1163 pairwise_acc=1.0000 aux=1.1353 ewp_gn=8.907e-02 budget=0.0000 top_k=2 lr=8.258e-06 elapsed=62.1m
+[train] epoch=3/3 step=2000/2025 loss=0.7936 ce=0.7879 ce_ema=0.8243 pairwise=0.0688 pairwise_acc=1.0000 aux=1.1371 ewp_gn=9.319e-02 budget=0.0000 top_k=2 lr=8.029e-06 elapsed=63.7m
+[save] moving merged model to cpu before export
+[save] merged + fp32 full model -> /mnt/data/models/fv1_openbookqa_s42
+[save] final router top_k -> 2
+[2026-05-19 18:15:12,793] [INFO] [real_accelerator.py:203:get_accelerator] Setting ds_accelerator to cuda (auto detect)
+[93m [WARNING] [0m async_io requires the dev libaio .so object and headers but these were not found.
+[93m [WARNING] [0m async_io: please install the libaio-dev package with apt
+[93m [WARNING] [0m If libaio is already installed (perhaps from source), try setting the CFLAGS and LDFLAGS environment variables to where it can be found.
+[93m [WARNING] [0m Please specify the CUTLASS repo directory as environment variable $CUTLASS_PATH
+[93m [WARNING] [0m sparse_attn requires a torch version >= 1.5 and < 2.0 but detected 2.5
+[93m [WARNING] [0m using untested triton version (3.1.0), only 1.0.0 is known to be compatible
+
+[launcher] done.

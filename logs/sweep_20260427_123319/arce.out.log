@@ -1,0 +1,63 @@
+
+[launcher] running:
+  /home/vipuser/miniconda3/envs/op/bin/python -m torch.distributed.run --nproc_per_node 1 /root/Predict_v2/run_stage1_moe_att.py --model_path /root/models/Dynamic_MoE --output_dir /mnt/data/models/out_moe_att_arce --dataset arc-e --eval_dataset arc-e --train_split train --eval_split validation --block_size 128 --batch_size 2 --grad_accum 6 --epochs 3 --lr 0.0001 --lora_r 8 --lora_alpha 16 --lora_dropout 0.05 --num_proc 16 --load_in_8bit 0 --load_in_fp16 1 --bf16 0 --train_extra_params_in_fp32 1 --router_use_entmax 0 --router_top_k 2 --moe_att_expert_loss_coef 1.0 --moe_att_kl_loss_coef 0.1 --moe_att_use_detach 1 --stage1_epochs 1 --stage1_lr 0.0002 --stage1_grad_accum 1 --stage1_data_ratio 0.2 --stage1_distill_temperature 1.0 --stage1_kl_coef 1.0 --stage1_logit_coef 1.0 --stage1_use_logit_loss 1
+[load] tokenizer from model_path: /root/models/Dynamic_MoE
+[load] distributed=True world_size=1 4bit=False 8bit=False
+[train] mixed precision: fp16=False bf16=False
+[warn] load_in_fp16=1 only loads model weights in fp16; it does not enable AMP autocast. Set --fp16 1 or --bf16 1 to reduce activation memory.
+[stage1] loading base model for router distillation
+[load] checkpoint loaded with strict=False: missing=96 unexpected=24 dtype=torch.float16
+[stage1] trainable cross-attention router params: 75497472
+[stage1][data] train=450 (ratio=0.200, seed=42)
+[stage1] epoch=1/1 step=50 loss=1.880932 kl=1.638606 logit=0.242326 t_ent=1.6942 s_ent=1.3267 top1=0.6053 topk=0.6042 cos=0.6394 elapsed=0.3m
+[stage1] epoch=1/1 step=100 loss=1.756954 kl=1.517794 logit=0.239160 t_ent=1.6748 s_ent=1.3794 top1=0.5933 topk=0.6021 cos=0.6502 elapsed=0.6m
+[stage1] epoch=1/1 step=150 loss=1.569734 kl=1.349521 logit=0.220213 t_ent=1.7000 s_ent=1.3647 top1=0.6359 topk=0.6274 cos=0.6747 elapsed=0.9m
+[stage1] epoch=1/1 step=200 loss=1.604670 kl=1.397962 logit=0.206708 t_ent=1.6774 s_ent=1.3370 top1=0.6520 topk=0.6436 cos=0.6914 elapsed=1.2m
+[stage1] saving full checkpoint to /mnt/data/models/out_moe_att_arce/ckpt_after_stage1
+[2026-04-27 13:08:53,870] [INFO] [real_accelerator.py:203:get_accelerator] Setting ds_accelerator to cuda (auto detect)
+[93m [WARNING] [0m async_io requires the dev libaio .so object and headers but these were not found.
+[93m [WARNING] [0m async_io: please install the libaio-dev package with apt
+[93m [WARNING] [0m If libaio is already installed (perhaps from source), try setting the CFLAGS and LDFLAGS environment variables to where it can be found.
+[93m [WARNING] [0m Please specify the CUTLASS repo directory as environment variable $CUTLASS_PATH
+[93m [WARNING] [0m sparse_attn requires a torch version >= 1.5 and < 2.0 but detected 2.5
+[93m [WARNING] [0m using untested triton version (3.1.0), only 1.0.0 is known to be compatible
+
+[launcher] running:
+  /home/vipuser/miniconda3/envs/op/bin/python -m torch.distributed.run --nproc_per_node 1 /root/Predict_v2/run_stage2_moe_att.py --model_path /root/models/Dynamic_MoE --output_dir /mnt/data/models/out_moe_att_arce --dataset arc-e --eval_dataset arc-e --train_split train --eval_split validation --block_size 128 --batch_size 2 --grad_accum 6 --epochs 3 --lr 0.0001 --lora_r 8 --lora_alpha 16 --lora_dropout 0.05 --num_proc 16 --load_in_8bit 0 --load_in_fp16 1 --bf16 0 --train_extra_params_in_fp32 1 --router_use_entmax 0 --router_top_k 2 --moe_att_expert_loss_coef 1.0 --moe_att_kl_loss_coef 0.1 --moe_att_use_detach 1 --stage2_init_path /mnt/data/models/out_moe_att_arce/ckpt_after_stage1
+[load] tokenizer from model_path: /root/models/Dynamic_MoE
+[load] distributed=True world_size=1 4bit=False 8bit=False
+[train] mixed precision: fp16=False bf16=False
+[warn] load_in_fp16=1 only loads model weights in fp16; it does not enable AMP autocast. Set --fp16 1 or --bf16 1 to reduce activation memory.
+[stage2] loading model from /mnt/data/models/out_moe_att_arce/ckpt_after_stage1
+[load] checkpoint loaded with strict=False: missing=0 unexpected=0 dtype=torch.float16
+[stage2] extra trainable new-router params: 75497472
+[stage2] cast selected router params to fp32: 75497472
+[stage2] trainable params: 112459776/3600598016 (3.12%)
+trainable params: 112,459,776 || all params: 3,600,598,016 || trainable%: 3.1234
+[stage2][eval] using OpenCompass-style PPL ranking for arc-e
+[stage2][data] train=2251 eval=20 block_size=128
+[stage2][opt] param groups: other=2496 router=72
+[stage2][opt] lrs: other=1.000e-04 router=1.000e-04
+[train] epoch=1/3 step=50/564 loss=11.9152 ce=2.3203 ce_ema=2.2954 expert=9.3555 kl=2.3939 ewp_gn=7.301e+00 budget=0.0000 top_k=2 lr=9.972e-05 elapsed=5.3m
+[train] epoch=1/3 step=100/564 loss=10.6113 ce=1.8594 ce_ema=1.9491 expert=8.5058 kl=2.4611 ewp_gn=5.675e+00 budget=0.0000 top_k=2 lr=9.829e-05 elapsed=10.6m
+[train] epoch=1/3 step=150/564 loss=10.4665 ce=2.0801 ce_ema=1.7711 expert=8.1366 kl=2.4983 ewp_gn=4.502e+00 budget=0.0000 top_k=2 lr=9.579e-05 elapsed=15.8m
+[train] epoch=2/3 step=200/564 loss=9.1846 ce=1.2520 ce_ema=1.7431 expert=7.6815 kl=2.5109 ewp_gn=2.986e+00 budget=0.0000 top_k=2 lr=9.240e-05 elapsed=21.0m
+[train] epoch=2/3 step=250/564 loss=9.8001 ce=1.9062 ce_ema=1.7244 expert=7.6422 kl=2.5171 ewp_gn=5.244e+00 budget=0.0000 top_k=2 lr=8.841e-05 elapsed=26.3m
+[train] epoch=2/3 step=300/564 loss=9.1473 ce=1.4775 ce_ema=1.7195 expert=7.4173 kl=2.5254 ewp_gn=5.045e+00 budget=0.0000 top_k=2 lr=8.414e-05 elapsed=31.6m
+[train] epoch=2/3 step=350/564 loss=9.8701 ce=1.8818 ce_ema=1.7286 expert=7.7376 kl=2.5076 ewp_gn=5.620e+00 budget=0.0000 top_k=2 lr=7.994e-05 elapsed=36.8m
+[train] epoch=3/3 step=400/564 loss=9.2255 ce=1.7432 ce_ema=1.6573 expert=7.2289 kl=2.5353 ewp_gn=3.108e+00 budget=0.0000 top_k=2 lr=7.616e-05 elapsed=42.1m
+[train] epoch=3/3 step=450/564 loss=9.5122 ce=1.6953 ce_ema=1.6452 expert=7.5656 kl=2.5127 ewp_gn=3.705e+00 budget=0.0000 top_k=2 lr=7.309e-05 elapsed=47.4m
+[train] epoch=3/3 step=500/564 loss=9.6746 ce=1.7803 ce_ema=1.6574 expert=7.6442 kl=2.5022 ewp_gn=4.274e+00 budget=0.0000 top_k=2 lr=7.100e-05 elapsed=52.7m
+[train] epoch=3/3 step=550/564 loss=8.7954 ce=1.6592 ce_ema=1.6250 expert=6.8800 kl=2.5618 ewp_gn=3.693e+00 budget=0.0000 top_k=2 lr=7.005e-05 elapsed=57.9m
+[save] moving merged model to cpu before export
+[save] merged + fp32 full model -> /mnt/data/models/out_moe_att_arce
+[save] final router top_k -> 2
+[2026-04-27 14:09:26,293] [INFO] [real_accelerator.py:203:get_accelerator] Setting ds_accelerator to cuda (auto detect)
+[93m [WARNING] [0m async_io requires the dev libaio .so object and headers but these were not found.
+[93m [WARNING] [0m async_io: please install the libaio-dev package with apt
+[93m [WARNING] [0m If libaio is already installed (perhaps from source), try setting the CFLAGS and LDFLAGS environment variables to where it can be found.
+[93m [WARNING] [0m Please specify the CUTLASS repo directory as environment variable $CUTLASS_PATH
+[93m [WARNING] [0m sparse_attn requires a torch version >= 1.5 and < 2.0 but detected 2.5
+[93m [WARNING] [0m using untested triton version (3.1.0), only 1.0.0 is known to be compatible
+
+[launcher] done.

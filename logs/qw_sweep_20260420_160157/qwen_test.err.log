@@ -1,0 +1,82 @@
+/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/cuda/__init__.py:61: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/cuda/__init__.py:61: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+[W420 16:02:06.308191699 CUDAAllocatorConfig.h:28] Warning: expandable_segments not supported on this platform (function operator())
+You are using a model of type qwen2_moe to instantiate a model of type llama. This is not supported for all configurations of models and can yield errors.
+`torch_dtype` is deprecated! Use `dtype` instead!
+/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/cuda/__init__.py:61: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+MoEForCausalLM has generative capabilities, as `prepare_inputs_for_generation` is explicitly defined. However, it doesn't directly inherit from `GenerationMixin`. From 👉v4.50👈 onwards, `PreTrainedModel` will NOT inherit from `GenerationMixin`, and this model will lose the ability to call `generate` and other related functions.
+  - If you're using `trust_remote_code=True`, you can get rid of this warning by loading the model with an auto class. See https://huggingface.co/docs/transformers/en/model_doc/auto#auto-classes
+  - If you are the owner of the model architecture code, please modify your model class such that it inherits from `GenerationMixin` (after `PreTrainedModel`, otherwise you'll get an exception).
+  - If you are not the owner of the model architecture class, please contact the model code owner to update it.
+[rank0]: Traceback (most recent call last):
+[rank0]:   File "/root/Predict_v2/run_stage1_qwen_dynamic_moe.py", line 29, in <module>
+[rank0]:     main()
+[rank0]:   File "/root/Predict_v2/run_stage1_qwen_dynamic_moe.py", line 25, in main
+[rank0]:     finetune_qwen_dynamic_moe.main()
+[rank0]:   File "/root/Predict_v2/finetune_qwen_dynamic_moe.py", line 2361, in main
+[rank0]:     stage1_model = build_model_with_router_compat(
+[rank0]:   File "/root/Predict_v2/finetune_qwen_dynamic_moe.py", line 1349, in build_model_with_router_compat
+[rank0]:     model = model_cls.from_pretrained(
+[rank0]:   File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/transformers/modeling_utils.py", line 277, in _wrapper
+[rank0]:     return func(*args, **kwargs)
+[rank0]:   File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/transformers/modeling_utils.py", line 5051, in from_pretrained
+[rank0]:     ) = cls._load_pretrained_model(
+[rank0]:   File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/transformers/modeling_utils.py", line 5365, in _load_pretrained_model
+[rank0]:     model._initialize_missing_keys(missing_keys + mismatched_keys, is_quantized)
+[rank0]:   File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/transformers/modeling_utils.py", line 5865, in _initialize_missing_keys
+[rank0]:     param_or_buffer = self.get_parameter_or_buffer(key)
+[rank0]:   File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/transformers/modeling_utils.py", line 5949, in get_parameter_or_buffer
+[rank0]:     module, param_name = get_module_from_name(self, target)
+[rank0]:   File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/transformers/quantizers/quantizers_utils.py", line 20, in get_module_from_name
+[rank0]:     module = module.get_submodule(module_name)
+[rank0]:   File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/nn/modules/module.py", line 724, in get_submodule
+[rank0]:     raise AttributeError("`" + item + "` is not " "an nn.Module")
+[rank0]: AttributeError: `weight` is not an nn.Module
+[rank0]:[W420 16:02:30.816184325 ProcessGroupNCCL.cpp:1250] Warning: WARNING: process group has NOT been destroyed before we destruct ProcessGroupNCCL. On normal program exit, the application should call destroy_process_group to ensure that any pending NCCL operations have finished in this process. In rare cases this process can exit before this point and block the progress of another member of the process group. This constraint has always been present,  but this warning has only been added since PyTorch 2.4 (function operator())
+E0420 16:02:31.441032 8085 site-packages/torch/distributed/elastic/multiprocessing/api.py:869] failed (exitcode: 1) local_rank: 0 (pid: 8117) of binary: /home/vipuser/miniconda3/envs/op/bin/python
+Traceback (most recent call last):
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/runpy.py", line 196, in _run_module_as_main
+    return _run_code(code, main_globals, None,
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/runpy.py", line 86, in _run_code
+    exec(code, run_globals)
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/distributed/run.py", line 923, in <module>
+    main()
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/distributed/elastic/multiprocessing/errors/__init__.py", line 355, in wrapper
+    return f(*args, **kwargs)
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/distributed/run.py", line 919, in main
+    run(args)
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/distributed/run.py", line 910, in run
+    elastic_launch(
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/distributed/launcher/api.py", line 138, in __call__
+    return launch_agent(self._config, self._entrypoint, list(args))
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/distributed/launcher/api.py", line 269, in launch_agent
+    raise ChildFailedError(
+torch.distributed.elastic.multiprocessing.errors.ChildFailedError: 
+============================================================
+/root/Predict_v2/run_stage1_qwen_dynamic_moe.py FAILED
+------------------------------------------------------------
+Failures:
+  <NO_OTHER_FAILURES>
+------------------------------------------------------------
+Root Cause (first observed failure):
+[0]:
+  time      : 2026-04-20_16:02:31
+  host      : ubuntu22.04
+  rank      : 0 (local_rank: 0)
+  exitcode  : 1 (pid: 8117)
+  error_file: <N/A>
+  traceback : To enable traceback see: https://pytorch.org/docs/stable/elastic/errors.html
+============================================================
+Traceback (most recent call last):
+  File "/root/Predict_v2/launch_two_stage_qwen_torchrun.py", line 147, in <module>
+    main()
+  File "/root/Predict_v2/launch_two_stage_qwen_torchrun.py", line 135, in main
+    _run(cmd1, env)
+  File "/root/Predict_v2/launch_two_stage_qwen_torchrun.py", line 79, in _run
+    subprocess.run(cmd, check=True, env=env)
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/subprocess.py", line 524, in run
+    raise CalledProcessError(retcode, process.args,
+subprocess.CalledProcessError: Command '['/home/vipuser/miniconda3/envs/op/bin/python', '-m', 'torch.distributed.run', '--nproc_per_node', '1', '/root/Predict_v2/run_stage1_qwen_dynamic_moe.py', '--model_path', '/root/models/Qwen_MoE', '--output_dir', '/root/models/CB_lowrestrict', '--dataset', 'piqa', '--eval_dataset', 'piqa', '--train_split', 'train', '--eval_split', 'validation', '--block_size', '128', '--batch_size', '16', '--grad_accum', '1', '--epochs', '3', '--lr', '5e-05', '--lora_r', '16', '--lora_alpha', '16', '--lora_dropout', '0.05', '--num_proc', '16', '--load_in_4bit', '1', '--load_in_8bit', '0', '--use_bnb_8bit', '0', '--load_in_fp16', '0', '--fp16', '0', '--bf16', '0', '--train_extra_params_in_fp32', '1', '--router_use_entmax', '0', '--router_top_k', '2', '--share_router_expert_embedding', '0', '--router_entmax_alpha', '1.7', '--router_aux_loss_coef', '0.002', '--router_z_loss_coef', '0.0', '--router_pull_loss_coef', '0.002', '--router_use_ema_update', '1', '--router_ema_momentum', '0.99', '--router_pull_loss_type', 'hard_ce', '--min_lr_ratio', '0.25', '--router_lr_mult', '1.15', '--eval_max_samples', '200', '--stage1_epochs', '1', '--stage1_lr', '0.0002', '--stage1_grad_accum', '1', '--stage1_data_ratio', '0.2', '--stage1_distill_temperature', '2.0', '--stage1_kl_coef', '2.0', '--stage1_logit_coef', '0.25', '--stage1_use_logit_loss', '1']' returned non-zero exit status 1.

@@ -1,0 +1,128 @@
+# run_started_at	20260427_034220
+# arg	batch_size	18
+# arg	bbh_task	"boolean_expressions"
+# arg	bf16	0
+# arg	block_size	72
+# arg	bnb_4bit_compute_dtype	"float16"
+# arg	bnb_4bit_quant_type	"nf4"
+# arg	bnb_4bit_use_double_quant	1
+# arg	dataset	"piqa"
+# arg	device	"cuda"
+# arg	epochs	2
+# arg	eval_dataset	"piqa"
+# arg	eval_every	200
+# arg	eval_max_samples	20
+# arg	eval_split	"validation"
+# arg	fp16	0
+# arg	grad_accum	1
+# arg	gradient_checkpointing	0
+# arg	init_new_router_from_legacy	0
+# arg	llm_int8_threshold	6.0
+# arg	load_in_4bit	0
+# arg	load_in_8bit	0
+# arg	load_in_fp16	1
+# arg	log_every	50
+# arg	lora_alpha	16
+# arg	lora_dropout	0.05
+# arg	lora_r	8
+# arg	lora_target_modules	""
+# arg	lr	0.0001
+# arg	max_grad_norm	1.0
+# arg	min_lr_ratio	0.7
+# arg	mix_datasets	"piqa,siqa"
+# arg	mmlu_answer_mode	"text"
+# arg	mmlu_subjects	"all"
+# arg	model_path	"/root/models/Dynamic_MoE"
+# arg	moe_att_expert_loss_coef	1.0
+# arg	moe_att_kl_loss_coef	0.1
+# arg	moe_att_use_detach	1
+# arg	num_proc	16
+# arg	output_dir	"/mnt/data/models/out_moe_att_piqa"
+# arg	redpajama_local_dir	""
+# arg	router_anchor_momentum	null
+# arg	router_aux_loss_coef	0.0
+# arg	router_budget_end_ratio	1.0
+# arg	router_budget_loss_coef	0.0
+# arg	router_budget_start_ratio	0.5
+# arg	router_budget_target_count	0.0
+# arg	router_budget_tau	0.05
+# arg	router_context_scale	null
+# arg	router_ema_momentum	0.99
+# arg	router_entmax_alpha	null
+# arg	router_lr_mult	1.0
+# arg	router_pull_loss_coef	0.0
+# arg	router_pull_loss_coef_final	null
+# arg	router_pull_loss_schedule_end_ratio	1.0
+# arg	router_pull_loss_schedule_start_ratio	0.5
+# arg	router_pull_loss_type	"soft"
+# arg	router_pull_loss_type_final	""
+# arg	router_pull_loss_type_switch_ratio	0.5
+# arg	router_pull_temperature	1.0
+# arg	router_softmax_temperature	null
+# arg	router_top_k	2
+# arg	router_top_p_final	null
+# arg	router_top_p_schedule_end_ratio	1.0
+# arg	router_top_p_schedule_start_ratio	0.5
+# arg	router_topk	2
+# arg	router_use_ema_update	1
+# arg	router_use_entmax	0
+# arg	router_use_softmax_temperature	-1
+# arg	router_value_anchor_loss_coef	0.0
+# arg	router_z_loss_coef	0.0
+# arg	save_every	200
+# arg	seed	42
+# arg	share_router_expert_embedding	-1
+# arg	stage	1
+# arg	stage1_data_ratio	0.2
+# arg	stage1_distill_temperature	1.0
+# arg	stage1_epochs	1
+# arg	stage1_grad_accum	1
+# arg	stage1_kl_coef	1.0
+# arg	stage1_log_every	50
+# arg	stage1_logit_coef	1.0
+# arg	stage1_logit_loss_type	"huber"
+# arg	stage1_lr	0.0002
+# arg	stage1_max_grad_norm	1.0
+# arg	stage1_teacher_path	""
+# arg	stage1_use_logit_loss	1
+# arg	stage2_include_validation_in_train	0
+# arg	stage2_init_path	""
+# arg	stage2_validation_train_ratio	0.2
+# arg	stage2_validation_train_split	"validation"
+# arg	stage_split_seed	42
+# arg	top_p_threshold	null
+# arg	train_extra_params_in_fp32	1
+# arg	train_max_samples	null
+# arg	train_new_router_params	1
+# arg	train_split	"train"
+# arg	use_bnb_8bit	0
+# arg	use_label	1
+# arg	use_router_context	-1
+# arg	warmup_ratio	0.03
+# arg	weight_decay	0.0
+# arg	winogrande_config	"winogrande_xl"
+time	epoch	global_step	optim_step	layer_idx	layer_loss	kl_loss	logit_loss	teacher_entropy	student_entropy	top1_agreement	topk_overlap	logits_cosine
+1777232644.563	0	50	50	0	0.245720	0.117365	0.128356	2.648234	2.531977	0.659722	0.747024	0.636923
+1777232644.563	0	50	50	1	0.454359	0.294317	0.160041	2.212488	2.147997	0.592262	0.598214	0.733357
+1777232644.563	0	50	50	2	0.574655	0.385346	0.189309	2.462508	2.396241	0.507937	0.564980	0.677594
+1777232644.563	0	50	50	3	0.438155	0.276716	0.161439	2.213950	2.102057	0.709325	0.645833	0.709514
+1777232644.563	0	50	50	4	0.585360	0.372709	0.212651	2.343202	2.183722	0.595238	0.596230	0.618831
+1777232644.563	0	50	50	5	0.830088	0.572401	0.257687	2.245464	2.079119	0.540675	0.543651	0.613865
+1777232644.563	0	50	50	6	1.380534	1.106964	0.273571	2.130600	2.008574	0.417659	0.509921	0.589194
+1777232644.563	0	50	50	7	1.015075	0.756101	0.258974	1.877830	1.791685	0.568452	0.587302	0.657132
+1777232644.563	0	50	50	8	0.915081	0.646342	0.268738	1.856524	1.864509	0.544643	0.623512	0.635724
+1777232644.563	0	50	50	9	0.814782	0.569233	0.245548	1.715044	1.617121	0.655754	0.603175	0.663491
+1777232644.563	0	50	50	10	1.039466	0.728575	0.310891	1.906038	1.744205	0.556548	0.570933	0.565022
+1777232644.563	0	50	50	11	1.045606	0.732574	0.313033	1.869871	1.679764	0.537698	0.508433	0.556656
+1777232644.563	0	50	50	12	1.321087	1.028162	0.292925	1.642760	1.363137	0.589286	0.562004	0.619958
+1777232644.563	0	50	50	13	1.851114	1.551767	0.299347	1.631846	1.236920	0.550595	0.563988	0.581564
+1777232644.563	0	50	50	14	1.679486	1.403970	0.275516	1.494316	1.133331	0.586310	0.548115	0.640868
+1777232644.563	0	50	50	15	2.789839	2.496967	0.292871	1.662866	0.912474	0.495040	0.552579	0.629210
+1777232644.563	0	50	50	16	1.922132	1.633334	0.288798	1.306872	0.818450	0.667659	0.575397	0.621609
+1777232644.563	0	50	50	17	1.631521	1.336946	0.294575	1.091498	0.601241	0.732143	0.573909	0.595536
+1777232644.563	0	50	50	18	2.343921	2.029536	0.314385	1.285140	0.567071	0.649802	0.583829	0.579654
+1777232644.563	0	50	50	19	3.054890	2.750929	0.303961	1.034404	0.452719	0.655754	0.598710	0.611759
+1777232644.563	0	50	50	20	3.320825	3.004913	0.315912	0.993432	0.309664	0.641865	0.595734	0.574638
+1777232644.563	0	50	50	21	5.872690	5.538118	0.334572	1.076393	0.220302	0.590278	0.557540	0.565914
+1777232644.563	0	50	50	22	6.739389	6.411712	0.327677	0.897416	0.161153	0.601190	0.577877	0.588603
+1777232644.563	0	50	50	23	4.491224	4.239210	0.252014	0.201524	0.041284	0.878968	0.699405	0.622915

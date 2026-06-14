@@ -1,0 +1,94 @@
+/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/cuda/__init__.py:61: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+WARNING:__main__:
+*****************************************
+Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
+*****************************************
+/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/cuda/__init__.py:61: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/cuda/__init__.py:61: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+[W518 23:23:25.403254777 CUDAAllocatorConfig.h:28] Warning: expandable_segments not supported on this platform (function operator())
+[W518 23:23:25.636231135 CUDAAllocatorConfig.h:28] Warning: expandable_segments not supported on this platform (function operator())
+You are using the default legacy behaviour of the <class 'transformers.models.llama.tokenization_llama.LlamaTokenizer'>. This is expected, and simply means that the `legacy` (previous) behavior will be used so nothing changes for you. If you want to use the new behaviour, set `legacy=False`. This should only be set if you understand what it means, and thoroughly read the reason why this was added as explained in https://github.com/huggingface/transformers/pull/24565 - if you loaded a llama tokenizer from a GGUF file you can ignore this message
+You are using the default legacy behaviour of the <class 'transformers.models.llama.tokenization_llama.LlamaTokenizer'>. This is expected, and simply means that the `legacy` (previous) behavior will be used so nothing changes for you. If you want to use the new behaviour, set `legacy=False`. This should only be set if you understand what it means, and thoroughly read the reason why this was added as explained in https://github.com/huggingface/transformers/pull/24565 - if you loaded a llama tokenizer from a GGUF file you can ignore this message
+You are using the default legacy behaviour of the <class 'transformers.models.llama.tokenization_llama_fast.LlamaTokenizerFast'>. This is expected, and simply means that the `legacy` (previous) behavior will be used so nothing changes for you. If you want to use the new behaviour, set `legacy=False`. This should only be set if you understand what it means, and thoroughly read the reason why this was added as explained in https://github.com/huggingface/transformers/pull/24565 - if you loaded a llama tokenizer from a GGUF file you can ignore this message.
+You are using the default legacy behaviour of the <class 'transformers.models.llama.tokenization_llama_fast.LlamaTokenizerFast'>. This is expected, and simply means that the `legacy` (previous) behavior will be used so nothing changes for you. If you want to use the new behaviour, set `legacy=False`. This should only be set if you understand what it means, and thoroughly read the reason why this was added as explained in https://github.com/huggingface/transformers/pull/24565 - if you loaded a llama tokenizer from a GGUF file you can ignore this message.
+MoEForCausalLM has generative capabilities, as `prepare_inputs_for_generation` is explicitly defined. However, it doesn't directly inherit from `GenerationMixin`. From 👉v4.50👈 onwards, `PreTrainedModel` will NOT inherit from `GenerationMixin`, and this model will lose the ability to call `generate` and other related functions.
+  - If you're using `trust_remote_code=True`, you can get rid of this warning by loading the model with an auto class. See https://huggingface.co/docs/transformers/en/model_doc/auto#auto-classes
+  - If you are the owner of the model architecture code, please modify your model class such that it inherits from `GenerationMixin` (after `PreTrainedModel`, otherwise you'll get an exception).
+  - If you are not the owner of the model architecture class, please contact the model code owner to update it.
+MoEForCausalLM has generative capabilities, as `prepare_inputs_for_generation` is explicitly defined. However, it doesn't directly inherit from `GenerationMixin`. From 👉v4.50👈 onwards, `PreTrainedModel` will NOT inherit from `GenerationMixin`, and this model will lose the ability to call `generate` and other related functions.
+  - If you're using `trust_remote_code=True`, you can get rid of this warning by loading the model with an auto class. See https://huggingface.co/docs/transformers/en/model_doc/auto#auto-classes
+  - If you are the owner of the model architecture code, please modify your model class such that it inherits from `GenerationMixin` (after `PreTrainedModel`, otherwise you'll get an exception).
+  - If you are not the owner of the model architecture class, please contact the model code owner to update it.
+[rank1]: Traceback (most recent call last):
+[rank1]:   File "/root/Predict_v2/run_stage1_dynamic_moe.py", line 29, in <module>
+[rank1]:     main()
+[rank1]:   File "/root/Predict_v2/run_stage1_dynamic_moe.py", line 25, in main
+[rank1]:     finetune_dynamic_moe.main()
+[rank1]:   File "/root/Predict_v2/finetune_dynamic_moe.py", line 2943, in main
+[rank1]:     stage1_model = build_model_with_router_compat(
+[rank1]:   File "/root/Predict_v2/finetune_dynamic_moe.py", line 1602, in build_model_with_router_compat
+[rank1]:     model.to(device=device)
+[rank1]:   File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/transformers/modeling_utils.py", line 4347, in to
+[rank1]:     return super().to(*args, **kwargs)
+[rank1]:   File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1340, in to
+[rank1]:     return self._apply(convert)
+[rank1]:   File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/nn/modules/module.py", line 900, in _apply
+[rank1]:     module._apply(fn)
+[rank1]:   File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/nn/modules/module.py", line 900, in _apply
+[rank1]:     module._apply(fn)
+[rank1]:   File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/nn/modules/module.py", line 900, in _apply
+[rank1]:     module._apply(fn)
+[rank1]:   [Previous line repeated 4 more times]
+[rank1]:   File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/nn/modules/module.py", line 927, in _apply
+[rank1]:     param_applied = fn(param)
+[rank1]:   File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1326, in convert
+[rank1]:     return t.to(
+[rank1]: torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 12.00 MiB. GPU 1 has a total capacity of 39.56 GiB of which 17.50 MiB is free. Process 8837 has 35.12 GiB memory in use. Including non-PyTorch memory, this process has 4.40 GiB memory in use. Of the allocated memory 3.77 GiB is allocated by PyTorch, and 5.95 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+W0518 23:25:32.410809 10768 site-packages/torch/distributed/elastic/multiprocessing/api.py:897] Sending process 10806 closing signal SIGTERM
+E0518 23:25:32.784613 10768 site-packages/torch/distributed/elastic/multiprocessing/api.py:869] failed (exitcode: 1) local_rank: 1 (pid: 10807) of binary: /home/vipuser/miniconda3/envs/op/bin/python
+Traceback (most recent call last):
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/runpy.py", line 196, in _run_module_as_main
+    return _run_code(code, main_globals, None,
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/runpy.py", line 86, in _run_code
+    exec(code, run_globals)
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/distributed/run.py", line 923, in <module>
+    main()
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/distributed/elastic/multiprocessing/errors/__init__.py", line 355, in wrapper
+    return f(*args, **kwargs)
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/distributed/run.py", line 919, in main
+    run(args)
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/distributed/run.py", line 910, in run
+    elastic_launch(
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/distributed/launcher/api.py", line 138, in __call__
+    return launch_agent(self._config, self._entrypoint, list(args))
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/distributed/launcher/api.py", line 269, in launch_agent
+    raise ChildFailedError(
+torch.distributed.elastic.multiprocessing.errors.ChildFailedError: 
+============================================================
+/root/Predict_v2/run_stage1_dynamic_moe.py FAILED
+------------------------------------------------------------
+Failures:
+  <NO_OTHER_FAILURES>
+------------------------------------------------------------
+Root Cause (first observed failure):
+[0]:
+  time      : 2026-05-18_23:25:32
+  host      : ubuntu22.04
+  rank      : 1 (local_rank: 1)
+  exitcode  : 1 (pid: 10807)
+  error_file: <N/A>
+  traceback : To enable traceback see: https://pytorch.org/docs/stable/elastic/errors.html
+============================================================
+Traceback (most recent call last):
+  File "/root/Predict_v2/launch_two_stage_torchrun.py", line 166, in <module>
+    main()
+  File "/root/Predict_v2/launch_two_stage_torchrun.py", line 154, in main
+    _run(cmd1, env)
+  File "/root/Predict_v2/launch_two_stage_torchrun.py", line 96, in _run
+    subprocess.run(cmd, check=True, env=env)
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/subprocess.py", line 524, in run
+    raise CalledProcessError(retcode, process.args,
+subprocess.CalledProcessError: Command '['/home/vipuser/miniconda3/envs/op/bin/python', '-m', 'torch.distributed.run', '--nproc_per_node', '2', '/root/Predict_v2/run_stage1_dynamic_moe.py', '--model_path', '/root/models/Dynamic_MoE', '--output_dir', '/mnt/data/models/fv1_openbookqa_s42', '--dataset', 'openbookqa', '--eval_dataset', 'openbookqa', '--train_split', 'train', '--eval_split', 'validation', '--block_size', '128', '--batch_size', '8', '--grad_accum', '1', '--epochs', '3', '--lr', '8e-05', '--lora_r', '16', '--lora_alpha', '16', '--lora_dropout', '0.05', '--num_proc', '16', '--load_in_4bit', '0', '--load_in_8bit', '0', '--use_bnb_8bit', '0', '--load_in_fp16', '0', '--fp16', '0', '--bf16', '0', '--train_extra_params_in_fp32', '1', '--router_use_entmax', '0', '--router_top_k', '2', '--router_entmax_alpha', '1.7', '--min_lr_ratio', '0.1', '--router_lr_mult', '1.0', '--eval_max_samples', '600', '--router_use_softmax_temperature', '1', '--router_softmax_temperature', '1.0', '--train_new_router_params', '1', '--router_aux_loss_coef', '0.002', '--init_new_router_from_legacy', '1', '--eval_every', '3000', '--seed', '42', '--stage_split_seed', '42', '--stage1_epochs', '1', '--stage1_lr', '0.0001', '--stage1_grad_accum', '1', '--stage1_data_ratio', '0.5', '--stage1_distill_temperature', '2.0', '--stage1_kl_coef', '2.0', '--stage1_logit_coef', '0.25', '--stage1_use_logit_loss', '1']' returned non-zero exit status 1.

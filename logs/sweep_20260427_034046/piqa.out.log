@@ -1,0 +1,35 @@
+
+[launcher] running:
+  /home/vipuser/miniconda3/envs/op/bin/python -m torch.distributed.run --nproc_per_node 2 /root/Predict_v2/run_stage1_moe_att.py --model_path /root/models/Dynamic_MoE --output_dir /mnt/data/models/out_moe_att_piqa --dataset piqa --eval_dataset piqa --train_split train --eval_split validation --block_size 72 --batch_size 18 --grad_accum 1 --epochs 2 --lr 0.0001 --lora_r 8 --lora_alpha 16 --lora_dropout 0.05 --num_proc 16 --load_in_8bit 0 --load_in_fp16 1 --bf16 0 --train_extra_params_in_fp32 1 --router_use_entmax 0 --router_top_k 2 --moe_att_expert_loss_coef 1.0 --moe_att_kl_loss_coef 0.1 --moe_att_use_detach 1 --stage1_epochs 1 --stage1_lr 0.0002 --stage1_grad_accum 1 --stage1_data_ratio 0.2 --stage1_distill_temperature 1.0 --stage1_kl_coef 1.0 --stage1_logit_coef 1.0 --stage1_use_logit_loss 1
+[load] tokenizer from model_path: /root/models/Dynamic_MoE
+[load] distributed=True world_size=2 4bit=False 8bit=False
+[train] mixed precision: fp16=False bf16=False
+[stage1] loading base model for router distillation
+[load] checkpoint loaded with strict=False: missing=96 unexpected=24 dtype=torch.float16
+[stage1] trainable cross-attention router params: 75497472
+[stage1][data] train=3222 (ratio=0.200, seed=42)
+[stage1] epoch=1/1 step=50 loss=1.959445 kl=1.692704 logit=0.266741 t_ent=1.6494 s_ent=1.3293 top1=0.6031 topk=0.5864 cos=0.6187 elapsed=1.7m
+[stage1] saving full checkpoint to /mnt/data/models/out_moe_att_piqa/ckpt_after_stage1
+[2026-04-27 03:45:29,540] [INFO] [real_accelerator.py:203:get_accelerator] Setting ds_accelerator to cuda (auto detect)
+[93m [WARNING] [0m async_io requires the dev libaio .so object and headers but these were not found.
+[93m [WARNING] [0m async_io: please install the libaio-dev package with apt
+[93m [WARNING] [0m If libaio is already installed (perhaps from source), try setting the CFLAGS and LDFLAGS environment variables to where it can be found.
+[93m [WARNING] [0m Please specify the CUTLASS repo directory as environment variable $CUTLASS_PATH
+[93m [WARNING] [0m sparse_attn requires a torch version >= 1.5 and < 2.0 but detected 2.5
+[93m [WARNING] [0m using untested triton version (3.1.0), only 1.0.0 is known to be compatible
+
+[launcher] running:
+  /home/vipuser/miniconda3/envs/op/bin/python -m torch.distributed.run --nproc_per_node 2 /root/Predict_v2/run_stage2_moe_att.py --model_path /root/models/Dynamic_MoE --output_dir /mnt/data/models/out_moe_att_piqa --dataset piqa --eval_dataset piqa --train_split train --eval_split validation --block_size 72 --batch_size 18 --grad_accum 1 --epochs 2 --lr 0.0001 --lora_r 8 --lora_alpha 16 --lora_dropout 0.05 --num_proc 16 --load_in_8bit 0 --load_in_fp16 1 --bf16 0 --train_extra_params_in_fp32 1 --router_use_entmax 0 --router_top_k 2 --moe_att_expert_loss_coef 1.0 --moe_att_kl_loss_coef 0.1 --moe_att_use_detach 1 --stage2_init_path /mnt/data/models/out_moe_att_piqa/ckpt_after_stage1
+[load] tokenizer from model_path: /root/models/Dynamic_MoE
+[load] distributed=True world_size=2 4bit=False 8bit=False
+[train] mixed precision: fp16=False bf16=False
+[stage2] loading model from /mnt/data/models/out_moe_att_piqa/ckpt_after_stage1
+[load] checkpoint loaded with strict=False: missing=0 unexpected=0 dtype=torch.float16
+[stage2] extra trainable new-router params: 75497472
+[stage2] cast selected router params to fp32: 75497472
+[stage2] trainable params: 112459776/3600598016 (3.12%)
+trainable params: 112,459,776 || all params: 3,600,598,016 || trainable%: 3.1234
+[stage2][eval] using OpenCompass-style PPL ranking for piqa
+[stage2][data] train=16113 eval=20 block_size=72
+[stage2][opt] param groups: other=2496 router=72
+[stage2][opt] lrs: other=1.000e-04 router=1.000e-04

@@ -1,0 +1,66 @@
+/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/cuda/__init__.py:61: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+WARNING:__main__:
+*****************************************
+Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
+*****************************************
+/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/cuda/__init__.py:61: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/cuda/__init__.py:61: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+Traceback (most recent call last):
+  File "/root/Predict_v2/run_stage1_dynamic_moe.py", line 29, in <module>
+    main()
+  File "/root/Predict_v2/run_stage1_dynamic_moe.py", line 25, in main
+    finetune_dynamic_moe.main()
+  File "/root/Predict_v2/finetune_dynamic_moe.py", line 2380, in main
+    local_rank, world_size, is_distributed = setup_distributed_safe()
+  File "/root/Predict_v2/finetune_dynamic_moe.py", line 77, in setup_distributed_safe
+    raise RuntimeError(
+RuntimeError: Invalid LOCAL_RANK=1 for visible CUDA device count=1. Set --nproc_per_node <= 1.
+[W422 16:55:17.202148677 CUDAAllocatorConfig.h:28] Warning: expandable_segments not supported on this platform (function operator())
+W0422 16:55:21.091826 3362 site-packages/torch/distributed/elastic/multiprocessing/api.py:897] Sending process 3398 closing signal SIGTERM
+E0422 16:55:21.208891 3362 site-packages/torch/distributed/elastic/multiprocessing/api.py:869] failed (exitcode: 1) local_rank: 1 (pid: 3399) of binary: /home/vipuser/miniconda3/envs/op/bin/python
+Traceback (most recent call last):
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/runpy.py", line 196, in _run_module_as_main
+    return _run_code(code, main_globals, None,
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/runpy.py", line 86, in _run_code
+    exec(code, run_globals)
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/distributed/run.py", line 923, in <module>
+    main()
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/distributed/elastic/multiprocessing/errors/__init__.py", line 355, in wrapper
+    return f(*args, **kwargs)
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/distributed/run.py", line 919, in main
+    run(args)
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/distributed/run.py", line 910, in run
+    elastic_launch(
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/distributed/launcher/api.py", line 138, in __call__
+    return launch_agent(self._config, self._entrypoint, list(args))
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/distributed/launcher/api.py", line 269, in launch_agent
+    raise ChildFailedError(
+torch.distributed.elastic.multiprocessing.errors.ChildFailedError: 
+============================================================
+/root/Predict_v2/run_stage1_dynamic_moe.py FAILED
+------------------------------------------------------------
+Failures:
+  <NO_OTHER_FAILURES>
+------------------------------------------------------------
+Root Cause (first observed failure):
+[0]:
+  time      : 2026-04-22_16:55:21
+  host      : ubuntu22.04
+  rank      : 1 (local_rank: 1)
+  exitcode  : 1 (pid: 3399)
+  error_file: <N/A>
+  traceback : To enable traceback see: https://pytorch.org/docs/stable/elastic/errors.html
+============================================================
+Traceback (most recent call last):
+  File "/root/Predict_v2/launch_two_stage_torchrun.py", line 154, in <module>
+    main()
+  File "/root/Predict_v2/launch_two_stage_torchrun.py", line 142, in main
+    _run(cmd1, env)
+  File "/root/Predict_v2/launch_two_stage_torchrun.py", line 86, in _run
+    subprocess.run(cmd, check=True, env=env)
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/subprocess.py", line 524, in run
+    raise CalledProcessError(retcode, process.args,
+subprocess.CalledProcessError: Command '['/home/vipuser/miniconda3/envs/op/bin/python', '-m', 'torch.distributed.run', '--nproc_per_node', '2', '/root/Predict_v2/run_stage1_dynamic_moe.py', '--model_path', '/data/cyx/models/Dynamic_MoE', '--output_dir', '/data/cyx/models/fv1', '--dataset', 'piqa', '--eval_dataset', 'piqa', '--train_split', 'train', '--eval_split', 'validation', '--block_size', '150', '--batch_size', '10', '--grad_accum', '1', '--epochs', '3', '--lr', '8e-05', '--lora_r', '16', '--lora_alpha', '16', '--lora_dropout', '0.05', '--num_proc', '16', '--load_in_4bit', '0', '--load_in_8bit', '0', '--use_bnb_8bit', '0', '--load_in_fp16', '0', '--fp16', '0', '--bf16', '0', '--train_extra_params_in_fp32', '1', '--router_use_entmax', '0', '--router_top_k', '2', '--router_entmax_alpha', '1.7', '--router_anchor_loss_coef', '0.01', '--router_anchor_momentum', '0.99', '--min_lr_ratio', '0.1', '--router_lr_mult', '1.0', '--eval_max_samples', '200', '--router_use_softmax_temperature', '1', '--router_softmax_temperature', '0.8', '--stage1_epochs', '1', '--stage1_lr', '0.0001', '--stage1_grad_accum', '1', '--stage1_data_ratio', '0.5', '--stage1_distill_temperature', '2.0', '--stage1_kl_coef', '2.0', '--stage1_logit_coef', '0.25', '--stage1_use_logit_loss', '1']' returned non-zero exit status 1.

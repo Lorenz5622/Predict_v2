@@ -1,0 +1,10 @@
+
+[launcher] running:
+  /home/vipuser/miniconda3/envs/op/bin/python -m torch.distributed.run --nproc_per_node 2 /root/Predict_v2/run_stage1_moe_att.py --model_path /root/models/Dynamic_MoE --output_dir /mnt/data/models/out_moe_att_piqa --dataset piqa --eval_dataset piqa --train_split train --eval_split validation --block_size 72 --batch_size 16 --grad_accum 1 --epochs 3 --lr 0.0001 --lora_r 8 --lora_alpha 16 --lora_dropout 0.05 --num_proc 16 --load_in_8bit 0 --load_in_fp16 1 --bf16 0 --fp16 1 --train_extra_params_in_fp32 1 --router_use_entmax 0 --router_top_k 2 --moe_att_expert_loss_coef 1.0 --moe_att_kl_loss_coef 0.1 --moe_att_use_detach 1 --stage1_epochs 1 --stage1_lr 0.0002 --stage1_grad_accum 1 --stage1_data_ratio 0.2 --stage1_distill_temperature 1.0 --stage1_kl_coef 1.0 --stage1_logit_coef 1.0 --stage1_use_logit_loss 1 --moe_att_expert_loss_coef 0
+[load] tokenizer from model_path: /root/models/Dynamic_MoE
+[load] distributed=True world_size=2 4bit=False 8bit=False
+[train] mixed precision: fp16=True bf16=False
+[stage1] loading base model for router distillation
+[load] checkpoint loaded with strict=False: missing=96 unexpected=24 dtype=torch.float16
+[stage1] trainable cross-attention router params: 75497472
+[stage1][data] train=3222 (ratio=0.200, seed=42)

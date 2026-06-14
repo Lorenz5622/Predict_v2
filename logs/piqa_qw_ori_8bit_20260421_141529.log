@@ -1,0 +1,104 @@
+==== [piqa_qw_ori_8bit] START 2026年 04月 21日 星期二 14:15:29 CST ====
+CMD: torchrun --nproc_per_node 1 finetune_qwen_moe_qw_ori_8bit.py --model_path /root/models/Qwen_MoE --output_dir /root/models/out_piqa_qw_ori_8bit --dataset piqa --eval_dataset piqa --train_split train --eval_split validation --block_size 128 --batch_size 8 --grad_accum 1 --epochs 2 --lr 2e-4 --piqa_local_dir /root/datasets/PIQA --lora_r 8 --lora_alpha 16 --lora_dropout 0.05 --num_proc 16 --eval_max_samples 64 --gradient_checkpointing 1 --use_bnb_8bit 1 --router_topk 2
+/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/cuda/__init__.py:61: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/cuda/__init__.py:61: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+[load] tokenizer from model_path: /root/models/Qwen_MoE
+[load] distributed=True world_size=1 8bit=True fp16=False bf16=False
+/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/cuda/__init__.py:61: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+Loading checkpoint shards:   0%|          | 0/8 [00:00<?, ?it/s]Loading checkpoint shards:  12%|█▎        | 1/8 [00:06<00:45,  6.51s/it]Loading checkpoint shards:  25%|██▌       | 2/8 [00:14<00:44,  7.43s/it]Loading checkpoint shards:  38%|███▊      | 3/8 [00:21<00:37,  7.41s/it]Loading checkpoint shards:  50%|█████     | 4/8 [00:30<00:30,  7.75s/it]Loading checkpoint shards:  62%|██████▎   | 5/8 [00:37<00:22,  7.61s/it]Loading checkpoint shards:  75%|███████▌  | 6/8 [00:47<00:16,  8.41s/it]Loading checkpoint shards:  88%|████████▊ | 7/8 [00:59<00:09,  9.42s/it]Loading checkpoint shards: 100%|██████████| 8/8 [00:59<00:00,  6.60s/it]Loading checkpoint shards: 100%|██████████| 8/8 [00:59<00:00,  7.45s/it]
+[lora] trainable params: 127413504/14443197696 (0.88%)
+trainable params: 127,413,504 || all params: 14,443,197,696 || trainable%: 0.8822
+Map:   0%|          | 0/16113 [00:00<?, ? examples/s]Map:   2%|▏         | 350/16113 [00:00<00:04, 3464.89 examples/s]Map:   5%|▍         | 744/16113 [00:00<00:04, 3742.13 examples/s]Map:   8%|▊         | 1266/16113 [00:00<00:04, 3593.00 examples/s]Map:  11%|█         | 1721/16113 [00:00<00:03, 3920.89 examples/s]Map:  14%|█▍        | 2266/16113 [00:00<00:03, 3791.99 examples/s]Map:  16%|█▋        | 2656/16113 [00:00<00:03, 3818.64 examples/s]Map:  20%|█▉        | 3217/16113 [00:00<00:03, 3455.59 examples/s]Map:  23%|██▎       | 3631/16113 [00:00<00:03, 3623.84 examples/s]Map:  26%|██▌       | 4220/16113 [00:01<00:03, 3616.87 examples/s]Map:  29%|██▊       | 4628/16113 [00:01<00:03, 3726.20 examples/s]Map:  32%|███▏      | 5210/16113 [00:01<00:02, 3679.41 examples/s]Map:  35%|███▌      | 5658/16113 [00:01<00:02, 3872.15 examples/s]Map:  39%|███▊      | 6227/16113 [00:01<00:02, 3713.16 examples/s]Map:  42%|████▏     | 6687/16113 [00:01<00:02, 3923.60 examples/s]Map:  45%|████▌     | 7252/16113 [00:01<00:02, 3869.68 examples/s]Map:  48%|████▊     | 7712/16113 [00:02<00:02, 4045.86 examples/s]Map:  51%|█████▏    | 8265/16113 [00:02<00:02, 3919.38 examples/s]Map:  54%|█████▍    | 8720/16113 [00:02<00:01, 4073.25 examples/s]Map:  58%|█████▊    | 9281/16113 [00:02<00:01, 3956.71 examples/s]Map:  60%|██████    | 9732/16113 [00:02<00:01, 4090.16 examples/s]Map:  64%|██████▍   | 10288/16113 [00:02<00:01, 3955.30 examples/s]Map:  67%|██████▋   | 10743/16113 [00:02<00:01, 4099.13 examples/s]Map:  70%|██████▉   | 11219/16113 [00:02<00:01, 3574.37 examples/s]Map:  72%|███████▏  | 11666/16113 [00:03<00:01, 3786.24 examples/s]Map:  76%|███████▌  | 12227/16113 [00:03<00:01, 3764.94 examples/s]Map:  79%|███████▉  | 12697/16113 [00:03<00:00, 3990.45 examples/s]Map:  82%|████████▏ | 13240/16113 [00:03<00:00, 3862.17 examples/s]Map:  85%|████████▍ | 13684/16113 [00:03<00:00, 4001.21 examples/s]Map:  88%|████████▊ | 14238/16113 [00:03<00:00, 3893.93 examples/s]Map:  91%|█████████ | 14696/16113 [00:03<00:00, 4060.88 examples/s]Map:  95%|█████████▍| 15254/16113 [00:03<00:00, 3940.34 examples/s]Map:  97%|█████████▋| 15709/16113 [00:04<00:00, 4089.38 examples/s]Map: 100%|██████████| 16113/16113 [00:04<00:00, 3853.46 examples/s]
+Map:   0%|          | 0/64 [00:00<?, ? examples/s]Map: 100%|██████████| 64/64 [00:00<00:00, 3139.71 examples/s]
+[data] train=16113 eval=64 block_size=128
+/root/Predict_v2/finetune_qwen_moe_qw_ori_8bit.py:541: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler(enabled=(fp16 and device.type == "cuda"))
+train:   0%|          | 0/4028 [00:00<?, ?it/s]
+epoch 1/2:   0%|          | 0/2014 [00:00<?, ?it/s][A`use_cache=True` is incompatible with gradient checkpointing. Setting `use_cache=False`...
+/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/_dynamo/eval_frame.py:632: UserWarning: torch.utils.checkpoint: the use_reentrant parameter should be passed explicitly. In version 2.5 we will raise an exception if use_reentrant is not passed. use_reentrant=False is recommended, but if you need to preserve the current default behavior, you can pass use_reentrant=True. Refer to docs for more details on the differences between the two variants.
+  return fn(*args, **kwargs)
+/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/bitsandbytes/autograd/_functions.py:123: UserWarning: MatMul8bitLt: inputs will be cast from torch.float32 to float16 during quantization
+  warnings.warn(f"MatMul8bitLt: inputs will be cast from {A.dtype} to float16 during quantization")
+epoch 1/2:   0%|          | 0/2014 [00:04<?, ?it/s]
+[rank0]: Traceback (most recent call last):
+[rank0]:   File "/root/Predict_v2/finetune_qwen_moe_qw_ori_8bit.py", line 837, in <module>
+[rank0]:     main()
+[rank0]:   File "/root/Predict_v2/finetune_qwen_moe_qw_ori_8bit.py", line 820, in main
+[rank0]:     train(
+[rank0]:   File "/root/Predict_v2/finetune_qwen_moe_qw_ori_8bit.py", line 588, in train
+[rank0]:     loss.backward()
+[rank0]:   File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/_tensor.py", line 581, in backward
+[rank0]:     torch.autograd.backward(
+[rank0]:   File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/autograd/__init__.py", line 347, in backward
+[rank0]:     _engine_run_backward(
+[rank0]:   File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/autograd/graph.py", line 825, in _engine_run_backward
+[rank0]:     return Variable._execution_engine.run_backward(  # Calls into the C++ engine to run the backward pass
+[rank0]:   File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/autograd/function.py", line 307, in apply
+[rank0]:     return user_fn(self, *args)
+[rank0]:   File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/utils/checkpoint.py", line 321, in backward
+[rank0]:     torch.autograd.backward(outputs_with_grad, args_with_grad)
+[rank0]:   File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/autograd/__init__.py", line 347, in backward
+[rank0]:     _engine_run_backward(
+[rank0]:   File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/autograd/graph.py", line 825, in _engine_run_backward
+[rank0]:     return Variable._execution_engine.run_backward(  # Calls into the C++ engine to run the backward pass
+[rank0]: RuntimeError: Expected to mark a variable ready only once. This error is caused by one of the following reasons: 1) Use of a module parameter outside the `forward` function. Please make sure model parameters are not shared across multiple concurrent forward-backward passes. or try to use _set_static_graph() as a workaround if this module graph does not change during training loop.2) Reused parameters in multiple reentrant backward passes. For example, if you use multiple `checkpoint` functions to wrap the same part of your model, it would result in the same set of parameters been used by different reentrant backward passes multiple times, and hence marking a variable ready multiple times. DDP does not support such use cases in default. You can try to use _set_static_graph() as a workaround if your module graph does not change over iterations.
+[rank0]: Parameter at index 9023 with name base_model.model.model.layers.23.mlp.shared_expert.down_proj.lora_B.default.weight has been marked as ready twice. This means that multiple autograd engine  hooks have fired for this particular parameter during this iteration.
+train:   0%|          | 0/4028 [00:04<?, ?it/s]
+[rank0]:[W421 14:16:55.561651519 ProcessGroupNCCL.cpp:1250] Warning: WARNING: process group has NOT been destroyed before we destruct ProcessGroupNCCL. On normal program exit, the application should call destroy_process_group to ensure that any pending NCCL operations have finished in this process. In rare cases this process can exit before this point and block the progress of another member of the process group. This constraint has always been present,  but this warning has only been added since PyTorch 2.4 (function operator())
+E0421 14:16:57.923295 10709 site-packages/torch/distributed/elastic/multiprocessing/api.py:869] failed (exitcode: 1) local_rank: 0 (pid: 10784) of binary: /home/vipuser/miniconda3/envs/op/bin/python3.10
+Traceback (most recent call last):
+  File "/home/vipuser/miniconda3/envs/op/bin/torchrun", line 6, in <module>
+    sys.exit(main())
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/distributed/elastic/multiprocessing/errors/__init__.py", line 355, in wrapper
+    return f(*args, **kwargs)
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/distributed/run.py", line 919, in main
+    run(args)
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/distributed/run.py", line 910, in run
+    elastic_launch(
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/distributed/launcher/api.py", line 138, in __call__
+    return launch_agent(self._config, self._entrypoint, list(args))
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/distributed/launcher/api.py", line 269, in launch_agent
+    raise ChildFailedError(
+torch.distributed.elastic.multiprocessing.errors.ChildFailedError: 
+============================================================
+finetune_qwen_moe_qw_ori_8bit.py FAILED
+------------------------------------------------------------
+Failures:
+  <NO_OTHER_FAILURES>
+------------------------------------------------------------
+Root Cause (first observed failure):
+[0]:
+  time      : 2026-04-21_14:16:57
+  host      : ubuntu22.04
+  rank      : 0 (local_rank: 0)
+  exitcode  : 1 (pid: 10784)
+  error_file: <N/A>
+  traceback : To enable traceback see: https://pytorch.org/docs/stable/elastic/errors.html
+============================================================
+Command exited with non-zero status 1
+	Command being timed: "torchrun --nproc_per_node 1 finetune_qwen_moe_qw_ori_8bit.py --model_path /root/models/Qwen_MoE --output_dir /root/models/out_piqa_qw_ori_8bit --dataset piqa --eval_dataset piqa --train_split train --eval_split validation --block_size 128 --batch_size 8 --grad_accum 1 --epochs 2 --lr 2e-4 --piqa_local_dir /root/datasets/PIQA --lora_r 8 --lora_alpha 16 --lora_dropout 0.05 --num_proc 16 --eval_max_samples 64 --gradient_checkpointing 1 --use_bnb_8bit 1 --router_topk 2"
+	User time (seconds): 80.50
+	System time (seconds): 37.52
+	Percent of CPU this job got: 132%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 1:29.10
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 30719028
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 0
+	Minor (reclaiming a frame) page faults: 7255393
+	Voluntary context switches: 8638
+	Involuntary context switches: 855
+	Swaps: 0
+	File system inputs: 0
+	File system outputs: 32
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 1

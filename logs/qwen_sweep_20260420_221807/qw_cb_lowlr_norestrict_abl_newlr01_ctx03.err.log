@@ -1,0 +1,74 @@
+/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/cuda/__init__.py:61: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+W0420 22:18:11.311019 2760 site-packages/torch/distributed/run.py:793] 
+W0420 22:18:11.311019 2760 site-packages/torch/distributed/run.py:793] *****************************************
+W0420 22:18:11.311019 2760 site-packages/torch/distributed/run.py:793] Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
+W0420 22:18:11.311019 2760 site-packages/torch/distributed/run.py:793] *****************************************
+/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/cuda/__init__.py:61: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/cuda/__init__.py:61: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+Traceback (most recent call last):
+  File "/root/Predict_v2/finetune_qwen_dynamic_moe.py", line 2697, in <module>
+Traceback (most recent call last):
+  File "/root/Predict_v2/finetune_qwen_dynamic_moe.py", line 2697, in <module>
+        main()
+  File "/root/Predict_v2/finetune_qwen_dynamic_moe.py", line 2525, in main
+main()
+  File "/root/Predict_v2/finetune_qwen_dynamic_moe.py", line 2525, in main
+    args = parse_args()
+  File "/root/Predict_v2/finetune_qwen_dynamic_moe.py", line 2229, in parse_args
+    args = parse_args()
+  File "/root/Predict_v2/finetune_qwen_dynamic_moe.py", line 2229, in parse_args
+    config_defaults = _load_config_defaults(pre_args.config) if pre_args.config else {}
+    config_defaults = _load_config_defaults(pre_args.config) if pre_args.config else {}  File "/root/Predict_v2/finetune_qwen_dynamic_moe.py", line 711, in _load_config_defaults
+
+  File "/root/Predict_v2/finetune_qwen_dynamic_moe.py", line 711, in _load_config_defaults
+        cfg = json.loads(path.read_text(encoding="utf-8"))
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/pathlib.py", line 1132, in read_text
+cfg = json.loads(path.read_text(encoding="utf-8"))
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/pathlib.py", line 1132, in read_text
+        with self.open(mode='r', encoding=encoding, errors=errors) as f:
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/pathlib.py", line 1117, in open
+with self.open(mode='r', encoding=encoding, errors=errors) as f:
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/pathlib.py", line 1117, in open
+    return self._accessor.open(self, mode, buffering, encoding, errors,
+    return self._accessor.open(self, mode, buffering, encoding, errors,
+FileNotFoundError: FileNotFoundError[Errno 2] No such file or directory: '/root/Predict_v2/configs/qw_cb_lowlr_norestrict_abl_newlr01_ctx03.json'
+: [Errno 2] No such file or directory: '/root/Predict_v2/configs/qw_cb_lowlr_norestrict_abl_newlr01_ctx03.json'
+E0420 22:18:21.942651 2760 site-packages/torch/distributed/elastic/multiprocessing/api.py:869] failed (exitcode: 1) local_rank: 0 (pid: 2820) of binary: /home/vipuser/miniconda3/envs/op/bin/python3.10
+Traceback (most recent call last):
+  File "/home/vipuser/miniconda3/envs/op/bin/torchrun", line 6, in <module>
+    sys.exit(main())
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/distributed/elastic/multiprocessing/errors/__init__.py", line 355, in wrapper
+    return f(*args, **kwargs)
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/distributed/run.py", line 919, in main
+    run(args)
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/distributed/run.py", line 910, in run
+    elastic_launch(
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/distributed/launcher/api.py", line 138, in __call__
+    return launch_agent(self._config, self._entrypoint, list(args))
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/distributed/launcher/api.py", line 269, in launch_agent
+    raise ChildFailedError(
+torch.distributed.elastic.multiprocessing.errors.ChildFailedError: 
+============================================================
+/root/Predict_v2/finetune_qwen_dynamic_moe.py FAILED
+------------------------------------------------------------
+Failures:
+[1]:
+  time      : 2026-04-20_22:18:21
+  host      : ubuntu22.04
+  rank      : 1 (local_rank: 1)
+  exitcode  : 1 (pid: 2821)
+  error_file: <N/A>
+  traceback : To enable traceback see: https://pytorch.org/docs/stable/elastic/errors.html
+------------------------------------------------------------
+Root Cause (first observed failure):
+[0]:
+  time      : 2026-04-20_22:18:21
+  host      : ubuntu22.04
+  rank      : 0 (local_rank: 0)
+  exitcode  : 1 (pid: 2820)
+  error_file: <N/A>
+  traceback : To enable traceback see: https://pytorch.org/docs/stable/elastic/errors.html
+============================================================

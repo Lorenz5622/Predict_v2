@@ -1,0 +1,132 @@
+
+[launcher] running:
+  /home/vipuser/miniconda3/envs/op/bin/python -m torch.distributed.run --nproc_per_node 2 /root/Predict_v2/run_stage1_dynamic_moe.py --model_path /root/models/Dynamic_MoE --output_dir /root/models/fv1 --dataset piqa --eval_dataset piqa --train_split train --eval_split validation --block_size 150 --batch_size 12 --grad_accum 1 --epochs 2 --lr 8e-05 --lora_r 16 --lora_alpha 16 --lora_dropout 0.05 --num_proc 16 --load_in_4bit 0 --load_in_8bit 0 --use_bnb_8bit 0 --load_in_fp16 0 --fp16 0 --bf16 0 --train_extra_params_in_fp32 1 --router_use_entmax 0 --router_top_k 2 --router_entmax_alpha 1.7 --router_anchor_loss_coef 0.01 --router_anchor_momentum 0.99 --min_lr_ratio 0.1 --router_lr_mult 1.0 --eval_max_samples 200 --router_use_softmax_temperature 1 --router_softmax_temperature 0.8 --stage1_epochs 1 --stage1_lr 0.0001 --stage1_grad_accum 1 --stage1_data_ratio 0.5 --stage1_distill_temperature 2.0 --stage1_kl_coef 2.0 --stage1_logit_coef 0.25 --stage1_use_logit_loss 1
+[load] tokenizer from model_path: /root/models/Dynamic_MoE
+[load] distributed=True world_size=2 4bit=False 8bit=False
+[train] mixed precision: fp16=False bf16=False
+[stage1] loading base model for router distillation
+[load] checkpoint loaded with strict=False: missing=96 unexpected=24 dtype=torch.float32
+[init] layer 0 expert_key/expert_anchor initialized from legacy router.weight
+[init] layer 1 expert_key/expert_anchor initialized from legacy router.weight
+[init] layer 2 expert_key/expert_anchor initialized from legacy router.weight
+[init] layer 3 expert_key/expert_anchor initialized from legacy router.weight
+[init] layer 4 expert_key/expert_anchor initialized from legacy router.weight
+[init] layer 5 expert_key/expert_anchor initialized from legacy router.weight
+[init] layer 6 expert_key/expert_anchor initialized from legacy router.weight
+[init] layer 7 expert_key/expert_anchor initialized from legacy router.weight
+[init] layer 8 expert_key/expert_anchor initialized from legacy router.weight
+[init] layer 9 expert_key/expert_anchor initialized from legacy router.weight
+[init] layer 10 expert_key/expert_anchor initialized from legacy router.weight
+[init] layer 11 expert_key/expert_anchor initialized from legacy router.weight
+[init] layer 12 expert_key/expert_anchor initialized from legacy router.weight
+[init] layer 13 expert_key/expert_anchor initialized from legacy router.weight
+[init] layer 14 expert_key/expert_anchor initialized from legacy router.weight
+[init] layer 15 expert_key/expert_anchor initialized from legacy router.weight
+[init] layer 16 expert_key/expert_anchor initialized from legacy router.weight
+[init] layer 17 expert_key/expert_anchor initialized from legacy router.weight
+[init] layer 18 expert_key/expert_anchor initialized from legacy router.weight
+[init] layer 19 expert_key/expert_anchor initialized from legacy router.weight
+[init] layer 20 expert_key/expert_anchor initialized from legacy router.weight
+[init] layer 21 expert_key/expert_anchor initialized from legacy router.weight
+[init] layer 22 expert_key/expert_anchor initialized from legacy router.weight
+[init] layer 23 expert_key/expert_anchor initialized from legacy router.weight
+[init] layer 0 expert_key/expert_anchor initialized from legacy router.weight
+[init] layer 1 expert_key/expert_anchor initialized from legacy router.weight
+[init] layer 2 expert_key/expert_anchor initialized from legacy router.weight
+[init] layer 3 expert_key/expert_anchor initialized from legacy router.weight
+[init] layer 4 expert_key/expert_anchor initialized from legacy router.weight
+[init] layer 5 expert_key/expert_anchor initialized from legacy router.weight
+[init] layer 6 expert_key/expert_anchor initialized from legacy router.weight
+[init] layer 7 expert_key/expert_anchor initialized from legacy router.weight
+[init] layer 8 expert_key/expert_anchor initialized from legacy router.weight
+[init] layer 9 expert_key/expert_anchor initialized from legacy router.weight
+[init] layer 10 expert_key/expert_anchor initialized from legacy router.weight
+[init] layer 11 expert_key/expert_anchor initialized from legacy router.weight
+[init] layer 12 expert_key/expert_anchor initialized from legacy router.weight
+[init] layer 13 expert_key/expert_anchor initialized from legacy router.weight
+[init] layer 14 expert_key/expert_anchor initialized from legacy router.weight
+[init] layer 15 expert_key/expert_anchor initialized from legacy router.weight
+[init] layer 16 expert_key/expert_anchor initialized from legacy router.weight
+[init] layer 17 expert_key/expert_anchor initialized from legacy router.weight
+[init] layer 18 expert_key/expert_anchor initialized from legacy router.weight
+[init] layer 19 expert_key/expert_anchor initialized from legacy router.weight
+[init] layer 20 expert_key/expert_anchor initialized from legacy router.weight
+[init] layer 21 expert_key/expert_anchor initialized from legacy router.weight
+[init] layer 22 expert_key/expert_anchor initialized from legacy router.weight
+[init] layer 23 expert_key/expert_anchor initialized from legacy router.weight
+[init] initialized new router modules from legacy dense router for 24 layers
+[stage1] trainable cross-attention router params: 25559040
+[stage1][data] train=8056 (ratio=0.500, seed=42)
+[stage1] epoch=1/1 step=50 loss=0.352725 kl=0.167910 logit=0.067625 t_ent=1.5827 s_ent=1.7124 top1=0.8370 topk=0.8077 cos=0.9099 elapsed=0.3m
+[stage1] epoch=1/1 step=100 loss=0.132778 kl=0.062827 logit=0.028492 t_ent=1.5586 s_ent=1.6153 top1=0.9145 topk=0.8826 cos=0.9521 elapsed=0.7m
+[stage1] epoch=1/1 step=150 loss=0.061831 kl=0.029087 logit=0.014624 t_ent=1.5624 s_ent=1.5821 top1=0.9451 topk=0.9191 cos=0.9670 elapsed=1.0m
+[stage1] epoch=1/1 step=200 loss=0.035231 kl=0.016516 logit=0.008793 t_ent=1.5614 s_ent=1.5739 top1=0.9580 topk=0.9411 cos=0.9717 elapsed=1.3m
+[stage1] epoch=1/1 step=250 loss=0.026097 kl=0.012253 logit=0.006364 t_ent=1.5692 s_ent=1.5788 top1=0.9684 topk=0.9505 cos=0.9751 elapsed=1.7m
+[stage1] epoch=1/1 step=300 loss=0.018033 kl=0.008451 logit=0.004526 t_ent=1.5589 s_ent=1.5651 top1=0.9735 topk=0.9589 cos=0.9775 elapsed=2.0m
+[stage1] saving full checkpoint to /root/models/fv1/ckpt_after_stage1
+[2026-04-22 23:53:20,525] [INFO] [real_accelerator.py:203:get_accelerator] Setting ds_accelerator to cuda (auto detect)
+[93m [WARNING] [0m async_io requires the dev libaio .so object and headers but these were not found.
+[93m [WARNING] [0m async_io: please install the libaio-dev package with apt
+[93m [WARNING] [0m If libaio is already installed (perhaps from source), try setting the CFLAGS and LDFLAGS environment variables to where it can be found.
+[93m [WARNING] [0m Please specify the CUTLASS repo directory as environment variable $CUTLASS_PATH
+[93m [WARNING] [0m sparse_attn requires a torch version >= 1.5 and < 2.0 but detected 2.5
+[93m [WARNING] [0m using untested triton version (3.1.0), only 1.0.0 is known to be compatible
+
+[launcher] running:
+  /home/vipuser/miniconda3/envs/op/bin/python -m torch.distributed.run --nproc_per_node 2 /root/Predict_v2/run_stage2_dynamic_moe.py --model_path /root/models/Dynamic_MoE --output_dir /root/models/fv1 --dataset piqa --eval_dataset piqa --train_split train --eval_split validation --block_size 150 --batch_size 12 --grad_accum 1 --epochs 2 --lr 8e-05 --lora_r 16 --lora_alpha 16 --lora_dropout 0.05 --num_proc 16 --load_in_4bit 0 --load_in_8bit 0 --use_bnb_8bit 0 --load_in_fp16 0 --fp16 0 --bf16 0 --train_extra_params_in_fp32 1 --router_use_entmax 0 --router_top_k 2 --router_entmax_alpha 1.7 --router_anchor_loss_coef 0.01 --router_anchor_momentum 0.99 --min_lr_ratio 0.1 --router_lr_mult 1.0 --eval_max_samples 200 --router_use_softmax_temperature 1 --router_softmax_temperature 0.8 --stage2_init_path /root/models/fv1/ckpt_after_stage1
+[load] tokenizer from model_path: /root/models/Dynamic_MoE
+[load] distributed=True world_size=2 4bit=False 8bit=False
+[train] mixed precision: fp16=False bf16=False
+[stage2] loading model from /root/models/fv1/ckpt_after_stage1
+[load] checkpoint loaded with strict=False: missing=0 unexpected=0 dtype=torch.float32
+[stage2] extra trainable new-router params: 25559040
+[stage2] cast selected router params to fp32: 0
+[stage2] trainable params: 99483648/3587621888 (2.77%)
+trainable params: 99,483,648 || all params: 3,587,621,888 || trainable%: 2.7730
+[stage2][data] train=16113 eval=200 block_size=150
+[stage2][opt] param groups: other=2496 router=48
+[stage2][opt] lrs: other=8.000e-05 router=8.000e-05
+[train] epoch=1/2 step=50/1342 loss=2.0505 ce=2.0505 ce_ema=2.8312 pairwise=0.6045 pairwise_acc=0.8333 anchor=0.0022 budget=0.0000 top_k=2 anchor_key_cos=0.9978 lr=7.999e-05 elapsed=1.4m
+[train] epoch=1/2 step=100/1342 loss=1.9771 ce=1.9770 ce_ema=2.2933 pairwise=0.5779 pairwise_acc=0.7500 anchor=0.0023 budget=0.0000 top_k=2 anchor_key_cos=0.9977 lr=7.962e-05 elapsed=2.8m
+[train] epoch=1/2 step=150/1342 loss=1.7657 ce=1.7657 ce_ema=2.0543 pairwise=0.5731 pairwise_acc=0.7500 anchor=0.0023 budget=0.0000 top_k=2 anchor_key_cos=0.9977 lr=7.874e-05 elapsed=4.2m
+[train] epoch=1/2 step=200/1342 loss=1.7021 ce=1.7021 ce_ema=1.9447 pairwise=0.6656 pairwise_acc=0.6667 anchor=0.0023 budget=0.0000 top_k=2 anchor_key_cos=0.9977 lr=7.735e-05 elapsed=5.7m
+[eval] step=200 loss=1.9081 ce=1.9081 pairwise=0.6630 pairwise_acc=0.7050 ppl=6.74
+[train] epoch=1/2 step=250/1342 loss=1.6417 ce=1.6417 ce_ema=1.9084 pairwise=0.6325 pairwise_acc=0.6667 anchor=0.0023 budget=0.0000 top_k=2 anchor_key_cos=0.9977 lr=7.548e-05 elapsed=7.1m
+[train] epoch=1/2 step=300/1342 loss=1.9423 ce=1.9423 ce_ema=1.8550 pairwise=0.6430 pairwise_acc=0.5833 anchor=0.0023 budget=0.0000 top_k=2 anchor_key_cos=0.9977 lr=7.315e-05 elapsed=8.4m
+[train] epoch=1/2 step=350/1342 loss=1.9148 ce=1.9148 ce_ema=1.8660 pairwise=0.7730 pairwise_acc=0.5000 anchor=0.0023 budget=0.0000 top_k=2 anchor_key_cos=0.9977 lr=7.039e-05 elapsed=9.8m
+[train] epoch=1/2 step=400/1342 loss=1.7701 ce=1.7701 ce_ema=1.8657 pairwise=0.6267 pairwise_acc=0.8333 anchor=0.0023 budget=0.0000 top_k=2 anchor_key_cos=0.9977 lr=6.725e-05 elapsed=11.2m
+[eval] step=400 loss=1.8738 ce=1.8738 pairwise=0.6596 pairwise_acc=0.7300 ppl=6.51
+[train] epoch=1/2 step=450/1342 loss=2.0953 ce=2.0953 ce_ema=1.8493 pairwise=0.7100 pairwise_acc=0.4167 anchor=0.0023 budget=0.0000 top_k=2 anchor_key_cos=0.9977 lr=6.377e-05 elapsed=12.6m
+[train] epoch=1/2 step=500/1342 loss=1.8223 ce=1.8223 ce_ema=1.8404 pairwise=0.5805 pairwise_acc=0.8333 anchor=0.0024 budget=0.0000 top_k=2 anchor_key_cos=0.9976 lr=6.001e-05 elapsed=14.0m
+[train] epoch=1/2 step=550/1342 loss=1.7715 ce=1.7715 ce_ema=1.8322 pairwise=0.6171 pairwise_acc=0.6667 anchor=0.0024 budget=0.0000 top_k=2 anchor_key_cos=0.9976 lr=5.601e-05 elapsed=15.3m
+[train] epoch=1/2 step=600/1342 loss=1.7756 ce=1.7756 ce_ema=1.8241 pairwise=0.6694 pairwise_acc=0.6667 anchor=0.0024 budget=0.0000 top_k=2 anchor_key_cos=0.9976 lr=5.184e-05 elapsed=16.8m
+[eval] step=600 loss=1.8546 ce=1.8546 pairwise=0.6597 pairwise_acc=0.7350 ppl=6.39
+[train] epoch=1/2 step=650/1342 loss=1.6174 ce=1.6174 ce_ema=1.8259 pairwise=0.7397 pairwise_acc=0.5000 anchor=0.0024 budget=0.0000 top_k=2 anchor_key_cos=0.9976 lr=4.756e-05 elapsed=18.1m
+[train] epoch=2/2 step=700/1342 loss=1.5938 ce=1.5938 ce_ema=1.7882 pairwise=0.7625 pairwise_acc=0.5833 anchor=0.0024 budget=0.0000 top_k=2 anchor_key_cos=0.9976 lr=4.322e-05 elapsed=19.5m
+[train] epoch=2/2 step=750/1342 loss=1.6107 ce=1.6107 ce_ema=1.7705 pairwise=0.6491 pairwise_acc=0.6667 anchor=0.0024 budget=0.0000 top_k=2 anchor_key_cos=0.9976 lr=3.889e-05 elapsed=20.8m
+[train] epoch=2/2 step=800/1342 loss=1.6439 ce=1.6439 ce_ema=1.7346 pairwise=0.5927 pairwise_acc=0.9167 anchor=0.0024 budget=0.0000 top_k=2 anchor_key_cos=0.9976 lr=3.464e-05 elapsed=22.2m
+[eval] step=800 loss=1.8379 ce=1.8379 pairwise=0.6570 pairwise_acc=0.7350 ppl=6.28
+[train] epoch=2/2 step=850/1342 loss=1.8809 ce=1.8809 ce_ema=1.7421 pairwise=0.5355 pairwise_acc=0.9167 anchor=0.0024 budget=0.0000 top_k=2 anchor_key_cos=0.9976 lr=3.052e-05 elapsed=23.6m
+[train] epoch=2/2 step=900/1342 loss=1.4658 ce=1.4658 ce_ema=1.7535 pairwise=0.5280 pairwise_acc=0.8333 anchor=0.0024 budget=0.0000 top_k=2 anchor_key_cos=0.9976 lr=2.661e-05 elapsed=24.9m
+[train] epoch=2/2 step=950/1342 loss=1.7050 ce=1.7050 ce_ema=1.7346 pairwise=0.7092 pairwise_acc=0.7500 anchor=0.0024 budget=0.0000 top_k=2 anchor_key_cos=0.9976 lr=2.294e-05 elapsed=26.2m
+[train] epoch=2/2 step=1000/1342 loss=1.8346 ce=1.8346 ce_ema=1.7398 pairwise=0.6569 pairwise_acc=0.6667 anchor=0.0024 budget=0.0000 top_k=2 anchor_key_cos=0.9976 lr=1.958e-05 elapsed=27.7m
+[eval] step=1000 loss=1.8322 ce=1.8322 pairwise=0.6557 pairwise_acc=0.7400 ppl=6.25
+[train] epoch=2/2 step=1050/1342 loss=1.9536 ce=1.9536 ce_ema=1.7320 pairwise=0.6819 pairwise_acc=0.5833 anchor=0.0024 budget=0.0000 top_k=2 anchor_key_cos=0.9976 lr=1.657e-05 elapsed=29.0m
+[train] epoch=2/2 step=1100/1342 loss=1.6188 ce=1.6187 ce_ema=1.7107 pairwise=0.6936 pairwise_acc=0.7500 anchor=0.0024 budget=0.0000 top_k=2 anchor_key_cos=0.9976 lr=1.396e-05 elapsed=30.3m
+[train] epoch=2/2 step=1150/1342 loss=1.7392 ce=1.7392 ce_ema=1.7035 pairwise=0.5409 pairwise_acc=0.7500 anchor=0.0024 budget=0.0000 top_k=2 anchor_key_cos=0.9976 lr=1.179e-05 elapsed=31.7m
+[train] epoch=2/2 step=1200/1342 loss=1.9023 ce=1.9023 ce_ema=1.7045 pairwise=0.5862 pairwise_acc=0.7500 anchor=0.0024 budget=0.0000 top_k=2 anchor_key_cos=0.9976 lr=1.009e-05 elapsed=33.1m
+[eval] step=1200 loss=1.8278 ce=1.8278 pairwise=0.6546 pairwise_acc=0.7400 ppl=6.22
+[train] epoch=2/2 step=1250/1342 loss=1.9376 ce=1.9375 ce_ema=1.7113 pairwise=0.5915 pairwise_acc=0.8333 anchor=0.0024 budget=0.0000 top_k=2 anchor_key_cos=0.9976 lr=8.883e-06 elapsed=34.6m
+[train] epoch=2/2 step=1300/1342 loss=1.6242 ce=1.6242 ce_ema=1.7153 pairwise=0.6077 pairwise_acc=0.7500 anchor=0.0024 budget=0.0000 top_k=2 anchor_key_cos=0.9976 lr=8.185e-06 elapsed=36.0m
+[save] moving merged model to cpu before export
+[save] merged + fp32 full model -> /root/models/fv1
+[save] final router top_k -> 2
+[2026-04-23 00:34:51,884] [INFO] [real_accelerator.py:203:get_accelerator] Setting ds_accelerator to cuda (auto detect)
+[93m [WARNING] [0m async_io requires the dev libaio .so object and headers but these were not found.
+[93m [WARNING] [0m async_io: please install the libaio-dev package with apt
+[93m [WARNING] [0m If libaio is already installed (perhaps from source), try setting the CFLAGS and LDFLAGS environment variables to where it can be found.
+[93m [WARNING] [0m Please specify the CUTLASS repo directory as environment variable $CUTLASS_PATH
+[93m [WARNING] [0m sparse_attn requires a torch version >= 1.5 and < 2.0 but detected 2.5
+[93m [WARNING] [0m using untested triton version (3.1.0), only 1.0.0 is known to be compatible
+
+[launcher] done.

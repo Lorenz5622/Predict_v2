@@ -1,0 +1,71 @@
+/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/cuda/__init__.py:61: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/cuda/__init__.py:61: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+[W420 15:35:29.251450749 CUDAAllocatorConfig.h:28] Warning: expandable_segments not supported on this platform (function operator())
+`torch_dtype` is deprecated! Use `dtype` instead!
+/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/cuda/__init__.py:61: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+Loading checkpoint shards:   0%|          | 0/8 [00:00<?, ?it/s]Loading checkpoint shards:  12%|█▎        | 1/8 [00:18<02:08, 18.38s/it]Loading checkpoint shards:  25%|██▌       | 2/8 [00:40<02:05, 20.86s/it]Loading checkpoint shards:  38%|███▊      | 3/8 [01:07<01:56, 23.38s/it]Loading checkpoint shards:  50%|█████     | 4/8 [01:36<01:42, 25.64s/it]Loading checkpoint shards:  62%|██████▎   | 5/8 [02:04<01:19, 26.66s/it]Loading checkpoint shards:  75%|███████▌  | 6/8 [02:27<00:50, 25.23s/it]Loading checkpoint shards:  88%|████████▊ | 7/8 [02:50<00:24, 24.55s/it]Loading checkpoint shards: 100%|██████████| 8/8 [02:54<00:00, 17.91s/it]Loading checkpoint shards: 100%|██████████| 8/8 [02:54<00:00, 21.78s/it]
+Some weights of Qwen2MoeForCausalLM were not initialized from the model checkpoint at /root/models/Qwen_MoE and are newly initialized: ['model.layers.0.mlp.router.weight', 'model.layers.1.mlp.router.weight', 'model.layers.10.mlp.router.weight', 'model.layers.11.mlp.router.weight', 'model.layers.12.mlp.router.weight', 'model.layers.13.mlp.router.weight', 'model.layers.14.mlp.router.weight', 'model.layers.15.mlp.router.weight', 'model.layers.16.mlp.router.weight', 'model.layers.17.mlp.router.weight', 'model.layers.18.mlp.router.weight', 'model.layers.19.mlp.router.weight', 'model.layers.2.mlp.router.weight', 'model.layers.20.mlp.router.weight', 'model.layers.21.mlp.router.weight', 'model.layers.22.mlp.router.weight', 'model.layers.23.mlp.router.weight', 'model.layers.3.mlp.router.weight', 'model.layers.4.mlp.router.weight', 'model.layers.5.mlp.router.weight', 'model.layers.6.mlp.router.weight', 'model.layers.7.mlp.router.weight', 'model.layers.8.mlp.router.weight', 'model.layers.9.mlp.router.weight']
+You should probably TRAIN this model on a down-stream task to be able to use it for predictions and inference.
+Map (num_proc=16):   0%|          | 0/16113 [00:00<?, ? examples/s]Map (num_proc=16):   1%|          | 114/16113 [00:01<03:02, 87.68 examples/s]Map (num_proc=16):   2%|▏         | 259/16113 [00:01<01:12, 219.39 examples/s]Map (num_proc=16):   7%|▋         | 1142/16113 [00:01<00:13, 1110.23 examples/s]Map (num_proc=16):  13%|█▎        | 2128/16113 [00:01<00:06, 2254.04 examples/s]Map (num_proc=16):  17%|█▋        | 2714/16113 [00:01<00:05, 2559.56 examples/s]Map (num_proc=16):  20%|██        | 3292/16113 [00:02<00:04, 2572.16 examples/s]Map (num_proc=16):  26%|██▌       | 4149/16113 [00:02<00:04, 2803.48 examples/s]Map (num_proc=16):  31%|███▏      | 5057/16113 [00:02<00:02, 3736.05 examples/s]Map (num_proc=16):  35%|███▌      | 5698/16113 [00:02<00:02, 3764.33 examples/s]Map (num_proc=16):  38%|███▊      | 6202/16113 [00:02<00:02, 3486.00 examples/s]Map (num_proc=16):  43%|████▎     | 6910/16113 [00:02<00:02, 4086.57 examples/s]Map (num_proc=16):  46%|████▋     | 7464/16113 [00:03<00:02, 3801.09 examples/s]Map (num_proc=16):  49%|████▉     | 7959/16113 [00:03<00:03, 2372.32 examples/s]Map (num_proc=16):  52%|█████▏    | 8307/16113 [00:04<00:04, 1694.12 examples/s]Map (num_proc=16):  53%|█████▎    | 8616/16113 [00:04<00:04, 1839.80 examples/s]Map (num_proc=16):  56%|█████▌    | 8946/16113 [00:04<00:04, 1787.46 examples/s]Map (num_proc=16):  57%|█████▋    | 9202/16113 [00:04<00:06, 1009.42 examples/s]Map (num_proc=16):  60%|██████    | 9673/16113 [00:05<00:04, 1355.83 examples/s]Map (num_proc=16):  62%|██████▏   | 9953/16113 [00:05<00:04, 1531.98 examples/s]Map (num_proc=16):  64%|██████▎   | 10256/16113 [00:05<00:03, 1738.53 examples/s]Map (num_proc=16):  69%|██████▉   | 11132/16113 [00:05<00:02, 2489.89 examples/s]Map (num_proc=16):  75%|███████▍  | 12013/16113 [00:05<00:01, 3428.31 examples/s]Map (num_proc=16):  78%|███████▊  | 12513/16113 [00:05<00:00, 3617.65 examples/s]Map (num_proc=16):  81%|████████  | 13083/16113 [00:05<00:00, 3788.34 examples/s]Map (num_proc=16):  85%|████████▍ | 13648/16113 [00:06<00:00, 4171.71 examples/s]Map (num_proc=16):  88%|████████▊ | 14206/16113 [00:06<00:00, 4083.79 examples/s]Map (num_proc=16):  91%|█████████ | 14682/16113 [00:06<00:00, 4240.40 examples/s]Map (num_proc=16):  95%|█████████▍| 15241/16113 [00:06<00:00, 4577.97 examples/s]Map (num_proc=16):  98%|█████████▊| 15837/16113 [00:06<00:00, 4705.15 examples/s]Map (num_proc=16): 100%|██████████| 16113/16113 [00:07<00:00, 2272.44 examples/s]
+[rank0]: Traceback (most recent call last):
+[rank0]:   File "/root/Predict_v2/run_stage1_qwen_dynamic_moe.py", line 29, in <module>
+[rank0]:     main()
+[rank0]:   File "/root/Predict_v2/run_stage1_qwen_dynamic_moe.py", line 25, in main
+[rank0]:     finetune_qwen_dynamic_moe.main()
+[rank0]:   File "/root/Predict_v2/finetune_qwen_dynamic_moe.py", line 297, in main
+[rank0]:     base.main()
+[rank0]:   File "/root/Predict_v2/finetune_dynamic_moe.py", line 2377, in main
+[rank0]:     stage1_model = torch.nn.parallel.DistributedDataParallel(
+[rank0]:   File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/nn/parallel/distributed.py", line 727, in __init__
+[rank0]:     self._log_and_throw(
+[rank0]:   File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/nn/parallel/distributed.py", line 1130, in _log_and_throw
+[rank0]:     raise err_type(err_msg)
+[rank0]: ValueError: DistributedDataParallel's input module must be on the same type of devices, but input module parameters locate in {'cpu', 'cuda'}.
+[rank0]:[W420 15:38:56.228704067 ProcessGroupNCCL.cpp:1250] Warning: WARNING: process group has NOT been destroyed before we destruct ProcessGroupNCCL. On normal program exit, the application should call destroy_process_group to ensure that any pending NCCL operations have finished in this process. In rare cases this process can exit before this point and block the progress of another member of the process group. This constraint has always been present,  but this warning has only been added since PyTorch 2.4 (function operator())
+E0420 15:38:59.661754 3887 site-packages/torch/distributed/elastic/multiprocessing/api.py:869] failed (exitcode: 1) local_rank: 0 (pid: 3923) of binary: /home/vipuser/miniconda3/envs/op/bin/python
+Traceback (most recent call last):
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/runpy.py", line 196, in _run_module_as_main
+    return _run_code(code, main_globals, None,
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/runpy.py", line 86, in _run_code
+    exec(code, run_globals)
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/distributed/run.py", line 923, in <module>
+    main()
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/distributed/elastic/multiprocessing/errors/__init__.py", line 355, in wrapper
+    return f(*args, **kwargs)
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/distributed/run.py", line 919, in main
+    run(args)
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/distributed/run.py", line 910, in run
+    elastic_launch(
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/distributed/launcher/api.py", line 138, in __call__
+    return launch_agent(self._config, self._entrypoint, list(args))
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/distributed/launcher/api.py", line 269, in launch_agent
+    raise ChildFailedError(
+torch.distributed.elastic.multiprocessing.errors.ChildFailedError: 
+============================================================
+/root/Predict_v2/run_stage1_qwen_dynamic_moe.py FAILED
+------------------------------------------------------------
+Failures:
+  <NO_OTHER_FAILURES>
+------------------------------------------------------------
+Root Cause (first observed failure):
+[0]:
+  time      : 2026-04-20_15:38:59
+  host      : ubuntu22.04
+  rank      : 0 (local_rank: 0)
+  exitcode  : 1 (pid: 3923)
+  error_file: <N/A>
+  traceback : To enable traceback see: https://pytorch.org/docs/stable/elastic/errors.html
+============================================================
+Traceback (most recent call last):
+  File "/root/Predict_v2/launch_two_stage_qwen_torchrun.py", line 147, in <module>
+    main()
+  File "/root/Predict_v2/launch_two_stage_qwen_torchrun.py", line 135, in main
+    _run(cmd1, env)
+  File "/root/Predict_v2/launch_two_stage_qwen_torchrun.py", line 79, in _run
+    subprocess.run(cmd, check=True, env=env)
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/subprocess.py", line 524, in run
+    raise CalledProcessError(retcode, process.args,
+subprocess.CalledProcessError: Command '['/home/vipuser/miniconda3/envs/op/bin/python', '-m', 'torch.distributed.run', '--nproc_per_node', '1', '/root/Predict_v2/run_stage1_qwen_dynamic_moe.py', '--model_path', '/root/models/Qwen_MoE', '--output_dir', '/root/models/CB_lowrestrict', '--dataset', 'piqa', '--eval_dataset', 'piqa', '--train_split', 'train', '--eval_split', 'validation', '--block_size', '128', '--batch_size', '8', '--grad_accum', '1', '--epochs', '3', '--lr', '5e-05', '--lora_r', '16', '--lora_alpha', '16', '--lora_dropout', '0.05', '--num_proc', '16', '--load_in_4bit', '1', '--load_in_8bit', '0', '--use_bnb_8bit', '0', '--load_in_fp16', '0', '--fp16', '0', '--bf16', '0', '--train_extra_params_in_fp32', '1', '--router_use_entmax', '0', '--router_top_k', '2', '--share_router_expert_embedding', '0', '--router_entmax_alpha', '1.7', '--router_aux_loss_coef', '0.002', '--router_z_loss_coef', '0.0', '--router_pull_loss_coef', '0.002', '--router_use_ema_update', '1', '--router_ema_momentum', '0.99', '--router_pull_loss_type', 'hard_ce', '--min_lr_ratio', '0.25', '--router_lr_mult', '1.15', '--eval_max_samples', '200', '--stage1_epochs', '1', '--stage1_lr', '0.0002', '--stage1_grad_accum', '1', '--stage1_data_ratio', '0.5', '--stage1_distill_temperature', '2.0', '--stage1_kl_coef', '2.0', '--stage1_logit_coef', '0.25', '--stage1_use_logit_loss', '1']' returned non-zero exit status 1.

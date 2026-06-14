@@ -1,0 +1,87 @@
+
+[launcher] running:
+  /home/vipuser/miniconda3/envs/op/bin/python -m torch.distributed.run --nproc_per_node 2 /root/Predict_v2/run_stage1_dynamic_moe.py --model_path /root/models/Dynamic_MoE --output_dir /mnt/data/models/CB_redpajama --dataset redpajama --eval_dataset redpajama --redpajama_local_dir /mnt/data/datasets/RedPajama-Data-1T-Sample --train_max_samples 30000 --train_split train --eval_split train --block_size 150 --batch_size 12 --grad_accum 1 --epochs 2 --lr 8e-05 --lora_r 16 --lora_alpha 16 --lora_dropout 0.05 --num_proc 16 --load_in_4bit 0 --load_in_8bit 0 --use_bnb_8bit 0 --load_in_fp16 0 --fp16 0 --bf16 0 --train_extra_params_in_fp32 1 --router_use_entmax 0 --router_top_k 2 --router_entmax_alpha 1.7 --router_anchor_loss_coef 0.01 --router_anchor_momentum 0.99 --min_lr_ratio 0.1 --router_lr_mult 1.0 --eval_max_samples 100 --router_use_softmax_temperature 1 --router_softmax_temperature 0.8 --stage1_epochs 1 --stage1_lr 0.0001 --stage1_grad_accum 1 --stage1_data_ratio 0.0005 --stage1_distill_temperature 2.0 --stage1_kl_coef 2.0 --stage1_logit_coef 0.25 --stage1_use_logit_loss 1
+[load] tokenizer from model_path: /root/models/Dynamic_MoE
+[load] distributed=True world_size=2 4bit=False 8bit=False
+[train] mixed precision: fp16=False bf16=False
+[stage1] loading base model for router distillation
+[load] checkpoint loaded with strict=False: missing=96 unexpected=24 dtype=torch.float32
+[init] layer 0 expert_key/expert_anchor initialized from legacy router.weight
+[init] layer 1 expert_key/expert_anchor initialized from legacy router.weight
+[init] layer 2 expert_key/expert_anchor initialized from legacy router.weight
+[init] layer 3 expert_key/expert_anchor initialized from legacy router.weight
+[init] layer 4 expert_key/expert_anchor initialized from legacy router.weight
+[init] layer 5 expert_key/expert_anchor initialized from legacy router.weight
+[init] layer 6 expert_key/expert_anchor initialized from legacy router.weight
+[init] layer 7 expert_key/expert_anchor initialized from legacy router.weight
+[init] layer 8 expert_key/expert_anchor initialized from legacy router.weight
+[init] layer 9 expert_key/expert_anchor initialized from legacy router.weight
+[init] layer 10 expert_key/expert_anchor initialized from legacy router.weight
+[init] layer 11 expert_key/expert_anchor initialized from legacy router.weight
+[init] layer 12 expert_key/expert_anchor initialized from legacy router.weight
+[init] layer 13 expert_key/expert_anchor initialized from legacy router.weight
+[init] layer 14 expert_key/expert_anchor initialized from legacy router.weight
+[init] layer 15 expert_key/expert_anchor initialized from legacy router.weight
+[init] layer 16 expert_key/expert_anchor initialized from legacy router.weight
+[init] layer 17 expert_key/expert_anchor initialized from legacy router.weight
+[init] layer 18 expert_key/expert_anchor initialized from legacy router.weight
+[init] layer 19 expert_key/expert_anchor initialized from legacy router.weight
+[init] layer 20 expert_key/expert_anchor initialized from legacy router.weight
+[init] layer 21 expert_key/expert_anchor initialized from legacy router.weight
+[init] layer 22 expert_key/expert_anchor initialized from legacy router.weight
+[init] layer 23 expert_key/expert_anchor initialized from legacy router.weight
+[init] initialized new router modules from legacy dense router for 24 layers
+[init] layer 0 expert_key/expert_anchor initialized from legacy router.weight
+[init] layer 1 expert_key/expert_anchor initialized from legacy router.weight
+[init] layer 2 expert_key/expert_anchor initialized from legacy router.weight
+[init] layer 3 expert_key/expert_anchor initialized from legacy router.weight
+[init] layer 4 expert_key/expert_anchor initialized from legacy router.weight
+[init] layer 5 expert_key/expert_anchor initialized from legacy router.weight
+[init] layer 6 expert_key/expert_anchor initialized from legacy router.weight
+[init] layer 7 expert_key/expert_anchor initialized from legacy router.weight
+[init] layer 8 expert_key/expert_anchor initialized from legacy router.weight
+[init] layer 9 expert_key/expert_anchor initialized from legacy router.weight
+[init] layer 10 expert_key/expert_anchor initialized from legacy router.weight
+[init] layer 11 expert_key/expert_anchor initialized from legacy router.weight
+[init] layer 12 expert_key/expert_anchor initialized from legacy router.weight
+[init] layer 13 expert_key/expert_anchor initialized from legacy router.weight
+[init] layer 14 expert_key/expert_anchor initialized from legacy router.weight
+[init] layer 15 expert_key/expert_anchor initialized from legacy router.weight
+[init] layer 16 expert_key/expert_anchor initialized from legacy router.weight
+[init] layer 17 expert_key/expert_anchor initialized from legacy router.weight
+[init] layer 18 expert_key/expert_anchor initialized from legacy router.weight
+[init] layer 19 expert_key/expert_anchor initialized from legacy router.weight
+[init] layer 20 expert_key/expert_anchor initialized from legacy router.weight
+[init] layer 21 expert_key/expert_anchor initialized from legacy router.weight
+[init] layer 22 expert_key/expert_anchor initialized from legacy router.weight
+[init] layer 23 expert_key/expert_anchor initialized from legacy router.weight
+[stage1] trainable cross-attention router params: 25559040
+[stage1][data] train=15 (ratio=0.001, seed=42)
+[stage1] saving full checkpoint to /mnt/data/models/CB_redpajama/ckpt_after_stage1
+[2026-04-23 23:24:57,637] [INFO] [real_accelerator.py:203:get_accelerator] Setting ds_accelerator to cuda (auto detect)
+[93m [WARNING] [0m async_io requires the dev libaio .so object and headers but these were not found.
+[93m [WARNING] [0m async_io: please install the libaio-dev package with apt
+[93m [WARNING] [0m If libaio is already installed (perhaps from source), try setting the CFLAGS and LDFLAGS environment variables to where it can be found.
+[93m [WARNING] [0m Please specify the CUTLASS repo directory as environment variable $CUTLASS_PATH
+[93m [WARNING] [0m sparse_attn requires a torch version >= 1.5 and < 2.0 but detected 2.5
+[93m [WARNING] [0m using untested triton version (3.1.0), only 1.0.0 is known to be compatible
+
+[launcher] running:
+  /home/vipuser/miniconda3/envs/op/bin/python -m torch.distributed.run --nproc_per_node 2 /root/Predict_v2/run_stage2_dynamic_moe.py --model_path /root/models/Dynamic_MoE --output_dir /mnt/data/models/CB_redpajama --dataset redpajama --eval_dataset redpajama --redpajama_local_dir /mnt/data/datasets/RedPajama-Data-1T-Sample --train_max_samples 30000 --train_split train --eval_split train --block_size 150 --batch_size 12 --grad_accum 1 --epochs 2 --lr 8e-05 --lora_r 16 --lora_alpha 16 --lora_dropout 0.05 --num_proc 16 --load_in_4bit 0 --load_in_8bit 0 --use_bnb_8bit 0 --load_in_fp16 0 --fp16 0 --bf16 0 --train_extra_params_in_fp32 1 --router_use_entmax 0 --router_top_k 2 --router_entmax_alpha 1.7 --router_anchor_loss_coef 0.01 --router_anchor_momentum 0.99 --min_lr_ratio 0.1 --router_lr_mult 1.0 --eval_max_samples 100 --router_use_softmax_temperature 1 --router_softmax_temperature 0.8 --stage2_include_validation_in_train 0 --stage2_init_path /mnt/data/models/CB_redpajama/ckpt_after_stage1
+[load] tokenizer from model_path: /root/models/Dynamic_MoE
+[load] distributed=True world_size=2 4bit=False 8bit=False
+[train] mixed precision: fp16=False bf16=False
+[stage2] loading model from /mnt/data/models/CB_redpajama/ckpt_after_stage1
+[load] checkpoint loaded with strict=False: missing=0 unexpected=0 dtype=torch.float32
+[stage2] extra trainable new-router params: 25559040
+[stage2] cast selected router params to fp32: 0
+[stage2] trainable params: 99483648/3587621888 (2.77%)
+trainable params: 99,483,648 || all params: 3,587,621,888 || trainable%: 2.7730
+[stage2][data] train=30000 eval=100 block_size=150
+[stage2][opt] param groups: other=2496 router=48
+[stage2][opt] lrs: other=8.000e-05 router=8.000e-05
+[train] epoch=1/2 step=50/2500 loss=4.5833 ce=4.5833 ce_ema=6.3095 pairwise=0.0000 pairwise_acc=0.0000 anchor=0.0001 budget=0.0000 top_k=2 anchor_key_cos=0.9999 lr=5.440e-05 elapsed=1.5m
+[train] epoch=1/2 step=100/2500 loss=3.3772 ce=3.3772 ce_ema=4.7748 pairwise=0.0000 pairwise_acc=0.0000 anchor=0.0003 budget=0.0000 top_k=2 anchor_key_cos=0.9997 lr=7.998e-05 elapsed=2.8m
+[train] epoch=1/2 step=150/2500 loss=3.1823 ce=3.1823 ce_ema=3.9643 pairwise=0.0000 pairwise_acc=0.0000 anchor=0.0005 budget=0.0000 top_k=2 anchor_key_cos=0.9995 lr=7.983e-05 elapsed=4.2m
+[train] epoch=1/2 step=200/2500 loss=3.2943 ce=3.2943 ce_ema=3.5843 pairwise=0.0000 pairwise_acc=0.0000 anchor=0.0007 budget=0.0000 top_k=2 anchor_key_cos=0.9993 lr=7.953e-05 elapsed=5.6m
+[eval] step=200 loss=3.0932 ce=3.0932 pairwise=0.0000 pairwise_acc=0.0000 ppl=22.05

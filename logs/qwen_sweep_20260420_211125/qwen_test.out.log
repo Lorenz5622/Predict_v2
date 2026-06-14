@@ -1,0 +1,8 @@
+
+[launcher] running:
+  /home/vipuser/miniconda3/envs/op/bin/python -m torch.distributed.run --nproc_per_node 1 /root/Predict_v2/run_stage1_qwen_dynamic_moe.py --model_path /root/models/Qwen_MoE --output_dir /data/cyx/models/out_piqa_qw_cb_v1 --dataset piqa --eval_dataset piqa --piqa_local_dir /root/datasets/PIQA --train_split train --eval_split validation --block_size 128 --batch_size 8 --grad_accum 2 --epochs 2 --lr 0.0001 --lora_r 8 --lora_alpha 16 --lora_dropout 0.05 --lora_target_modules q_proj,k_proj,v_proj,o_proj,gate_proj,up_proj,down_proj --num_proc 8 --load_in_4bit 1 --load_in_8bit 0 --use_bnb_8bit 0 --load_in_fp16 0 --fp16 0 --bf16 0 --bnb_4bit_quant_type nf4 --bnb_4bit_use_double_quant 1 --bnb_4bit_compute_dtype bfloat16 --gradient_checkpointing 0 --train_extra_params_in_fp32 1 --train_new_router_params 1 --router_top_k 2 --router_use_entmax 1 --router_entmax_alpha 1.5 --router_use_softmax_temperature 1 --router_softmax_temperature 1.0 --share_router_expert_embedding 1 --router_aux_loss_coef 0.0 --router_z_loss_coef 0.001 --router_pull_loss_coef 0.01 --router_use_ema_update 1 --router_ema_momentum 0.99 --router_pull_temperature 1.0 --router_pull_loss_type soft --min_lr_ratio 0.25 --router_lr_mult 1.0 --eval_max_samples 50 --stage1_epochs 1 --stage1_lr 0.0001 --stage1_grad_accum 1 --stage1_data_ratio 0.5 --stage1_distill_temperature 2.0 --stage1_kl_coef 2.0 --stage1_logit_coef 0.25 --stage1_use_logit_loss 1
+[load] tokenizer from model_path: /root/models/Qwen_MoE
+[load] distributed=True world_size=1 4bit=True 8bit=False
+[load] 4bit compute_dtype=torch.bfloat16
+[train] mixed precision: fp16=False bf16=False
+[stage1] loading base model for router distillation

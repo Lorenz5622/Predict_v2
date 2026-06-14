@@ -1,0 +1,246 @@
+/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/cuda/__init__.py:61: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+WARNING:__main__:
+*****************************************
+Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
+*****************************************
+/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/cuda/__init__.py:61: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/cuda/__init__.py:61: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+usage: run_stage1_dynamic_moe.py [-h] --model_path MODEL_PATH --output_dir
+                                 OUTPUT_DIR [--stage {0,1,2}]
+                                 [--stage2_init_path STAGE2_INIT_PATH]
+                                 [--stage1_teacher_path STAGE1_TEACHER_PATH]
+                                 [--dataset {piqa,siqa,hellaswag,arc-e,csqa,bbh,winogrande,mmlu,mix,arc-c,openbookqa,redpajama}]
+                                 [--eval_dataset {piqa,siqa,hellaswag,arc-e,csqa,bbh,winogrande,mmlu,arc-c,openbookqa,redpajama}]
+                                 [--mix_datasets MIX_DATASETS]
+                                 [--redpajama_local_dir REDPAJAMA_LOCAL_DIR]
+                                 [--train_split TRAIN_SPLIT]
+                                 [--eval_split EVAL_SPLIT]
+                                 [--block_size BLOCK_SIZE]
+                                 [--batch_size BATCH_SIZE]
+                                 [--grad_accum GRAD_ACCUM] [--epochs EPOCHS]
+                                 [--lr LR] [--weight_decay WEIGHT_DECAY]
+                                 [--warmup_ratio WARMUP_RATIO]
+                                 [--min_lr_ratio MIN_LR_RATIO]
+                                 [--router_lr_mult ROUTER_LR_MULT]
+                                 [--max_grad_norm MAX_GRAD_NORM]
+                                 [--num_proc NUM_PROC]
+                                 [--train_max_samples TRAIN_MAX_SAMPLES]
+                                 [--eval_max_samples EVAL_MAX_SAMPLES]
+                                 [--use_label USE_LABEL] [--fp16 FP16]
+                                 [--bf16 BF16] [--load_in_fp16 LOAD_IN_FP16]
+                                 [--lora_r LORA_R] [--lora_alpha LORA_ALPHA]
+                                 [--lora_dropout LORA_DROPOUT]
+                                 [--lora_target_modules LORA_TARGET_MODULES]
+                                 [--train_new_router_params TRAIN_NEW_ROUTER_PARAMS]
+                                 [--router_value_anchor_loss_coef ROUTER_VALUE_ANCHOR_LOSS_COEF]
+                                 [--router_anchor_momentum ROUTER_ANCHOR_MOMENTUM]
+                                 [--router_aux_loss_coef ROUTER_AUX_LOSS_COEF]
+                                 [--router_z_loss_coef ROUTER_Z_LOSS_COEF]
+                                 [--router_pull_loss_coef ROUTER_PULL_LOSS_COEF]
+                                 [--router_pull_loss_coef_final ROUTER_PULL_LOSS_COEF_FINAL]
+                                 [--router_pull_loss_schedule_start_ratio ROUTER_PULL_LOSS_SCHEDULE_START_RATIO]
+                                 [--router_ema_momentum ROUTER_EMA_MOMENTUM]
+                                 [--router_pull_loss_schedule_end_ratio ROUTER_PULL_LOSS_SCHEDULE_END_RATIO]
+                                 [--router_use_ema_update ROUTER_USE_EMA_UPDATE]
+                                 [--router_pull_temperature ROUTER_PULL_TEMPERATURE]
+                                 [--router_pull_loss_type {soft,hard_ce}]
+                                 [--router_pull_loss_type_final ROUTER_PULL_LOSS_TYPE_FINAL]
+                                 [--router_pull_loss_type_switch_ratio ROUTER_PULL_LOSS_TYPE_SWITCH_RATIO]
+                                 [--use_bnb_8bit USE_BNB_8BIT]
+                                 [--load_in_4bit LOAD_IN_4BIT]
+                                 [--load_in_8bit LOAD_IN_8BIT]
+                                 [--bnb_4bit_quant_type {nf4,fp4}]
+                                 [--bnb_4bit_use_double_quant BNB_4BIT_USE_DOUBLE_QUANT]
+                                 [--bnb_4bit_compute_dtype {float32,float16,bfloat16}]
+                                 [--llm_int8_threshold LLM_INT8_THRESHOLD]
+                                 [--gradient_checkpointing GRADIENT_CHECKPOINTING]
+                                 [--seed SEED] [--log_every LOG_EVERY]
+                                 [--eval_every EVAL_EVERY]
+                                 [--save_every SAVE_EVERY]
+                                 [--stage1_epochs STAGE1_EPOCHS]
+                                 [--stage1_lr STAGE1_LR]
+                                 [--stage1_grad_accum STAGE1_GRAD_ACCUM]
+                                 [--stage1_log_every STAGE1_LOG_EVERY]
+                                 [--stage1_max_grad_norm STAGE1_MAX_GRAD_NORM]
+                                 [--stage1_data_ratio STAGE1_DATA_RATIO]
+                                 [--stage_split_seed STAGE_SPLIT_SEED]
+                                 [--stage2_include_validation_in_train STAGE2_INCLUDE_VALIDATION_IN_TRAIN]
+                                 [--stage2_validation_train_ratio STAGE2_VALIDATION_TRAIN_RATIO]
+                                 [--stage2_validation_train_split STAGE2_VALIDATION_TRAIN_SPLIT]
+                                 [--stage1_distill_temperature STAGE1_DISTILL_TEMPERATURE]
+                                 [--stage1_kl_coef STAGE1_KL_COEF]
+                                 [--stage1_logit_coef STAGE1_LOGIT_COEF]
+                                 [--stage1_use_logit_loss STAGE1_USE_LOGIT_LOSS]
+                                 [--stage1_logit_loss_type {huber,mse}]
+                                 [--device DEVICE]
+                                 [--router_top_k ROUTER_TOP_K]
+                                 [--router_topk ROUTER_TOPK]
+                                 [--top_p_threshold TOP_P_THRESHOLD]
+                                 [--router_top_p_final ROUTER_TOP_P_FINAL]
+                                 [--router_top_p_schedule_start_ratio ROUTER_TOP_P_SCHEDULE_START_RATIO]
+                                 [--router_top_p_schedule_end_ratio ROUTER_TOP_P_SCHEDULE_END_RATIO]
+                                 [--init_new_router_from_legacy INIT_NEW_ROUTER_FROM_LEGACY]
+                                 [--router_use_entmax {-1,0,1}]
+                                 [--router_entmax_alpha ROUTER_ENTMAX_ALPHA]
+                                 [--router_use_softmax_temperature ROUTER_USE_SOFTMAX_TEMPERATURE]
+                                 [--router_softmax_temperature ROUTER_SOFTMAX_TEMPERATURE]
+                                 [--use_router_context {-1,0,1}]
+                                 [--router_context_scale ROUTER_CONTEXT_SCALE]
+                                 [--share_router_expert_embedding {-1,0,1}]
+                                 [--router_budget_loss_coef ROUTER_BUDGET_LOSS_COEF]
+                                 [--router_budget_target_count ROUTER_BUDGET_TARGET_COUNT]
+                                 [--router_budget_tau ROUTER_BUDGET_TAU]
+                                 [--router_budget_start_ratio ROUTER_BUDGET_START_RATIO]
+                                 [--router_budget_end_ratio ROUTER_BUDGET_END_RATIO]
+                                 [--bbh_task BBH_TASK]
+                                 [--winogrande_config WINOGRANDE_CONFIG]
+                                 [--mmlu_subjects MMLU_SUBJECTS]
+                                 [--mmlu_answer_mode {text,letter}]
+                                 [--train_extra_params_in_fp32 TRAIN_EXTRA_PARAMS_IN_FP32]
+run_stage1_dynamic_moe.py: error: unrecognized arguments: --router_anchor_loss_coef 0.01
+usage: run_stage1_dynamic_moe.py [-h] --model_path MODEL_PATH --output_dir
+                                 OUTPUT_DIR [--stage {0,1,2}]
+                                 [--stage2_init_path STAGE2_INIT_PATH]
+                                 [--stage1_teacher_path STAGE1_TEACHER_PATH]
+                                 [--dataset {piqa,siqa,hellaswag,arc-e,csqa,bbh,winogrande,mmlu,mix,arc-c,openbookqa,redpajama}]
+                                 [--eval_dataset {piqa,siqa,hellaswag,arc-e,csqa,bbh,winogrande,mmlu,arc-c,openbookqa,redpajama}]
+                                 [--mix_datasets MIX_DATASETS]
+                                 [--redpajama_local_dir REDPAJAMA_LOCAL_DIR]
+                                 [--train_split TRAIN_SPLIT]
+                                 [--eval_split EVAL_SPLIT]
+                                 [--block_size BLOCK_SIZE]
+                                 [--batch_size BATCH_SIZE]
+                                 [--grad_accum GRAD_ACCUM] [--epochs EPOCHS]
+                                 [--lr LR] [--weight_decay WEIGHT_DECAY]
+                                 [--warmup_ratio WARMUP_RATIO]
+                                 [--min_lr_ratio MIN_LR_RATIO]
+                                 [--router_lr_mult ROUTER_LR_MULT]
+                                 [--max_grad_norm MAX_GRAD_NORM]
+                                 [--num_proc NUM_PROC]
+                                 [--train_max_samples TRAIN_MAX_SAMPLES]
+                                 [--eval_max_samples EVAL_MAX_SAMPLES]
+                                 [--use_label USE_LABEL] [--fp16 FP16]
+                                 [--bf16 BF16] [--load_in_fp16 LOAD_IN_FP16]
+                                 [--lora_r LORA_R] [--lora_alpha LORA_ALPHA]
+                                 [--lora_dropout LORA_DROPOUT]
+                                 [--lora_target_modules LORA_TARGET_MODULES]
+                                 [--train_new_router_params TRAIN_NEW_ROUTER_PARAMS]
+                                 [--router_value_anchor_loss_coef ROUTER_VALUE_ANCHOR_LOSS_COEF]
+                                 [--router_anchor_momentum ROUTER_ANCHOR_MOMENTUM]
+                                 [--router_aux_loss_coef ROUTER_AUX_LOSS_COEF]
+                                 [--router_z_loss_coef ROUTER_Z_LOSS_COEF]
+                                 [--router_pull_loss_coef ROUTER_PULL_LOSS_COEF]
+                                 [--router_pull_loss_coef_final ROUTER_PULL_LOSS_COEF_FINAL]
+                                 [--router_pull_loss_schedule_start_ratio ROUTER_PULL_LOSS_SCHEDULE_START_RATIO]
+                                 [--router_ema_momentum ROUTER_EMA_MOMENTUM]
+                                 [--router_pull_loss_schedule_end_ratio ROUTER_PULL_LOSS_SCHEDULE_END_RATIO]
+                                 [--router_use_ema_update ROUTER_USE_EMA_UPDATE]
+                                 [--router_pull_temperature ROUTER_PULL_TEMPERATURE]
+                                 [--router_pull_loss_type {soft,hard_ce}]
+                                 [--router_pull_loss_type_final ROUTER_PULL_LOSS_TYPE_FINAL]
+                                 [--router_pull_loss_type_switch_ratio ROUTER_PULL_LOSS_TYPE_SWITCH_RATIO]
+                                 [--use_bnb_8bit USE_BNB_8BIT]
+                                 [--load_in_4bit LOAD_IN_4BIT]
+                                 [--load_in_8bit LOAD_IN_8BIT]
+                                 [--bnb_4bit_quant_type {nf4,fp4}]
+                                 [--bnb_4bit_use_double_quant BNB_4BIT_USE_DOUBLE_QUANT]
+                                 [--bnb_4bit_compute_dtype {float32,float16,bfloat16}]
+                                 [--llm_int8_threshold LLM_INT8_THRESHOLD]
+                                 [--gradient_checkpointing GRADIENT_CHECKPOINTING]
+                                 [--seed SEED] [--log_every LOG_EVERY]
+                                 [--eval_every EVAL_EVERY]
+                                 [--save_every SAVE_EVERY]
+                                 [--stage1_epochs STAGE1_EPOCHS]
+                                 [--stage1_lr STAGE1_LR]
+                                 [--stage1_grad_accum STAGE1_GRAD_ACCUM]
+                                 [--stage1_log_every STAGE1_LOG_EVERY]
+                                 [--stage1_max_grad_norm STAGE1_MAX_GRAD_NORM]
+                                 [--stage1_data_ratio STAGE1_DATA_RATIO]
+                                 [--stage_split_seed STAGE_SPLIT_SEED]
+                                 [--stage2_include_validation_in_train STAGE2_INCLUDE_VALIDATION_IN_TRAIN]
+                                 [--stage2_validation_train_ratio STAGE2_VALIDATION_TRAIN_RATIO]
+                                 [--stage2_validation_train_split STAGE2_VALIDATION_TRAIN_SPLIT]
+                                 [--stage1_distill_temperature STAGE1_DISTILL_TEMPERATURE]
+                                 [--stage1_kl_coef STAGE1_KL_COEF]
+                                 [--stage1_logit_coef STAGE1_LOGIT_COEF]
+                                 [--stage1_use_logit_loss STAGE1_USE_LOGIT_LOSS]
+                                 [--stage1_logit_loss_type {huber,mse}]
+                                 [--device DEVICE]
+                                 [--router_top_k ROUTER_TOP_K]
+                                 [--router_topk ROUTER_TOPK]
+                                 [--top_p_threshold TOP_P_THRESHOLD]
+                                 [--router_top_p_final ROUTER_TOP_P_FINAL]
+                                 [--router_top_p_schedule_start_ratio ROUTER_TOP_P_SCHEDULE_START_RATIO]
+                                 [--router_top_p_schedule_end_ratio ROUTER_TOP_P_SCHEDULE_END_RATIO]
+                                 [--init_new_router_from_legacy INIT_NEW_ROUTER_FROM_LEGACY]
+                                 [--router_use_entmax {-1,0,1}]
+                                 [--router_entmax_alpha ROUTER_ENTMAX_ALPHA]
+                                 [--router_use_softmax_temperature ROUTER_USE_SOFTMAX_TEMPERATURE]
+                                 [--router_softmax_temperature ROUTER_SOFTMAX_TEMPERATURE]
+                                 [--use_router_context {-1,0,1}]
+                                 [--router_context_scale ROUTER_CONTEXT_SCALE]
+                                 [--share_router_expert_embedding {-1,0,1}]
+                                 [--router_budget_loss_coef ROUTER_BUDGET_LOSS_COEF]
+                                 [--router_budget_target_count ROUTER_BUDGET_TARGET_COUNT]
+                                 [--router_budget_tau ROUTER_BUDGET_TAU]
+                                 [--router_budget_start_ratio ROUTER_BUDGET_START_RATIO]
+                                 [--router_budget_end_ratio ROUTER_BUDGET_END_RATIO]
+                                 [--bbh_task BBH_TASK]
+                                 [--winogrande_config WINOGRANDE_CONFIG]
+                                 [--mmlu_subjects MMLU_SUBJECTS]
+                                 [--mmlu_answer_mode {text,letter}]
+                                 [--train_extra_params_in_fp32 TRAIN_EXTRA_PARAMS_IN_FP32]
+run_stage1_dynamic_moe.py: error: unrecognized arguments: --router_anchor_loss_coef 0.01
+E0424 09:55:24.625690 136566 site-packages/torch/distributed/elastic/multiprocessing/api.py:869] failed (exitcode: 2) local_rank: 0 (pid: 136593) of binary: /home/vipuser/miniconda3/envs/op/bin/python
+Traceback (most recent call last):
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/runpy.py", line 196, in _run_module_as_main
+    return _run_code(code, main_globals, None,
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/runpy.py", line 86, in _run_code
+    exec(code, run_globals)
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/distributed/run.py", line 923, in <module>
+    main()
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/distributed/elastic/multiprocessing/errors/__init__.py", line 355, in wrapper
+    return f(*args, **kwargs)
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/distributed/run.py", line 919, in main
+    run(args)
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/distributed/run.py", line 910, in run
+    elastic_launch(
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/distributed/launcher/api.py", line 138, in __call__
+    return launch_agent(self._config, self._entrypoint, list(args))
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/distributed/launcher/api.py", line 269, in launch_agent
+    raise ChildFailedError(
+torch.distributed.elastic.multiprocessing.errors.ChildFailedError: 
+============================================================
+/root/Predict_v2/run_stage1_dynamic_moe.py FAILED
+------------------------------------------------------------
+Failures:
+[1]:
+  time      : 2026-04-24_09:55:24
+  host      : ubuntu22.04
+  rank      : 1 (local_rank: 1)
+  exitcode  : 2 (pid: 136594)
+  error_file: <N/A>
+  traceback : To enable traceback see: https://pytorch.org/docs/stable/elastic/errors.html
+------------------------------------------------------------
+Root Cause (first observed failure):
+[0]:
+  time      : 2026-04-24_09:55:24
+  host      : ubuntu22.04
+  rank      : 0 (local_rank: 0)
+  exitcode  : 2 (pid: 136593)
+  error_file: <N/A>
+  traceback : To enable traceback see: https://pytorch.org/docs/stable/elastic/errors.html
+============================================================
+Traceback (most recent call last):
+  File "/root/Predict_v2/launch_two_stage_torchrun.py", line 166, in <module>
+    main()
+  File "/root/Predict_v2/launch_two_stage_torchrun.py", line 154, in main
+    _run(cmd1, env)
+  File "/root/Predict_v2/launch_two_stage_torchrun.py", line 96, in _run
+    subprocess.run(cmd, check=True, env=env)
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/subprocess.py", line 524, in run
+    raise CalledProcessError(retcode, process.args,
+subprocess.CalledProcessError: Command '['/home/vipuser/miniconda3/envs/op/bin/python', '-m', 'torch.distributed.run', '--nproc_per_node', '2', '/root/Predict_v2/run_stage1_dynamic_moe.py', '--model_path', '/root/models/Dynamic_MoE', '--output_dir', '/mnt/data/models/CB_piqa', '--dataset', 'piqa', '--eval_dataset', 'piqa', '--train_split', 'train', '--eval_split', 'validation', '--block_size', '150', '--batch_size', '12', '--grad_accum', '1', '--epochs', '3', '--lr', '8e-05', '--lora_r', '16', '--lora_alpha', '16', '--lora_dropout', '0.05', '--num_proc', '16', '--load_in_4bit', '0', '--load_in_8bit', '0', '--use_bnb_8bit', '0', '--load_in_fp16', '0', '--fp16', '0', '--bf16', '0', '--train_extra_params_in_fp32', '1', '--router_use_entmax', '0', '--router_top_k', '2', '--router_entmax_alpha', '1.7', '--router_anchor_loss_coef', '0.01', '--router_anchor_momentum', '0.99', '--min_lr_ratio', '0.1', '--router_lr_mult', '1.0', '--eval_max_samples', '100', '--router_use_softmax_temperature', '1', '--router_softmax_temperature', '0.8', '--stage1_epochs', '1', '--stage1_lr', '0.0001', '--stage1_grad_accum', '1', '--stage1_data_ratio', '0.5', '--stage1_distill_temperature', '2.0', '--stage1_kl_coef', '2.0', '--stage1_logit_coef', '0.25', '--stage1_use_logit_loss', '1']' returned non-zero exit status 1.

@@ -1,0 +1,176 @@
+/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/cuda/__init__.py:61: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+WARNING:__main__:
+*****************************************
+Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
+*****************************************
+/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/cuda/__init__.py:61: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/cuda/__init__.py:61: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+Traceback (most recent call last):
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/cuda/__init__.py", line 332, in _lazy_init
+    queued_call()
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/cuda/__init__.py", line 200, in _check_capability
+    capability = get_device_capability(d)
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/cuda/__init__.py", line 509, in get_device_capability
+    prop = get_device_properties(device)
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/cuda/__init__.py", line 527, in get_device_properties
+    return _get_device_properties(device)  # type: ignore[name-defined]
+RuntimeError: device >= 0 && device < num_gpus INTERNAL ASSERT FAILED at "../aten/src/ATen/cuda/CUDAContext.cpp":49, please report a bug to PyTorch. device=1, num_gpus=
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/root/Predict_v2/run_stage1_dynamic_moe.py", line 29, in <module>
+    main()
+  File "/root/Predict_v2/run_stage1_dynamic_moe.py", line 25, in main
+    finetune_dynamic_moe.main()
+  File "/root/Predict_v2/finetune_dynamic_moe.py", line 2915, in main
+    local_rank, world_size, is_distributed = setup_distributed_safe()
+  File "/root/Predict_v2/finetune_dynamic_moe.py", line 107, in setup_distributed_safe
+    torch.cuda.set_device(local_rank)
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/cuda/__init__.py", line 478, in set_device
+    torch._C._cuda_setDevice(device)
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/cuda/__init__.py", line 338, in _lazy_init
+    raise DeferredCudaCallError(msg) from e
+torch.cuda.DeferredCudaCallError: CUDA call failed lazily at initialization with error: device >= 0 && device < num_gpus INTERNAL ASSERT FAILED at "../aten/src/ATen/cuda/CUDAContext.cpp":49, please report a bug to PyTorch. device=1, num_gpus=
+
+CUDA call was originally invoked at:
+
+  File "/root/Predict_v2/run_stage1_dynamic_moe.py", line 29, in <module>
+    main()
+  File "/root/Predict_v2/run_stage1_dynamic_moe.py", line 23, in main
+    import finetune_dynamic_moe
+  File "<frozen importlib._bootstrap>", line 1027, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1006, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 688, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 883, in exec_module
+  File "<frozen importlib._bootstrap>", line 241, in _call_with_frames_removed
+  File "/root/Predict_v2/finetune_dynamic_moe.py", line 28, in <module>
+    import torch
+  File "<frozen importlib._bootstrap>", line 1027, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1006, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 688, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 883, in exec_module
+  File "<frozen importlib._bootstrap>", line 241, in _call_with_frames_removed
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/__init__.py", line 1954, in <module>
+    _C._initExtension(_manager_path())
+  File "<frozen importlib._bootstrap>", line 1027, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1006, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 688, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 883, in exec_module
+  File "<frozen importlib._bootstrap>", line 241, in _call_with_frames_removed
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/cuda/__init__.py", line 264, in <module>
+    _lazy_call(_check_capability)
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/cuda/__init__.py", line 261, in _lazy_call
+    _queued_calls.append((callable, traceback.format_stack()))
+
+Traceback (most recent call last):
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/cuda/__init__.py", line 332, in _lazy_init
+    queued_call()
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/cuda/__init__.py", line 200, in _check_capability
+    capability = get_device_capability(d)
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/cuda/__init__.py", line 509, in get_device_capability
+    prop = get_device_properties(device)
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/cuda/__init__.py", line 527, in get_device_properties
+    return _get_device_properties(device)  # type: ignore[name-defined]
+RuntimeError: device >= 0 && device < num_gpus INTERNAL ASSERT FAILED at "../aten/src/ATen/cuda/CUDAContext.cpp":49, please report a bug to PyTorch. device=1, num_gpus=
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/root/Predict_v2/run_stage1_dynamic_moe.py", line 29, in <module>
+    main()
+  File "/root/Predict_v2/run_stage1_dynamic_moe.py", line 25, in main
+    finetune_dynamic_moe.main()
+  File "/root/Predict_v2/finetune_dynamic_moe.py", line 2915, in main
+    local_rank, world_size, is_distributed = setup_distributed_safe()
+  File "/root/Predict_v2/finetune_dynamic_moe.py", line 107, in setup_distributed_safe
+    torch.cuda.set_device(local_rank)
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/cuda/__init__.py", line 478, in set_device
+    torch._C._cuda_setDevice(device)
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/cuda/__init__.py", line 338, in _lazy_init
+    raise DeferredCudaCallError(msg) from e
+torch.cuda.DeferredCudaCallError: CUDA call failed lazily at initialization with error: device >= 0 && device < num_gpus INTERNAL ASSERT FAILED at "../aten/src/ATen/cuda/CUDAContext.cpp":49, please report a bug to PyTorch. device=1, num_gpus=
+
+CUDA call was originally invoked at:
+
+  File "/root/Predict_v2/run_stage1_dynamic_moe.py", line 29, in <module>
+    main()
+  File "/root/Predict_v2/run_stage1_dynamic_moe.py", line 23, in main
+    import finetune_dynamic_moe
+  File "<frozen importlib._bootstrap>", line 1027, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1006, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 688, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 883, in exec_module
+  File "<frozen importlib._bootstrap>", line 241, in _call_with_frames_removed
+  File "/root/Predict_v2/finetune_dynamic_moe.py", line 28, in <module>
+    import torch
+  File "<frozen importlib._bootstrap>", line 1027, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1006, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 688, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 883, in exec_module
+  File "<frozen importlib._bootstrap>", line 241, in _call_with_frames_removed
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/__init__.py", line 1954, in <module>
+    _C._initExtension(_manager_path())
+  File "<frozen importlib._bootstrap>", line 1027, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1006, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 688, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 883, in exec_module
+  File "<frozen importlib._bootstrap>", line 241, in _call_with_frames_removed
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/cuda/__init__.py", line 264, in <module>
+    _lazy_call(_check_capability)
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/cuda/__init__.py", line 261, in _lazy_call
+    _queued_calls.append((callable, traceback.format_stack()))
+
+E0426 10:21:47.816668 8980 site-packages/torch/distributed/elastic/multiprocessing/api.py:869] failed (exitcode: 1) local_rank: 0 (pid: 9023) of binary: /home/vipuser/miniconda3/envs/op/bin/python
+Traceback (most recent call last):
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/runpy.py", line 196, in _run_module_as_main
+    return _run_code(code, main_globals, None,
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/runpy.py", line 86, in _run_code
+    exec(code, run_globals)
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/distributed/run.py", line 923, in <module>
+    main()
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/distributed/elastic/multiprocessing/errors/__init__.py", line 355, in wrapper
+    return f(*args, **kwargs)
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/distributed/run.py", line 919, in main
+    run(args)
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/distributed/run.py", line 910, in run
+    elastic_launch(
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/distributed/launcher/api.py", line 138, in __call__
+    return launch_agent(self._config, self._entrypoint, list(args))
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/distributed/launcher/api.py", line 269, in launch_agent
+    raise ChildFailedError(
+torch.distributed.elastic.multiprocessing.errors.ChildFailedError: 
+============================================================
+/root/Predict_v2/run_stage1_dynamic_moe.py FAILED
+------------------------------------------------------------
+Failures:
+[1]:
+  time      : 2026-04-26_10:21:47
+  host      : ubuntu22.04
+  rank      : 1 (local_rank: 1)
+  exitcode  : 1 (pid: 9024)
+  error_file: <N/A>
+  traceback : To enable traceback see: https://pytorch.org/docs/stable/elastic/errors.html
+------------------------------------------------------------
+Root Cause (first observed failure):
+[0]:
+  time      : 2026-04-26_10:21:47
+  host      : ubuntu22.04
+  rank      : 0 (local_rank: 0)
+  exitcode  : 1 (pid: 9023)
+  error_file: <N/A>
+  traceback : To enable traceback see: https://pytorch.org/docs/stable/elastic/errors.html
+============================================================
+Traceback (most recent call last):
+  File "/root/Predict_v2/launch_two_stage_torchrun.py", line 166, in <module>
+    main()
+  File "/root/Predict_v2/launch_two_stage_torchrun.py", line 154, in main
+    _run(cmd1, env)
+  File "/root/Predict_v2/launch_two_stage_torchrun.py", line 96, in _run
+    subprocess.run(cmd, check=True, env=env)
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/subprocess.py", line 524, in run
+    raise CalledProcessError(retcode, process.args,
+subprocess.CalledProcessError: Command '['/home/vipuser/miniconda3/envs/op/bin/python', '-m', 'torch.distributed.run', '--nproc_per_node', '2', '--master_port', '29501', '/root/Predict_v2/run_stage1_dynamic_moe.py', '--model_path', '/root/models/Dynamic_MoE', '--output_dir', '/mnt/data/models/fv1_openbookqa_pw20', '--dataset', 'openbookqa', '--eval_dataset', 'openbookqa', '--train_split', 'train', '--eval_split', 'validation', '--block_size', '128', '--batch_size', '14', '--grad_accum', '1', '--epochs', '3', '--lr', '8e-05', '--lora_r', '16', '--lora_alpha', '16', '--lora_dropout', '0.05', '--num_proc', '16', '--load_in_4bit', '0', '--load_in_8bit', '0', '--use_bnb_8bit', '0', '--load_in_fp16', '0', '--fp16', '0', '--bf16', '0', '--train_extra_params_in_fp32', '1', '--router_use_entmax', '0', '--router_top_k', '2', '--router_entmax_alpha', '1.7', '--min_lr_ratio', '0.1', '--router_lr_mult', '1.0', '--eval_max_samples', '600', '--router_use_softmax_temperature', '1', '--router_softmax_temperature', '1.0', '--train_new_router_params', '1', '--router_aux_loss_coef', '0.002', '--init_new_router_from_legacy', '1', '--eval_every', '1200', '--stage1_epochs', '1', '--stage1_lr', '0.0001', '--stage1_grad_accum', '1', '--stage1_data_ratio', '0.5', '--stage1_distill_temperature', '2.0', '--stage1_kl_coef', '2.0', '--stage1_logit_coef', '0.25', '--stage1_use_logit_loss', '1']' returned non-zero exit status 1.

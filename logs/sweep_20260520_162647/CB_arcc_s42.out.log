@@ -1,0 +1,90 @@
+
+[launcher] running:
+  /home/vipuser/miniconda3/envs/op/bin/python -m torch.distributed.run --nproc_per_node 1 /root/Predict_v2/run_stage1_dynamic_moe.py --model_path /root/models/Dynamic_MoE --output_dir /mnt/data/models/fv1_arc_c_pw005_s42 --dataset arc-c --eval_dataset arc-c --train_split train --eval_split validation --block_size 192 --batch_size 12 --grad_accum 1 --epochs 3 --lr 6e-05 --lora_r 16 --lora_alpha 16 --lora_dropout 0.05 --num_proc 16 --load_in_4bit 0 --load_in_8bit 0 --use_bnb_8bit 0 --load_in_fp16 0 --fp16 0 --bf16 0 --train_extra_params_in_fp32 1 --router_use_entmax 0 --router_top_k 2 --router_entmax_alpha 1.7 --router_value_anchor_loss_coef 0.01 --router_anchor_momentum 0.99 --min_lr_ratio 0.1 --router_lr_mult 1.0 --eval_max_samples 400 --router_use_softmax_temperature 1 --router_softmax_temperature 1.1 --train_new_router_params 1 --router_aux_loss_coef 0.01 --init_new_router_from_legacy 1 --eval_every 3000 --seed 42 --stage_split_seed 42 --stage1_epochs 1 --stage1_lr 0.0001 --stage1_grad_accum 1 --stage1_data_ratio 0.5 --stage1_distill_temperature 2.0 --stage1_kl_coef 2.0 --stage1_logit_coef 0.25 --stage1_use_logit_loss 1
+[router] anchor-router trunk ignores legacy router settings: router_value_anchor_loss_coef
+[load] tokenizer from model_path: /root/models/Dynamic_MoE
+[load] distributed=True world_size=1 4bit=False 8bit=False
+[train] mixed precision: fp16=False bf16=False
+[stage1] loading base model for router distillation
+[load] checkpoint loaded with strict=False: missing=96 unexpected=24 dtype=torch.float32
+[init] layer 0 expert_weight_proj initialized from legacy router.weight
+[init] layer 1 expert_weight_proj initialized from legacy router.weight
+[init] layer 2 expert_weight_proj initialized from legacy router.weight
+[init] layer 3 expert_weight_proj initialized from legacy router.weight
+[init] layer 4 expert_weight_proj initialized from legacy router.weight
+[init] layer 5 expert_weight_proj initialized from legacy router.weight
+[init] layer 6 expert_weight_proj initialized from legacy router.weight
+[init] layer 7 expert_weight_proj initialized from legacy router.weight
+[init] layer 8 expert_weight_proj initialized from legacy router.weight
+[init] layer 9 expert_weight_proj initialized from legacy router.weight
+[init] layer 10 expert_weight_proj initialized from legacy router.weight
+[init] layer 11 expert_weight_proj initialized from legacy router.weight
+[init] layer 12 expert_weight_proj initialized from legacy router.weight
+[init] layer 13 expert_weight_proj initialized from legacy router.weight
+[init] layer 14 expert_weight_proj initialized from legacy router.weight
+[init] layer 15 expert_weight_proj initialized from legacy router.weight
+[init] layer 16 expert_weight_proj initialized from legacy router.weight
+[init] layer 17 expert_weight_proj initialized from legacy router.weight
+[init] layer 18 expert_weight_proj initialized from legacy router.weight
+[init] layer 19 expert_weight_proj initialized from legacy router.weight
+[init] layer 20 expert_weight_proj initialized from legacy router.weight
+[init] layer 21 expert_weight_proj initialized from legacy router.weight
+[init] layer 22 expert_weight_proj initialized from legacy router.weight
+[init] layer 23 expert_weight_proj initialized from legacy router.weight
+[init] initialized new router modules from legacy dense router for 24 layers
+[stage1] trainable cross-attention router params: 125829120
+[stage1][data] train=559 (ratio=0.500, seed=42)
+[stage1] saving full checkpoint to /mnt/data/models/fv1_arc_c_pw005_s42/ckpt_after_stage1
+[2026-05-21 02:37:55,749] [INFO] [real_accelerator.py:203:get_accelerator] Setting ds_accelerator to cuda (auto detect)
+[93m [WARNING] [0m async_io requires the dev libaio .so object and headers but these were not found.
+[93m [WARNING] [0m async_io: please install the libaio-dev package with apt
+[93m [WARNING] [0m If libaio is already installed (perhaps from source), try setting the CFLAGS and LDFLAGS environment variables to where it can be found.
+[93m [WARNING] [0m Please specify the CUTLASS repo directory as environment variable $CUTLASS_PATH
+[93m [WARNING] [0m sparse_attn requires a torch version >= 1.5 and < 2.0 but detected 2.5
+[93m [WARNING] [0m using untested triton version (3.1.0), only 1.0.0 is known to be compatible
+
+[launcher] running:
+  /home/vipuser/miniconda3/envs/op/bin/python -m torch.distributed.run --nproc_per_node 1 /root/Predict_v2/run_stage2_dynamic_moe.py --model_path /root/models/Dynamic_MoE --output_dir /mnt/data/models/fv1_arc_c_pw005_s42 --dataset arc-c --eval_dataset arc-c --train_split train --eval_split validation --block_size 192 --batch_size 12 --grad_accum 1 --epochs 3 --lr 6e-05 --lora_r 16 --lora_alpha 16 --lora_dropout 0.05 --num_proc 16 --load_in_4bit 0 --load_in_8bit 0 --use_bnb_8bit 0 --load_in_fp16 0 --fp16 0 --bf16 0 --train_extra_params_in_fp32 1 --router_use_entmax 0 --router_top_k 2 --router_entmax_alpha 1.7 --router_value_anchor_loss_coef 0.01 --router_anchor_momentum 0.99 --min_lr_ratio 0.1 --router_lr_mult 1.0 --eval_max_samples 400 --router_use_softmax_temperature 1 --router_softmax_temperature 1.1 --train_new_router_params 1 --router_aux_loss_coef 0.01 --init_new_router_from_legacy 1 --eval_every 3000 --seed 42 --stage_split_seed 42 --stage2_include_validation_in_train 0 --stage2_validation_train_ratio 0.05 --stage2_init_path /mnt/data/models/fv1_arc_c_pw005_s42/ckpt_after_stage1
+[router] anchor-router trunk ignores legacy router settings: router_value_anchor_loss_coef
+[load] tokenizer from model_path: /root/models/Dynamic_MoE
+[load] distributed=True world_size=1 4bit=False 8bit=False
+[train] mixed precision: fp16=False bf16=False
+[stage2] loading model from /mnt/data/models/fv1_arc_c_pw005_s42/ckpt_after_stage1
+[load] checkpoint loaded with strict=False: missing=0 unexpected=0 dtype=torch.float32
+[stage2] extra trainable new-router params: 125829120
+[stage2] cast selected router params to fp32: 0
+[stage2] trainable params: 199753728/3687891968 (5.42%)
+trainable params: 199,753,728 || all params: 3,687,891,968 || trainable%: 5.4165
+---[stage2][data] no validation data will be included in train---
+[stage2][eval] using OpenCompass-style PPL ranking for arc-c
+[stage2][data] train=3357 eval=295 block_size=192
+[stage2][opt] param groups: other=2496 router=72
+[stage2][opt] lrs: other=6.000e-05 router=6.000e-05
+[train] epoch=1/3 step=50/837 loss=1.6113 ce=1.5581 ce_ema=2.1012 pairwise=0.7873 pairwise_acc=0.5000 aux=1.3790 ewp_gn=1.581e-01 budget=0.0000 top_k=2 lr=5.987e-05 elapsed=1.3m
+[train] epoch=1/3 step=100/837 loss=1.6515 ce=1.6035 ce_ema=1.7408 pairwise=0.7053 pairwise_acc=0.6667 aux=1.2655 ewp_gn=9.359e-02 budget=0.0000 top_k=2 lr=5.887e-05 elapsed=2.6m
+[train] epoch=1/3 step=150/837 loss=1.4238 ce=1.3845 ce_ema=1.5440 pairwise=0.5510 pairwise_acc=0.8333 aux=1.1789 ewp_gn=8.553e-02 budget=0.0000 top_k=2 lr=5.690e-05 elapsed=3.9m
+[train] epoch=1/3 step=200/837 loss=1.4485 ce=1.4075 ce_ema=1.4429 pairwise=0.5926 pairwise_acc=0.6667 aux=1.1414 ewp_gn=7.913e-02 budget=0.0000 top_k=2 lr=5.404e-05 elapsed=5.2m
+[train] epoch=1/3 step=250/837 loss=1.3478 ce=1.3035 ce_ema=1.3406 pairwise=0.6604 pairwise_acc=0.5000 aux=1.1290 ewp_gn=8.115e-02 budget=0.0000 top_k=2 lr=5.040e-05 elapsed=6.5m
+[train] epoch=2/3 step=300/837 loss=1.4162 ce=1.3791 ce_ema=1.2727 pairwise=0.5210 pairwise_acc=0.9167 aux=1.1096 ewp_gn=9.786e-02 budget=0.0000 top_k=2 lr=4.611e-05 elapsed=7.8m
+[train] epoch=2/3 step=350/837 loss=1.0502 ce=1.0196 ce_ema=1.1759 pairwise=0.3847 pairwise_acc=0.9167 aux=1.1343 ewp_gn=1.005e-01 budget=0.0000 top_k=2 lr=4.132e-05 elapsed=9.1m
+[train] epoch=2/3 step=400/837 loss=1.0520 ce=1.0214 ce_ema=1.1247 pairwise=0.3901 pairwise_acc=0.8333 aux=1.1118 ewp_gn=1.060e-01 budget=0.0000 top_k=2 lr=3.623e-05 elapsed=10.4m
+[train] epoch=2/3 step=450/837 loss=1.0133 ce=0.9748 ce_ema=1.0743 pairwise=0.5489 pairwise_acc=0.7500 aux=1.1133 ewp_gn=9.695e-02 budget=0.0000 top_k=2 lr=3.102e-05 elapsed=11.7m
+[train] epoch=2/3 step=500/837 loss=0.9188 ce=0.8944 ce_ema=1.0237 pairwise=0.2689 pairwise_acc=1.0000 aux=1.1001 ewp_gn=9.662e-02 budget=0.0000 top_k=2 lr=2.588e-05 elapsed=12.9m
+[train] epoch=2/3 step=550/837 loss=0.9879 ce=0.9564 ce_ema=0.9873 pairwise=0.4101 pairwise_acc=0.9167 aux=1.0992 ewp_gn=1.105e-01 budget=0.0000 top_k=2 lr=2.100e-05 elapsed=14.2m
+[train] epoch=3/3 step=600/837 loss=0.8383 ce=0.8152 ce_ema=0.8800 pairwise=0.2456 pairwise_acc=1.0000 aux=1.0881 ewp_gn=1.292e-01 budget=0.0000 top_k=2 lr=1.658e-05 elapsed=15.5m
+[train] epoch=3/3 step=650/837 loss=0.7928 ce=0.7685 ce_ema=0.8176 pairwise=0.2669 pairwise_acc=1.0000 aux=1.1010 ewp_gn=1.327e-01 budget=0.0000 top_k=2 lr=1.276e-05 elapsed=16.8m
+[train] epoch=3/3 step=700/837 loss=0.7686 ce=0.7499 ce_ema=0.7937 pairwise=0.1538 pairwise_acc=1.0000 aux=1.0977 ewp_gn=1.344e-01 budget=0.0000 top_k=2 lr=9.705e-06 elapsed=18.1m
+[train] epoch=3/3 step=750/837 loss=0.7512 ce=0.7262 ce_ema=0.7613 pairwise=0.2821 pairwise_acc=1.0000 aux=1.0904 ewp_gn=1.132e-01 budget=0.0000 top_k=2 lr=7.515e-06 elapsed=19.4m
+[train] epoch=3/3 step=800/837 loss=0.6860 ce=0.6652 ce_ema=0.7528 pairwise=0.1978 pairwise_acc=1.0000 aux=1.0911 ewp_gn=1.110e-01 budget=0.0000 top_k=2 lr=6.276e-06 elapsed=20.7m
+[save] moving merged model to cpu before export
+[save] merged + fp32 full model -> /mnt/data/models/fv1_arc_c_pw005_s42
+[save] final router top_k -> 2
+[2026-05-21 03:01:13,577] [INFO] [real_accelerator.py:203:get_accelerator] Setting ds_accelerator to cuda (auto detect)
+[93m [WARNING] [0m async_io requires the dev libaio .so object and headers but these were not found.
+[93m [WARNING] [0m async_io: please install the libaio-dev package with apt
+[93m [WARNING] [0m If libaio is already installed (perhaps from source), try setting the CFLAGS and LDFLAGS environment variables to where it can be found.
+[93m [WARNING] [0m Please specify the CUTLASS repo directory as environment variable $CUTLASS_PATH
+[93m [WARNING] [0m sparse_attn requires a torch version >= 1.5 and < 2.0 but detected 2.5
+[93m [WARNING] [0m using untested triton version (3.1.0), only 1.0.0 is known to be compatible
+
+[launcher] done.

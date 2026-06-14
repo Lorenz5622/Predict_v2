@@ -1,0 +1,188 @@
+==== [piqa_qw_ori_8bit] START 2026年 04月 21日 星期二 14:38:23 CST ====
+CMD: torchrun --nproc_per_node 1 finetune_qwen_moe_qw_ori_8bit.py --model_path /root/models/Qwen_MoE --output_dir /root/models/out_piqa_qw_ori_8bit --dataset piqa --eval_dataset piqa --train_split train --eval_split validation --block_size 128 --batch_size 20 --grad_accum 1 --epochs 2 --lr 2e-4 --piqa_local_dir /root/datasets/PIQA --lora_r 8 --lora_alpha 16 --lora_dropout 0.05 --num_proc 16 --eval_max_samples 64 --gradient_checkpointing 0 --use_bnb_8bit 0 --router_topk 4
+/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/cuda/__init__.py:61: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/cuda/__init__.py:61: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+[load] tokenizer from model_path: /root/models/Qwen_MoE
+[load] distributed=True world_size=1 8bit=True fp16=False bf16=False
+/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/cuda/__init__.py:61: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+Loading checkpoint shards:   0%|          | 0/8 [00:00<?, ?it/s]Loading checkpoint shards:  12%|█▎        | 1/8 [00:08<01:01,  8.75s/it]Loading checkpoint shards:  25%|██▌       | 2/8 [00:18<00:55,  9.21s/it]Loading checkpoint shards:  38%|███▊      | 3/8 [00:28<00:47,  9.55s/it]Loading checkpoint shards:  50%|█████     | 4/8 [00:38<00:38,  9.68s/it]Loading checkpoint shards:  62%|██████▎   | 5/8 [00:45<00:27,  9.01s/it]Loading checkpoint shards:  75%|███████▌  | 6/8 [01:00<00:21, 10.86s/it]Loading checkpoint shards:  88%|████████▊ | 7/8 [01:17<00:12, 12.98s/it]Loading checkpoint shards: 100%|██████████| 8/8 [01:19<00:00,  9.40s/it]Loading checkpoint shards: 100%|██████████| 8/8 [01:19<00:00,  9.93s/it]
+[lora] trainable params: 127413504/14443197696 (0.88%)
+trainable params: 127,413,504 || all params: 14,443,197,696 || trainable%: 0.8822
+Map:   0%|          | 0/16113 [00:00<?, ? examples/s]Map:   2%|▏         | 365/16113 [00:00<00:04, 3613.48 examples/s]Map:   5%|▍         | 747/16113 [00:00<00:04, 3725.64 examples/s]Map:   8%|▊         | 1265/16113 [00:00<00:04, 3568.34 examples/s]Map:  11%|█         | 1729/16113 [00:00<00:03, 3936.13 examples/s]Map:  14%|█▍        | 2253/16113 [00:00<00:03, 3741.32 examples/s]Map:  17%|█▋        | 2705/16113 [00:00<00:03, 3963.79 examples/s]Map:  20%|██        | 3236/16113 [00:00<00:03, 3797.31 examples/s]Map:  23%|██▎       | 3678/16113 [00:00<00:03, 3959.11 examples/s]Map:  26%|██▌       | 4224/16113 [00:01<00:03, 3637.80 examples/s]Map:  29%|██▉       | 4677/16113 [00:01<00:02, 3852.29 examples/s]Map:  32%|███▏      | 5222/16113 [00:01<00:02, 3689.18 examples/s]Map:  35%|███▌      | 5671/16113 [00:01<00:02, 3882.23 examples/s]Map:  39%|███▊      | 6228/16113 [00:01<00:02, 3723.37 examples/s]Map:  42%|████▏     | 6696/16113 [00:01<00:02, 3953.13 examples/s]Map:  45%|████▍     | 7247/16113 [00:01<00:02, 3853.58 examples/s]Map:  48%|████▊     | 7708/16113 [00:02<00:02, 4034.58 examples/s]Map:  51%|█████▏    | 8266/16113 [00:02<00:02, 3922.24 examples/s]Map:  54%|█████▍    | 8729/16113 [00:02<00:01, 4095.42 examples/s]Map:  58%|█████▊    | 9292/16113 [00:02<00:01, 3974.60 examples/s]Map:  60%|██████    | 9748/16113 [00:02<00:01, 4117.03 examples/s]Map:  64%|██████▍   | 10313/16113 [00:02<00:01, 3992.95 examples/s]Map:  67%|██████▋   | 10777/16113 [00:02<00:01, 4149.86 examples/s]Map:  70%|██████▉   | 11226/16113 [00:02<00:01, 3767.35 examples/s]Map:  72%|███████▏  | 11670/16113 [00:03<00:01, 3931.39 examples/s]Map:  76%|███████▌  | 12239/16113 [00:03<00:00, 3881.93 examples/s]Map:  79%|███████▉  | 12716/16113 [00:03<00:00, 4099.91 examples/s]Map:  82%|████████▏ | 13232/16113 [00:03<00:00, 3850.27 examples/s]Map:  85%|████████▍ | 13667/16113 [00:03<00:00, 3971.43 examples/s]Map:  88%|████████▊ | 14230/16113 [00:03<00:00, 3888.57 examples/s]Map:  91%|█████████ | 14694/16113 [00:03<00:00, 4070.89 examples/s]Map:  95%|█████████▍| 15241/16113 [00:03<00:00, 3920.67 examples/s]Map:  97%|█████████▋| 15691/16113 [00:04<00:00, 4062.28 examples/s]Map: 100%|██████████| 16113/16113 [00:04<00:00, 3856.99 examples/s]Map: 100%|██████████| 16113/16113 [00:04<00:00, 3899.30 examples/s]
+Map:   0%|          | 0/64 [00:00<?, ? examples/s]Map: 100%|██████████| 64/64 [00:00<00:00, 3481.11 examples/s]
+[data] train=16113 eval=64 block_size=128
+/root/Predict_v2/finetune_qwen_moe_qw_ori_8bit.py:564: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler(enabled=(fp16 and device.type == "cuda"))
+train:   0%|          | 0/1610 [00:00<?, ?it/s]
+epoch 1/2:   0%|          | 0/805 [00:00<?, ?it/s][A/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/bitsandbytes/autograd/_functions.py:123: UserWarning: MatMul8bitLt: inputs will be cast from torch.float32 to float16 during quantization
+  warnings.warn(f"MatMul8bitLt: inputs will be cast from {A.dtype} to float16 during quantization")
+epoch 1/2:   0%|          | 0/805 [00:05<?, ?it/s]
+[rank0]: Traceback (most recent call last):
+[rank0]:   File "/root/Predict_v2/finetune_qwen_moe_qw_ori_8bit.py", line 872, in <module>
+[rank0]:     main()
+[rank0]:   File "/root/Predict_v2/finetune_qwen_moe_qw_ori_8bit.py", line 855, in main
+[rank0]:     train(
+[rank0]:   File "/root/Predict_v2/finetune_qwen_moe_qw_ori_8bit.py", line 605, in train
+[rank0]:     out = model(**batch)
+[rank0]:   File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1736, in _wrapped_call_impl
+[rank0]:     return self._call_impl(*args, **kwargs)
+[rank0]:   File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1747, in _call_impl
+[rank0]:     return forward_call(*args, **kwargs)
+[rank0]:   File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/nn/parallel/distributed.py", line 1643, in forward
+[rank0]:     else self._run_ddp_forward(*inputs, **kwargs)
+[rank0]:   File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/nn/parallel/distributed.py", line 1459, in _run_ddp_forward
+[rank0]:     return self.module(*inputs, **kwargs)  # type: ignore[index]
+[rank0]:   File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1736, in _wrapped_call_impl
+[rank0]:     return self._call_impl(*args, **kwargs)
+[rank0]:   File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1747, in _call_impl
+[rank0]:     return forward_call(*args, **kwargs)
+[rank0]:   File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/peft/peft_model.py", line 1850, in forward
+[rank0]:     return self.base_model(
+[rank0]:   File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1736, in _wrapped_call_impl
+[rank0]:     return self._call_impl(*args, **kwargs)
+[rank0]:   File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1747, in _call_impl
+[rank0]:     return forward_call(*args, **kwargs)
+[rank0]:   File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/peft/tuners/tuners_utils.py", line 222, in forward
+[rank0]:     return self.model.forward(*args, **kwargs)
+[rank0]:   File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/transformers/utils/generic.py", line 918, in wrapper
+[rank0]:     output = func(self, *args, **kwargs)
+[rank0]:   File "/root/Predict_v2/qwen_moe/modeling/modeling_moe_qw_ori.py", line 1101, in forward
+[rank0]:     outputs: MoeModelOutputWithPast = self.model(
+[rank0]:   File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1736, in _wrapped_call_impl
+[rank0]:     return self._call_impl(*args, **kwargs)
+[rank0]:   File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1747, in _call_impl
+[rank0]:     return forward_call(*args, **kwargs)
+[rank0]:   File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/transformers/utils/generic.py", line 918, in wrapper
+[rank0]:     output = func(self, *args, **kwargs)
+[rank0]:   File "/root/Predict_v2/qwen_moe/modeling/modeling_moe_qw_ori.py", line 846, in forward
+[rank0]:     layer_outputs = decoder_layer(
+[rank0]:   File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/transformers/modeling_layers.py", line 94, in __call__
+[rank0]:     return super().__call__(*args, **kwargs)
+[rank0]:   File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1736, in _wrapped_call_impl
+[rank0]:     return self._call_impl(*args, **kwargs)
+[rank0]:   File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1747, in _call_impl
+[rank0]:     return forward_call(*args, **kwargs)
+[rank0]:   File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/transformers/utils/deprecation.py", line 172, in wrapped_func
+[rank0]:     return func(*args, **kwargs)
+[rank0]:   File "/root/Predict_v2/qwen_moe/modeling/modeling_moe_qw_ori.py", line 718, in forward
+[rank0]:     hidden_states = self.mlp(hidden_states)
+[rank0]:   File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1736, in _wrapped_call_impl
+[rank0]:     return self._call_impl(*args, **kwargs)
+[rank0]:   File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1747, in _call_impl
+[rank0]:     return forward_call(*args, **kwargs)
+[rank0]:   File "/root/Predict_v2/qwen_moe/modeling/modeling_moe_qw_ori.py", line 626, in forward
+[rank0]:     current_hidden_states = expert_layer(current_state) * routing_weights[top_x, idx, None]
+[rank0]:   File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1736, in _wrapped_call_impl
+[rank0]:     return self._call_impl(*args, **kwargs)
+[rank0]:   File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1747, in _call_impl
+[rank0]:     return forward_call(*args, **kwargs)
+[rank0]:   File "/root/Predict_v2/qwen_moe/modeling/modeling_moe_qw_ori.py", line 244, in forward
+[rank0]:     return self.down_proj(self.act_fn(self.gate_proj(x)) * self.up_proj(x))
+[rank0]:   File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1736, in _wrapped_call_impl
+[rank0]:     return self._call_impl(*args, **kwargs)
+[rank0]:   File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1747, in _call_impl
+[rank0]:     return forward_call(*args, **kwargs)
+[rank0]:   File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/peft/tuners/lora/bnb.py", line 227, in forward
+[rank0]:     result = self.base_layer(x, *args, **kwargs)
+[rank0]:   File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1736, in _wrapped_call_impl
+[rank0]:     return self._call_impl(*args, **kwargs)
+[rank0]:   File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1747, in _call_impl
+[rank0]:     return forward_call(*args, **kwargs)
+[rank0]:   File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/bitsandbytes/nn/modules.py", line 1094, in forward
+[rank0]:     out = bnb.matmul(x, self.weight, bias=self.bias, state=self.state)
+[rank0]:   File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/bitsandbytes/autograd/_functions.py", line 366, in matmul
+[rank0]:     return MatMul8bitLt.apply(A, B, out, bias, state)
+[rank0]:   File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/autograd/function.py", line 575, in apply
+[rank0]:     return super().apply(*args, **kwargs)  # type: ignore[misc]
+[rank0]:   File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/bitsandbytes/autograd/_functions.py", line 156, in forward
+[rank0]:     output, subA = torch.ops.bitsandbytes.int8_mixed_scaled_mm(
+[rank0]:   File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/_ops.py", line 1116, in __call__
+[rank0]:     return self._op(*args, **(kwargs or {}))
+[rank0]:   File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/_compile.py", line 32, in inner
+[rank0]:     return disable_fn(*args, **kwargs)
+[rank0]:   File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/_dynamo/eval_frame.py", line 632, in _fn
+[rank0]:     return fn(*args, **kwargs)
+[rank0]:   File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/library.py", line 566, in func_no_dynamo
+[rank0]:     return func(*args, **kwargs)
+[rank0]:   File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/bitsandbytes/backends/default/ops.py", line 91, in _
+[rank0]:     output = torch.ops.bitsandbytes.int8_scaled_mm.default(CA, CB, SCA, SCB, bias=bias, dtype=A.dtype)
+[rank0]:   File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/_ops.py", line 716, in __call__
+[rank0]:     return self._op(*args, **kwargs)
+[rank0]:   File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/_compile.py", line 32, in inner
+[rank0]:     return disable_fn(*args, **kwargs)
+[rank0]:   File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/_dynamo/eval_frame.py", line 632, in _fn
+[rank0]:     return fn(*args, **kwargs)
+[rank0]:   File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/library.py", line 566, in func_no_dynamo
+[rank0]:     return func(*args, **kwargs)
+[rank0]:   File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/bitsandbytes/backends/default/ops.py", line 110, in _
+[rank0]:     return torch.ops.bitsandbytes.int8_mm_dequant.default(
+[rank0]:   File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/_ops.py", line 716, in __call__
+[rank0]:     return self._op(*args, **kwargs)
+[rank0]:   File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/_compile.py", line 32, in inner
+[rank0]:     return disable_fn(*args, **kwargs)
+[rank0]:   File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/_dynamo/eval_frame.py", line 632, in _fn
+[rank0]:     return fn(*args, **kwargs)
+[rank0]:   File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/library.py", line 566, in func_no_dynamo
+[rank0]:     return func(*args, **kwargs)
+[rank0]:   File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/bitsandbytes/backends/cuda/ops.py", line 124, in _
+[rank0]:     return out.to(dtype or torch.float16)
+[rank0]: torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 20.00 MiB. GPU 0 has a total capacity of 47.50 GiB of which 19.69 MiB is free. Including non-PyTorch memory, this process has 47.46 GiB memory in use. Of the allocated memory 46.86 GiB is allocated by PyTorch, and 15.17 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+train:   0%|          | 0/1610 [00:05<?, ?it/s]
+[rank0]:[W421 14:40:11.684525038 ProcessGroupNCCL.cpp:1250] Warning: WARNING: process group has NOT been destroyed before we destruct ProcessGroupNCCL. On normal program exit, the application should call destroy_process_group to ensure that any pending NCCL operations have finished in this process. In rare cases this process can exit before this point and block the progress of another member of the process group. This constraint has always been present,  but this warning has only been added since PyTorch 2.4 (function operator())
+E0421 14:40:14.170007 15251 site-packages/torch/distributed/elastic/multiprocessing/api.py:869] failed (exitcode: 1) local_rank: 0 (pid: 15328) of binary: /home/vipuser/miniconda3/envs/op/bin/python3.10
+Traceback (most recent call last):
+  File "/home/vipuser/miniconda3/envs/op/bin/torchrun", line 6, in <module>
+    sys.exit(main())
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/distributed/elastic/multiprocessing/errors/__init__.py", line 355, in wrapper
+    return f(*args, **kwargs)
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/distributed/run.py", line 919, in main
+    run(args)
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/distributed/run.py", line 910, in run
+    elastic_launch(
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/distributed/launcher/api.py", line 138, in __call__
+    return launch_agent(self._config, self._entrypoint, list(args))
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/distributed/launcher/api.py", line 269, in launch_agent
+    raise ChildFailedError(
+torch.distributed.elastic.multiprocessing.errors.ChildFailedError: 
+============================================================
+finetune_qwen_moe_qw_ori_8bit.py FAILED
+------------------------------------------------------------
+Failures:
+  <NO_OTHER_FAILURES>
+------------------------------------------------------------
+Root Cause (first observed failure):
+[0]:
+  time      : 2026-04-21_14:40:14
+  host      : ubuntu22.04
+  rank      : 0 (local_rank: 0)
+  exitcode  : 1 (pid: 15328)
+  error_file: <N/A>
+  traceback : To enable traceback see: https://pytorch.org/docs/stable/elastic/errors.html
+============================================================
+Command exited with non-zero status 1
+	Command being timed: "torchrun --nproc_per_node 1 finetune_qwen_moe_qw_ori_8bit.py --model_path /root/models/Qwen_MoE --output_dir /root/models/out_piqa_qw_ori_8bit --dataset piqa --eval_dataset piqa --train_split train --eval_split validation --block_size 128 --batch_size 20 --grad_accum 1 --epochs 2 --lr 2e-4 --piqa_local_dir /root/datasets/PIQA --lora_r 8 --lora_alpha 16 --lora_dropout 0.05 --num_proc 16 --eval_max_samples 64 --gradient_checkpointing 0 --use_bnb_8bit 0 --router_topk 4"
+	User time (seconds): 85.80
+	System time (seconds): 54.60
+	Percent of CPU this job got: 126%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 1:51.29
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 30712024
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 37
+	Minor (reclaiming a frame) page faults: 7250030
+	Voluntary context switches: 13708
+	Involuntary context switches: 67624
+	Swaps: 0
+	File system inputs: 7344
+	File system outputs: 32
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 1

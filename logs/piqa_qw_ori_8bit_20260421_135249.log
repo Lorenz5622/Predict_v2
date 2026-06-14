@@ -1,0 +1,96 @@
+==== [piqa_qw_ori_8bit] START 2026年 04月 21日 星期二 13:52:49 CST ====
+CMD: torchrun --nproc_per_node 1 finetune_qwen_moe_qw_ori_8bit.py --model_path /root/models/Qwen_MoE --output_dir /root/models/out_piqa_qw_ori_8bit --dataset piqa --eval_dataset piqa --train_split train --eval_split validation --block_size 128 --batch_size 8 --grad_accum 1 --epochs 2 --lr 2e-4 --lora_r 8 --lora_alpha 16 --lora_dropout 0.05 --num_proc 16 --eval_max_samples 64 --gradient_checkpointing 1 --use_bnb_8bit 1 --router_topk 2
+/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/cuda/__init__.py:61: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/cuda/__init__.py:61: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+[load] tokenizer from model_path: /root/models/Qwen_MoE
+[load] distributed=True world_size=1 8bit=True fp16=False bf16=False
+/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/cuda/__init__.py:61: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+Loading checkpoint shards:   0%|          | 0/8 [00:00<?, ?it/s]Loading checkpoint shards:  12%|█▎        | 1/8 [00:07<00:52,  7.56s/it]Loading checkpoint shards:  25%|██▌       | 2/8 [00:16<00:49,  8.31s/it]Loading checkpoint shards:  38%|███▊      | 3/8 [00:24<00:41,  8.39s/it]Loading checkpoint shards:  50%|█████     | 4/8 [00:35<00:37,  9.32s/it]Loading checkpoint shards:  62%|██████▎   | 5/8 [00:44<00:26,  8.98s/it]Loading checkpoint shards:  75%|███████▌  | 6/8 [00:54<00:18,  9.44s/it]Loading checkpoint shards:  88%|████████▊ | 7/8 [01:03<00:09,  9.29s/it]Loading checkpoint shards: 100%|██████████| 8/8 [01:03<00:00,  6.52s/it]Loading checkpoint shards: 100%|██████████| 8/8 [01:03<00:00,  7.99s/it]
+[lora] trainable params: 127413504/14443197696 (0.88%)
+trainable params: 127,413,504 || all params: 14,443,197,696 || trainable%: 0.8822
+'(MaxRetryError("HTTPSConnectionPool(host='huggingface.co', port=443): Max retries exceeded with url: /datasets/ybisk/piqa/resolve/main/README.md (Caused by ProxyError('Unable to connect to proxy', NewConnectionError('<urllib3.connection.HTTPSConnection object at 0x7ff47a45da80>: Failed to establish a new connection: [Errno 111] Connection refused')))"), '(Request ID: 17290f84-4c17-417c-be7c-de0671d0be6f)')' thrown while requesting HEAD https://huggingface.co/datasets/ybisk/piqa/resolve/main/README.md
+Retrying in 1s [Retry 1/5].
+'(MaxRetryError("HTTPSConnectionPool(host='huggingface.co', port=443): Max retries exceeded with url: /datasets/ybisk/piqa/resolve/main/README.md (Caused by ProxyError('Unable to connect to proxy', NewConnectionError('<urllib3.connection.HTTPSConnection object at 0x7ff47a45dd50>: Failed to establish a new connection: [Errno 111] Connection refused')))"), '(Request ID: 7a387538-a579-475c-a608-3e721aad14a1)')' thrown while requesting HEAD https://huggingface.co/datasets/ybisk/piqa/resolve/main/README.md
+Retrying in 2s [Retry 2/5].
+'(MaxRetryError("HTTPSConnectionPool(host='huggingface.co', port=443): Max retries exceeded with url: /datasets/ybisk/piqa/resolve/main/README.md (Caused by ProxyError('Unable to connect to proxy', NewConnectionError('<urllib3.connection.HTTPSConnection object at 0x7ff47a45e020>: Failed to establish a new connection: [Errno 111] Connection refused')))"), '(Request ID: a6bf5c61-8236-4795-a147-5704bfb57175)')' thrown while requesting HEAD https://huggingface.co/datasets/ybisk/piqa/resolve/main/README.md
+Retrying in 4s [Retry 3/5].
+'(MaxRetryError("HTTPSConnectionPool(host='huggingface.co', port=443): Max retries exceeded with url: /datasets/ybisk/piqa/resolve/main/README.md (Caused by ProxyError('Unable to connect to proxy', NewConnectionError('<urllib3.connection.HTTPSConnection object at 0x7ff47a45e2f0>: Failed to establish a new connection: [Errno 111] Connection refused')))"), '(Request ID: 4103c53a-753c-41e4-bde2-aa406a3a0628)')' thrown while requesting HEAD https://huggingface.co/datasets/ybisk/piqa/resolve/main/README.md
+Retrying in 8s [Retry 4/5].
+'(MaxRetryError("HTTPSConnectionPool(host='huggingface.co', port=443): Max retries exceeded with url: /datasets/ybisk/piqa/resolve/main/README.md (Caused by ProxyError('Unable to connect to proxy', NewConnectionError('<urllib3.connection.HTTPSConnection object at 0x7ff47a45e5c0>: Failed to establish a new connection: [Errno 111] Connection refused')))"), '(Request ID: e517cc9b-d9f8-44c6-b7aa-e698402810d5)')' thrown while requesting HEAD https://huggingface.co/datasets/ybisk/piqa/resolve/main/README.md
+Retrying in 8s [Retry 5/5].
+'(MaxRetryError("HTTPSConnectionPool(host='huggingface.co', port=443): Max retries exceeded with url: /datasets/ybisk/piqa/resolve/main/README.md (Caused by ProxyError('Unable to connect to proxy', NewConnectionError('<urllib3.connection.HTTPSConnection object at 0x7ff47a45e890>: Failed to establish a new connection: [Errno 111] Connection refused')))"), '(Request ID: d455055c-42f7-48a1-b623-f7d6a1130481)')' thrown while requesting HEAD https://huggingface.co/datasets/ybisk/piqa/resolve/main/README.md
+Using the latest cached version of the module from /root/.cache/huggingface/modules/datasets_modules/datasets/ybisk--piqa/6c611c1a9bf220943c4174e117d3b660859665baf1d43156230116185312d011 (last modified on Mon Apr 20 14:10:57 2026) since it couldn't be found locally at ybisk/piqa, or remotely on the Hugging Face Hub.
+[rank0]: Traceback (most recent call last):
+[rank0]:   File "/root/Predict_v2/finetune_qwen_moe_qw_ori_8bit.py", line 736, in <module>
+[rank0]:     main()
+[rank0]:   File "/root/Predict_v2/finetune_qwen_moe_qw_ori_8bit.py", line 706, in main
+[rank0]:     train_ds, eval_ds = build_train_eval_datasets(tokenizer, args)
+[rank0]:   File "/root/Predict_v2/finetune_qwen_moe_qw_ori_8bit.py", line 279, in build_train_eval_datasets
+[rank0]:     train_ds = make_dataset(args.dataset, tokenizer, args, args.train_split, args.train_max_samples)
+[rank0]:   File "/root/Predict_v2/finetune_qwen_moe_qw_ori_8bit.py", line 155, in make_dataset
+[rank0]:     return load_and_pack_piqa_ppl_opencompass(
+[rank0]:   File "/root/Predict_v2/finetune.py", line 178, in load_and_pack_piqa_ppl_opencompass
+[rank0]:     ds = load_dataset("ybisk/piqa", split=split)
+[rank0]:   File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/datasets/load.py", line 2062, in load_dataset
+[rank0]:     builder_instance = load_dataset_builder(
+[rank0]:   File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/datasets/load.py", line 1819, in load_dataset_builder
+[rank0]:     builder_instance: DatasetBuilder = builder_cls(
+[rank0]: TypeError: 'NoneType' object is not callable
+[rank0]:[W421 13:54:33.531011950 ProcessGroupNCCL.cpp:1250] Warning: WARNING: process group has NOT been destroyed before we destruct ProcessGroupNCCL. On normal program exit, the application should call destroy_process_group to ensure that any pending NCCL operations have finished in this process. In rare cases this process can exit before this point and block the progress of another member of the process group. This constraint has always been present,  but this warning has only been added since PyTorch 2.4 (function operator())
+E0421 13:54:35.421387 6807 site-packages/torch/distributed/elastic/multiprocessing/api.py:869] failed (exitcode: 1) local_rank: 0 (pid: 6882) of binary: /home/vipuser/miniconda3/envs/op/bin/python3.10
+Traceback (most recent call last):
+  File "/home/vipuser/miniconda3/envs/op/bin/torchrun", line 6, in <module>
+    sys.exit(main())
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/distributed/elastic/multiprocessing/errors/__init__.py", line 355, in wrapper
+    return f(*args, **kwargs)
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/distributed/run.py", line 919, in main
+    run(args)
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/distributed/run.py", line 910, in run
+    elastic_launch(
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/distributed/launcher/api.py", line 138, in __call__
+    return launch_agent(self._config, self._entrypoint, list(args))
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/distributed/launcher/api.py", line 269, in launch_agent
+    raise ChildFailedError(
+torch.distributed.elastic.multiprocessing.errors.ChildFailedError: 
+============================================================
+finetune_qwen_moe_qw_ori_8bit.py FAILED
+------------------------------------------------------------
+Failures:
+  <NO_OTHER_FAILURES>
+------------------------------------------------------------
+Root Cause (first observed failure):
+[0]:
+  time      : 2026-04-21_13:54:35
+  host      : ubuntu22.04
+  rank      : 0 (local_rank: 0)
+  exitcode  : 1 (pid: 6882)
+  error_file: <N/A>
+  traceback : To enable traceback see: https://pytorch.org/docs/stable/elastic/errors.html
+============================================================
+Command exited with non-zero status 1
+	Command being timed: "torchrun --nproc_per_node 1 finetune_qwen_moe_qw_ori_8bit.py --model_path /root/models/Qwen_MoE --output_dir /root/models/out_piqa_qw_ori_8bit --dataset piqa --eval_dataset piqa --train_split train --eval_split validation --block_size 128 --batch_size 8 --grad_accum 1 --epochs 2 --lr 2e-4 --lora_r 8 --lora_alpha 16 --lora_dropout 0.05 --num_proc 16 --eval_max_samples 64 --gradient_checkpointing 1 --use_bnb_8bit 1 --router_topk 2"
+	User time (seconds): 69.93
+	System time (seconds): 42.61
+	Percent of CPU this job got: 105%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 1:46.72
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 30728864
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 0
+	Minor (reclaiming a frame) page faults: 7184463
+	Voluntary context switches: 11083
+	Involuntary context switches: 711
+	Swaps: 0
+	File system inputs: 336
+	File system outputs: 32
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 1

@@ -1,0 +1,191 @@
+
+[launcher] running:
+  /home/vipuser/miniconda3/envs/op/bin/python -m torch.distributed.run --nproc_per_node 1 /root/Predict_v2/run_stage1_dynamic_moe.py --model_path /root/models/Dynamic_MoE --output_dir /mnt/data/models/fv1_siqa_s43 --dataset siqa --eval_dataset siqa --train_split train --eval_split validation --block_size 150 --batch_size 20 --grad_accum 1 --epochs 3 --lr 8e-05 --lora_r 16 --lora_alpha 16 --lora_dropout 0.05 --num_proc 16 --load_in_4bit 0 --load_in_8bit 0 --use_bnb_8bit 0 --load_in_fp16 0 --fp16 0 --bf16 0 --train_extra_params_in_fp32 1 --router_use_entmax 0 --router_top_k 2 --router_entmax_alpha 1.7 --router_value_anchor_loss_coef 0.01 --router_anchor_momentum 0.99 --min_lr_ratio 0.1 --router_lr_mult 1.0 --eval_max_samples 400 --router_use_softmax_temperature 1 --router_softmax_temperature 1.1 --train_new_router_params 1 --router_aux_loss_coef 0.01 --init_new_router_from_legacy 1 --eval_every 3000 --seed 43 --stage_split_seed 43 --stage1_epochs 1 --stage1_lr 0.0001 --stage1_grad_accum 1 --stage1_data_ratio 0.5 --stage1_distill_temperature 2.0 --stage1_kl_coef 2.0 --stage1_logit_coef 0.25 --stage1_use_logit_loss 1
+[router] anchor-router trunk ignores legacy router settings: router_value_anchor_loss_coef
+[load] tokenizer from model_path: /root/models/Dynamic_MoE
+[load] distributed=True world_size=1 4bit=False 8bit=False
+[train] mixed precision: fp16=False bf16=False
+[stage1] loading base model for router distillation
+[load] checkpoint loaded with strict=False: missing=96 unexpected=24 dtype=torch.float32
+[init] layer 0 expert_weight_proj initialized from legacy router.weight
+[init] layer 1 expert_weight_proj initialized from legacy router.weight
+[init] layer 2 expert_weight_proj initialized from legacy router.weight
+[init] layer 3 expert_weight_proj initialized from legacy router.weight
+[init] layer 4 expert_weight_proj initialized from legacy router.weight
+[init] layer 5 expert_weight_proj initialized from legacy router.weight
+[init] layer 6 expert_weight_proj initialized from legacy router.weight
+[init] layer 7 expert_weight_proj initialized from legacy router.weight
+[init] layer 8 expert_weight_proj initialized from legacy router.weight
+[init] layer 9 expert_weight_proj initialized from legacy router.weight
+[init] layer 10 expert_weight_proj initialized from legacy router.weight
+[init] layer 11 expert_weight_proj initialized from legacy router.weight
+[init] layer 12 expert_weight_proj initialized from legacy router.weight
+[init] layer 13 expert_weight_proj initialized from legacy router.weight
+[init] layer 14 expert_weight_proj initialized from legacy router.weight
+[init] layer 15 expert_weight_proj initialized from legacy router.weight
+[init] layer 16 expert_weight_proj initialized from legacy router.weight
+[init] layer 17 expert_weight_proj initialized from legacy router.weight
+[init] layer 18 expert_weight_proj initialized from legacy router.weight
+[init] layer 19 expert_weight_proj initialized from legacy router.weight
+[init] layer 20 expert_weight_proj initialized from legacy router.weight
+[init] layer 21 expert_weight_proj initialized from legacy router.weight
+[init] layer 22 expert_weight_proj initialized from legacy router.weight
+[init] layer 23 expert_weight_proj initialized from legacy router.weight
+[init] initialized new router modules from legacy dense router for 24 layers
+[stage1] trainable cross-attention router params: 125829120
+[stage1][data] train=16705 (ratio=0.500, seed=43)
+[stage1] epoch=1/1 step=50 loss=0.539915 kl=0.256099 logit=0.110870 t_ent=1.6011 s_ent=1.8136 top1=0.7716 topk=0.7503 cos=0.8474 elapsed=0.6m
+[stage1] epoch=1/1 step=100 loss=0.155205 kl=0.072398 logit=0.041635 t_ent=1.5769 s_ent=1.6367 top1=0.9054 topk=0.8625 cos=0.9217 elapsed=1.1m
+[stage1] epoch=1/1 step=150 loss=0.064136 kl=0.029749 logit=0.018547 t_ent=1.5814 s_ent=1.6042 top1=0.9414 topk=0.9171 cos=0.9462 elapsed=1.7m
+[stage1] epoch=1/1 step=200 loss=0.028201 kl=0.012922 logit=0.009429 t_ent=1.5750 s_ent=1.5835 top1=0.9640 topk=0.9432 cos=0.9551 elapsed=2.2m
+[stage1] epoch=1/1 step=250 loss=0.018691 kl=0.008629 logit=0.005734 t_ent=1.5775 s_ent=1.5839 top1=0.9706 topk=0.9565 cos=0.9594 elapsed=2.8m
+[stage1] epoch=1/1 step=300 loss=0.009923 kl=0.004533 logit=0.003425 t_ent=1.5716 s_ent=1.5736 top1=0.9767 topk=0.9677 cos=0.9620 elapsed=3.3m
+[stage1] epoch=1/1 step=350 loss=0.006610 kl=0.003024 logit=0.002250 t_ent=1.5763 s_ent=1.5789 top1=0.9831 topk=0.9740 cos=0.9630 elapsed=3.9m
+[stage1] epoch=1/1 step=400 loss=0.004063 kl=0.001860 logit=0.001373 t_ent=1.5764 s_ent=1.5768 top1=0.9876 topk=0.9825 cos=0.9639 elapsed=4.4m
+[stage1] epoch=1/1 step=450 loss=0.003156 kl=0.001436 logit=0.001138 t_ent=1.5754 s_ent=1.5762 top1=0.9913 topk=0.9839 cos=0.9649 elapsed=5.0m
+[stage1] epoch=1/1 step=500 loss=0.001931 kl=0.000873 logit=0.000743 t_ent=1.5785 s_ent=1.5791 top1=0.9923 topk=0.9862 cos=0.9647 elapsed=5.5m
+[stage1] epoch=1/1 step=550 loss=0.001396 kl=0.000631 logit=0.000539 t_ent=1.5778 s_ent=1.5782 top1=0.9939 topk=0.9879 cos=0.9642 elapsed=6.1m
+[stage1] epoch=1/1 step=600 loss=0.001162 kl=0.000525 logit=0.000448 t_ent=1.5755 s_ent=1.5757 top1=0.9945 topk=0.9908 cos=0.9647 elapsed=6.6m
+[stage1] epoch=1/1 step=650 loss=0.000858 kl=0.000388 logit=0.000331 t_ent=1.5756 s_ent=1.5758 top1=0.9957 topk=0.9913 cos=0.9655 elapsed=7.2m
+[stage1] epoch=1/1 step=700 loss=0.000684 kl=0.000308 logit=0.000274 t_ent=1.5743 s_ent=1.5744 top1=0.9963 topk=0.9927 cos=0.9659 elapsed=7.7m
+[stage1] epoch=1/1 step=750 loss=0.000542 kl=0.000245 logit=0.000213 t_ent=1.5770 s_ent=1.5772 top1=0.9974 topk=0.9933 cos=0.9651 elapsed=8.3m
+[stage1] epoch=1/1 step=800 loss=0.000448 kl=0.000202 logit=0.000176 t_ent=1.5776 s_ent=1.5777 top1=0.9975 topk=0.9947 cos=0.9654 elapsed=8.8m
+[stage1] saving full checkpoint to /mnt/data/models/fv1_siqa_s43/ckpt_after_stage1
+[2026-05-19 09:20:49,539] [INFO] [real_accelerator.py:203:get_accelerator] Setting ds_accelerator to cuda (auto detect)
+[93m [WARNING] [0m async_io requires the dev libaio .so object and headers but these were not found.
+[93m [WARNING] [0m async_io: please install the libaio-dev package with apt
+[93m [WARNING] [0m If libaio is already installed (perhaps from source), try setting the CFLAGS and LDFLAGS environment variables to where it can be found.
+[93m [WARNING] [0m Please specify the CUTLASS repo directory as environment variable $CUTLASS_PATH
+[93m [WARNING] [0m sparse_attn requires a torch version >= 1.5 and < 2.0 but detected 2.5
+[93m [WARNING] [0m using untested triton version (3.1.0), only 1.0.0 is known to be compatible
+
+[launcher] running:
+  /home/vipuser/miniconda3/envs/op/bin/python -m torch.distributed.run --nproc_per_node 1 /root/Predict_v2/run_stage2_dynamic_moe.py --model_path /root/models/Dynamic_MoE --output_dir /mnt/data/models/fv1_siqa_s43 --dataset siqa --eval_dataset siqa --train_split train --eval_split validation --block_size 150 --batch_size 20 --grad_accum 1 --epochs 3 --lr 8e-05 --lora_r 16 --lora_alpha 16 --lora_dropout 0.05 --num_proc 16 --load_in_4bit 0 --load_in_8bit 0 --use_bnb_8bit 0 --load_in_fp16 0 --fp16 0 --bf16 0 --train_extra_params_in_fp32 1 --router_use_entmax 0 --router_top_k 2 --router_entmax_alpha 1.7 --router_value_anchor_loss_coef 0.01 --router_anchor_momentum 0.99 --min_lr_ratio 0.1 --router_lr_mult 1.0 --eval_max_samples 400 --router_use_softmax_temperature 1 --router_softmax_temperature 1.1 --train_new_router_params 1 --router_aux_loss_coef 0.01 --init_new_router_from_legacy 1 --eval_every 3000 --seed 43 --stage_split_seed 43 --stage2_include_validation_in_train 1 --stage2_validation_train_ratio 0.05 --stage2_init_path /mnt/data/models/fv1_siqa_s43/ckpt_after_stage1
+[router] anchor-router trunk ignores legacy router settings: router_value_anchor_loss_coef
+[load] tokenizer from model_path: /root/models/Dynamic_MoE
+[load] distributed=True world_size=1 4bit=False 8bit=False
+[train] mixed precision: fp16=False bf16=False
+[stage2] loading model from /mnt/data/models/fv1_siqa_s43/ckpt_after_stage1
+[load] checkpoint loaded with strict=False: missing=0 unexpected=0 dtype=torch.float32
+[stage2] extra trainable new-router params: 125829120
+[stage2] cast selected router params to fp32: 0
+[stage2] trainable params: 199753728/3687891968 (5.42%)
+trainable params: 199,753,728 || all params: 3,687,891,968 || trainable%: 5.4165
+[stage2][data] siqa: borrowed 98/1954 from validation into train
+[stage2][eval] using OpenCompass-style PPL ranking for siqa
+[stage2][data] train=33508 eval=400 block_size=150
+[stage2][opt] param groups: other=2496 router=72
+[stage2][opt] lrs: other=8.000e-05 router=8.000e-05
+[train] epoch=1/3 step=50/5025 loss=2.3712 ce=2.3253 ce_ema=3.3199 pairwise=0.5762 pairwise_acc=0.6500 aux=1.7079 ewp_gn=9.379e-02 budget=0.0000 top_k=2 lr=2.720e-05 elapsed=1.5m
+[train] epoch=1/3 step=100/5025 loss=1.6021 ce=1.5637 ce_ema=2.3368 pairwise=0.4817 pairwise_acc=0.7500 aux=1.4330 ewp_gn=8.239e-02 budget=0.0000 top_k=2 lr=5.387e-05 elapsed=3.0m
+[train] epoch=1/3 step=150/5025 loss=1.6727 ce=1.6234 ce_ema=1.8259 pairwise=0.7340 pairwise_acc=0.7000 aux=1.2608 ewp_gn=5.721e-02 budget=0.0000 top_k=2 lr=8.000e-05 elapsed=4.5m
+[train] epoch=1/3 step=200/5025 loss=1.4882 ce=1.4341 ce_ema=1.5917 pairwise=0.8325 pairwise_acc=0.6500 aux=1.2450 ewp_gn=8.901e-02 budget=0.0000 top_k=2 lr=7.998e-05 elapsed=6.0m
+[train] epoch=1/3 step=250/5025 loss=1.6512 ce=1.6148 ce_ema=1.4963 pairwise=0.4991 pairwise_acc=0.6500 aux=1.1523 ewp_gn=4.644e-02 budget=0.0000 top_k=2 lr=7.993e-05 elapsed=7.5m
+[train] epoch=1/3 step=300/5025 loss=1.4154 ce=1.3826 ce_ema=1.4418 pairwise=0.4303 pairwise_acc=0.7500 aux=1.1270 ewp_gn=4.725e-02 budget=0.0000 top_k=2 lr=7.983e-05 elapsed=8.9m
+[train] epoch=1/3 step=350/5025 loss=1.4359 ce=1.3833 ce_ema=1.4332 pairwise=0.8270 pairwise_acc=0.6000 aux=1.1261 ewp_gn=4.051e-02 budget=0.0000 top_k=2 lr=7.970e-05 elapsed=10.4m
+[train] epoch=1/3 step=400/5025 loss=1.4390 ce=1.3992 ce_ema=1.4168 pairwise=0.5750 pairwise_acc=0.7000 aux=1.1010 ewp_gn=5.076e-02 budget=0.0000 top_k=2 lr=7.953e-05 elapsed=11.9m
+[train] epoch=1/3 step=450/5025 loss=1.4000 ce=1.3619 ce_ema=1.4110 pairwise=0.5435 pairwise_acc=0.6500 aux=1.1000 ewp_gn=4.993e-02 budget=0.0000 top_k=2 lr=7.933e-05 elapsed=13.3m
+[train] epoch=1/3 step=500/5025 loss=1.4239 ce=1.3831 ce_ema=1.3981 pairwise=0.5994 pairwise_acc=0.7000 aux=1.0747 ewp_gn=4.953e-02 budget=0.0000 top_k=2 lr=7.909e-05 elapsed=14.8m
+[train] epoch=1/3 step=550/5025 loss=1.5103 ce=1.4673 ce_ema=1.3854 pairwise=0.6466 pairwise_acc=0.7500 aux=1.0711 ewp_gn=5.120e-02 budget=0.0000 top_k=2 lr=7.881e-05 elapsed=16.2m
+[train] epoch=1/3 step=600/5025 loss=1.4403 ce=1.4079 ce_ema=1.3949 pairwise=0.4334 pairwise_acc=0.7500 aux=1.0660 ewp_gn=5.027e-02 budget=0.0000 top_k=2 lr=7.850e-05 elapsed=17.7m
+[train] epoch=1/3 step=650/5025 loss=1.5035 ce=1.4643 ce_ema=1.3864 pairwise=0.5745 pairwise_acc=0.8000 aux=1.0486 ewp_gn=4.364e-02 budget=0.0000 top_k=2 lr=7.815e-05 elapsed=19.2m
+[train] epoch=1/3 step=700/5025 loss=1.4102 ce=1.3657 ce_ema=1.3781 pairwise=0.6777 pairwise_acc=0.7500 aux=1.0641 ewp_gn=4.321e-02 budget=0.0000 top_k=2 lr=7.776e-05 elapsed=20.6m
+[train] epoch=1/3 step=750/5025 loss=1.5137 ce=1.4694 ce_ema=1.3762 pairwise=0.6738 pairwise_acc=0.6500 aux=1.0551 ewp_gn=4.809e-02 budget=0.0000 top_k=2 lr=7.734e-05 elapsed=22.1m
+[train] epoch=1/3 step=800/5025 loss=1.4019 ce=1.3722 ce_ema=1.3720 pairwise=0.3805 pairwise_acc=0.8500 aux=1.0687 ewp_gn=5.031e-02 budget=0.0000 top_k=2 lr=7.689e-05 elapsed=23.5m
+[train] epoch=1/3 step=850/5025 loss=1.3902 ce=1.3422 ce_ema=1.3698 pairwise=0.7485 pairwise_acc=0.6000 aux=1.0546 ewp_gn=3.922e-02 budget=0.0000 top_k=2 lr=7.640e-05 elapsed=25.0m
+[train] epoch=1/3 step=900/5025 loss=1.4363 ce=1.4043 ce_ema=1.3709 pairwise=0.4301 pairwise_acc=0.8500 aux=1.0555 ewp_gn=4.473e-02 budget=0.0000 top_k=2 lr=7.588e-05 elapsed=26.5m
+[train] epoch=1/3 step=950/5025 loss=1.3570 ce=1.3253 ce_ema=1.3732 pairwise=0.4160 pairwise_acc=0.7000 aux=1.0891 ewp_gn=4.078e-02 budget=0.0000 top_k=2 lr=7.532e-05 elapsed=27.9m
+[train] epoch=1/3 step=1000/5025 loss=1.4055 ce=1.3671 ce_ema=1.3717 pairwise=0.5570 pairwise_acc=0.8000 aux=1.0612 ewp_gn=4.599e-02 budget=0.0000 top_k=2 lr=7.473e-05 elapsed=29.4m
+[train] epoch=1/3 step=1050/5025 loss=1.3597 ce=1.3280 ce_ema=1.3617 pairwise=0.4212 pairwise_acc=0.7500 aux=1.0628 ewp_gn=3.576e-02 budget=0.0000 top_k=2 lr=7.411e-05 elapsed=30.9m
+[train] epoch=1/3 step=1100/5025 loss=1.3670 ce=1.3310 ce_ema=1.3602 pairwise=0.5103 pairwise_acc=0.7500 aux=1.0470 ewp_gn=3.648e-02 budget=0.0000 top_k=2 lr=7.346e-05 elapsed=32.3m
+[train] epoch=1/3 step=1150/5025 loss=1.2664 ce=1.2315 ce_ema=1.3545 pairwise=0.4869 pairwise_acc=0.7500 aux=1.0542 ewp_gn=4.249e-02 budget=0.0000 top_k=2 lr=7.278e-05 elapsed=33.8m
+[train] epoch=1/3 step=1200/5025 loss=1.3101 ce=1.2766 ce_ema=1.3569 pairwise=0.4616 pairwise_acc=0.7000 aux=1.0432 ewp_gn=3.593e-02 budget=0.0000 top_k=2 lr=7.207e-05 elapsed=35.2m
+[train] epoch=1/3 step=1250/5025 loss=1.4577 ce=1.4224 ce_ema=1.3676 pairwise=0.4962 pairwise_acc=0.7500 aux=1.0474 ewp_gn=4.233e-02 budget=0.0000 top_k=2 lr=7.133e-05 elapsed=36.7m
+[train] epoch=1/3 step=1300/5025 loss=1.3143 ce=1.2787 ce_ema=1.3444 pairwise=0.5049 pairwise_acc=0.8000 aux=1.0393 ewp_gn=4.069e-02 budget=0.0000 top_k=2 lr=7.056e-05 elapsed=38.2m
+[train] epoch=1/3 step=1350/5025 loss=1.3871 ce=1.3514 ce_ema=1.3479 pairwise=0.5066 pairwise_acc=0.7000 aux=1.0405 ewp_gn=3.767e-02 budget=0.0000 top_k=2 lr=6.976e-05 elapsed=39.6m
+[train] epoch=1/3 step=1400/5025 loss=1.2179 ce=1.1815 ce_ema=1.3359 pairwise=0.5202 pairwise_acc=0.7500 aux=1.0446 ewp_gn=3.571e-02 budget=0.0000 top_k=2 lr=6.894e-05 elapsed=41.1m
+[train] epoch=1/3 step=1450/5025 loss=1.3320 ce=1.2938 ce_ema=1.3329 pairwise=0.5519 pairwise_acc=0.7000 aux=1.0555 ewp_gn=3.898e-02 budget=0.0000 top_k=2 lr=6.809e-05 elapsed=42.5m
+[train] epoch=1/3 step=1500/5025 loss=1.3345 ce=1.3063 ce_ema=1.3357 pairwise=0.3579 pairwise_acc=0.8500 aux=1.0372 ewp_gn=3.818e-02 budget=0.0000 top_k=2 lr=6.721e-05 elapsed=44.0m
+[train] epoch=1/3 step=1550/5025 loss=1.3491 ce=1.3059 ce_ema=1.3352 pairwise=0.6573 pairwise_acc=0.5500 aux=1.0390 ewp_gn=3.795e-02 budget=0.0000 top_k=2 lr=6.632e-05 elapsed=45.5m
+[train] epoch=1/3 step=1600/5025 loss=1.2858 ce=1.2534 ce_ema=1.3515 pairwise=0.4400 pairwise_acc=0.8500 aux=1.0437 ewp_gn=3.549e-02 budget=0.0000 top_k=2 lr=6.539e-05 elapsed=46.9m
+[train] epoch=1/3 step=1650/5025 loss=1.3254 ce=1.2832 ce_ema=1.3425 pairwise=0.6393 pairwise_acc=0.7000 aux=1.0307 ewp_gn=4.133e-02 budget=0.0000 top_k=2 lr=6.445e-05 elapsed=48.4m
+[train] epoch=2/3 step=1700/5025 loss=1.2996 ce=1.2641 ce_ema=1.3084 pairwise=0.5026 pairwise_acc=0.7500 aux=1.0324 ewp_gn=4.313e-02 budget=0.0000 top_k=2 lr=6.349e-05 elapsed=49.8m
+[train] epoch=2/3 step=1750/5025 loss=1.3407 ce=1.3007 ce_ema=1.2996 pairwise=0.5905 pairwise_acc=0.7500 aux=1.0422 ewp_gn=3.938e-02 budget=0.0000 top_k=2 lr=6.250e-05 elapsed=51.3m
+[train] epoch=2/3 step=1800/5025 loss=1.4066 ce=1.3747 ce_ema=1.3002 pairwise=0.4314 pairwise_acc=0.9000 aux=1.0371 ewp_gn=4.117e-02 budget=0.0000 top_k=2 lr=6.150e-05 elapsed=52.8m
+[train] epoch=2/3 step=1850/5025 loss=1.3241 ce=1.2879 ce_ema=1.2941 pairwise=0.5169 pairwise_acc=0.7500 aux=1.0395 ewp_gn=4.157e-02 budget=0.0000 top_k=2 lr=6.047e-05 elapsed=54.2m
+[train] epoch=2/3 step=1900/5025 loss=1.2439 ce=1.2150 ce_ema=1.2868 pairwise=0.3712 pairwise_acc=0.8500 aux=1.0398 ewp_gn=3.769e-02 budget=0.0000 top_k=2 lr=5.943e-05 elapsed=55.7m
+[train] epoch=2/3 step=1950/5025 loss=1.3604 ce=1.3278 ce_ema=1.2941 pairwise=0.4439 pairwise_acc=0.8000 aux=1.0368 ewp_gn=3.892e-02 budget=0.0000 top_k=2 lr=5.838e-05 elapsed=57.2m
+[train] epoch=2/3 step=2000/5025 loss=1.3753 ce=1.3402 ce_ema=1.2943 pairwise=0.4952 pairwise_acc=0.8000 aux=1.0318 ewp_gn=4.816e-02 budget=0.0000 top_k=2 lr=5.731e-05 elapsed=58.6m
+[train] epoch=2/3 step=2050/5025 loss=1.3697 ce=1.3323 ce_ema=1.2917 pairwise=0.5379 pairwise_acc=0.8000 aux=1.0524 ewp_gn=4.520e-02 budget=0.0000 top_k=2 lr=5.622e-05 elapsed=60.1m
+[train] epoch=2/3 step=2100/5025 loss=1.3125 ce=1.2877 ce_ema=1.2877 pairwise=0.2888 pairwise_acc=0.9000 aux=1.0373 ewp_gn=3.256e-02 budget=0.0000 top_k=2 lr=5.512e-05 elapsed=61.6m
+[train] epoch=2/3 step=2150/5025 loss=1.3085 ce=1.2780 ce_ema=1.2792 pairwise=0.4027 pairwise_acc=0.8500 aux=1.0369 ewp_gn=4.045e-02 budget=0.0000 top_k=2 lr=5.402e-05 elapsed=63.0m
+[train] epoch=2/3 step=2200/5025 loss=1.3333 ce=1.2925 ce_ema=1.2805 pairwise=0.6097 pairwise_acc=0.6500 aux=1.0294 ewp_gn=4.189e-02 budget=0.0000 top_k=2 lr=5.290e-05 elapsed=64.5m
+[train] epoch=2/3 step=2250/5025 loss=1.3278 ce=1.3045 ce_ema=1.2767 pairwise=0.2582 pairwise_acc=0.9500 aux=1.0387 ewp_gn=3.362e-02 budget=0.0000 top_k=2 lr=5.177e-05 elapsed=66.0m
+[train] epoch=2/3 step=2300/5025 loss=1.2059 ce=1.1792 ce_ema=1.2769 pairwise=0.3263 pairwise_acc=0.9500 aux=1.0343 ewp_gn=3.530e-02 budget=0.0000 top_k=2 lr=5.063e-05 elapsed=67.4m
+[train] epoch=2/3 step=2350/5025 loss=1.2094 ce=1.1780 ce_ema=1.2764 pairwise=0.4194 pairwise_acc=0.9000 aux=1.0418 ewp_gn=4.290e-02 budget=0.0000 top_k=2 lr=4.949e-05 elapsed=68.9m
+[train] epoch=2/3 step=2400/5025 loss=1.3662 ce=1.3321 ce_ema=1.2684 pairwise=0.4767 pairwise_acc=0.7500 aux=1.0255 ewp_gn=3.958e-02 budget=0.0000 top_k=2 lr=4.834e-05 elapsed=70.4m
+[train] epoch=2/3 step=2450/5025 loss=1.2663 ce=1.2350 ce_ema=1.2736 pairwise=0.4207 pairwise_acc=0.8500 aux=1.0237 ewp_gn=4.233e-02 budget=0.0000 top_k=2 lr=4.719e-05 elapsed=71.8m
+[train] epoch=2/3 step=2500/5025 loss=1.2518 ce=1.2196 ce_ema=1.2723 pairwise=0.4388 pairwise_acc=0.8000 aux=1.0318 ewp_gn=3.857e-02 budget=0.0000 top_k=2 lr=4.603e-05 elapsed=73.3m
+[train] epoch=2/3 step=2550/5025 loss=1.2365 ce=1.2035 ce_ema=1.2667 pairwise=0.4555 pairwise_acc=0.7000 aux=1.0246 ewp_gn=3.941e-02 budget=0.0000 top_k=2 lr=4.487e-05 elapsed=74.8m
+[train] epoch=2/3 step=2600/5025 loss=1.3399 ce=1.3030 ce_ema=1.2655 pairwise=0.5331 pairwise_acc=0.6500 aux=1.0242 ewp_gn=4.371e-02 budget=0.0000 top_k=2 lr=4.371e-05 elapsed=76.2m
+[train] epoch=2/3 step=2650/5025 loss=1.2878 ce=1.2573 ce_ema=1.2726 pairwise=0.4059 pairwise_acc=0.9000 aux=1.0280 ewp_gn=4.249e-02 budget=0.0000 top_k=2 lr=4.255e-05 elapsed=77.7m
+[train] epoch=2/3 step=2700/5025 loss=1.4420 ce=1.4048 ce_ema=1.2764 pairwise=0.5394 pairwise_acc=0.7000 aux=1.0238 ewp_gn=5.265e-02 budget=0.0000 top_k=2 lr=4.139e-05 elapsed=79.1m
+[train] epoch=2/3 step=2750/5025 loss=1.3379 ce=1.3001 ce_ema=1.2888 pairwise=0.5517 pairwise_acc=0.8000 aux=1.0215 ewp_gn=4.195e-02 budget=0.0000 top_k=2 lr=4.024e-05 elapsed=80.6m
+[train] epoch=2/3 step=2800/5025 loss=1.1519 ce=1.1212 ce_ema=1.2765 pairwise=0.4079 pairwise_acc=0.8500 aux=1.0266 ewp_gn=3.981e-02 budget=0.0000 top_k=2 lr=3.909e-05 elapsed=82.1m
+[train] epoch=2/3 step=2850/5025 loss=1.3609 ce=1.3346 ce_ema=1.2816 pairwise=0.3199 pairwise_acc=0.9000 aux=1.0253 ewp_gn=3.943e-02 budget=0.0000 top_k=2 lr=3.794e-05 elapsed=83.5m
+[train] epoch=2/3 step=2900/5025 loss=1.2617 ce=1.2351 ce_ema=1.2719 pairwise=0.3256 pairwise_acc=0.9000 aux=1.0254 ewp_gn=3.982e-02 budget=0.0000 top_k=2 lr=3.680e-05 elapsed=85.0m
+[train] epoch=2/3 step=2950/5025 loss=1.2362 ce=1.2065 ce_ema=1.2721 pairwise=0.3906 pairwise_acc=0.8500 aux=1.0181 ewp_gn=3.976e-02 budget=0.0000 top_k=2 lr=3.567e-05 elapsed=86.5m
+[train] epoch=2/3 step=3000/5025 loss=1.3559 ce=1.3152 ce_ema=1.2785 pairwise=0.6115 pairwise_acc=0.6500 aux=1.0218 ewp_gn=4.492e-02 budget=0.0000 top_k=2 lr=3.454e-05 elapsed=88.3m
+[eval] step=3000 eval_pairwise_acc=0.442500
+[train] epoch=2/3 step=3050/5025 loss=1.3169 ce=1.2829 ce_ema=1.2910 pairwise=0.4776 pairwise_acc=0.7000 aux=1.0148 ewp_gn=3.832e-02 budget=0.0000 top_k=2 lr=3.343e-05 elapsed=89.7m
+[train] epoch=2/3 step=3100/5025 loss=1.2750 ce=1.2394 ce_ema=1.2840 pairwise=0.5094 pairwise_acc=0.6500 aux=1.0136 ewp_gn=4.911e-02 budget=0.0000 top_k=2 lr=3.233e-05 elapsed=91.2m
+[train] epoch=2/3 step=3150/5025 loss=1.2767 ce=1.2467 ce_ema=1.2755 pairwise=0.3947 pairwise_acc=0.8500 aux=1.0215 ewp_gn=4.076e-02 budget=0.0000 top_k=2 lr=3.123e-05 elapsed=92.7m
+[train] epoch=2/3 step=3200/5025 loss=1.2666 ce=1.2216 ce_ema=1.2708 pairwise=0.6968 pairwise_acc=0.7000 aux=1.0232 ewp_gn=4.642e-02 budget=0.0000 top_k=2 lr=3.016e-05 elapsed=94.1m
+[train] epoch=2/3 step=3250/5025 loss=1.2376 ce=1.2100 ce_ema=1.2731 pairwise=0.3481 pairwise_acc=0.8500 aux=1.0169 ewp_gn=3.718e-02 budget=0.0000 top_k=2 lr=2.909e-05 elapsed=95.6m
+[train] epoch=2/3 step=3300/5025 loss=1.1867 ce=1.1579 ce_ema=1.2647 pairwise=0.3733 pairwise_acc=0.8000 aux=1.0181 ewp_gn=4.482e-02 budget=0.0000 top_k=2 lr=2.805e-05 elapsed=97.0m
+[train] epoch=2/3 step=3350/5025 loss=1.2973 ce=1.2616 ce_ema=1.2524 pairwise=0.5120 pairwise_acc=0.8000 aux=1.0129 ewp_gn=4.205e-02 budget=0.0000 top_k=2 lr=2.701e-05 elapsed=98.5m
+[train] epoch=3/3 step=3400/5025 loss=1.2587 ce=1.2262 ce_ema=1.2209 pairwise=0.4490 pairwise_acc=0.8500 aux=1.0120 ewp_gn=4.252e-02 budget=0.0000 top_k=2 lr=2.600e-05 elapsed=100.0m
+[train] epoch=3/3 step=3450/5025 loss=1.1434 ce=1.1126 ce_ema=1.2082 pairwise=0.4122 pairwise_acc=0.9000 aux=1.0170 ewp_gn=4.548e-02 budget=0.0000 top_k=2 lr=2.500e-05 elapsed=101.5m
+[train] epoch=3/3 step=3500/5025 loss=1.1440 ce=1.1206 ce_ema=1.2070 pairwise=0.2665 pairwise_acc=0.9500 aux=1.0141 ewp_gn=4.693e-02 budget=0.0000 top_k=2 lr=2.403e-05 elapsed=102.9m
+[train] epoch=3/3 step=3550/5025 loss=1.1882 ce=1.1534 ce_ema=1.2068 pairwise=0.4934 pairwise_acc=0.7000 aux=1.0151 ewp_gn=3.586e-02 budget=0.0000 top_k=2 lr=2.308e-05 elapsed=104.4m
+[train] epoch=3/3 step=3600/5025 loss=1.0927 ce=1.0696 ce_ema=1.2027 pairwise=0.2592 pairwise_acc=0.9500 aux=1.0134 ewp_gn=4.241e-02 budget=0.0000 top_k=2 lr=2.214e-05 elapsed=105.8m
+[train] epoch=3/3 step=3650/5025 loss=1.2662 ce=1.2376 ce_ema=1.1946 pairwise=0.3695 pairwise_acc=0.9000 aux=1.0096 ewp_gn=5.396e-02 budget=0.0000 top_k=2 lr=2.123e-05 elapsed=107.3m
+[train] epoch=3/3 step=3700/5025 loss=1.2396 ce=1.2085 ce_ema=1.1901 pairwise=0.4198 pairwise_acc=0.8000 aux=1.0104 ewp_gn=4.689e-02 budget=0.0000 top_k=2 lr=2.035e-05 elapsed=108.8m
+[train] epoch=3/3 step=3750/5025 loss=1.2579 ce=1.2238 ce_ema=1.1839 pairwise=0.4794 pairwise_acc=0.8000 aux=1.0117 ewp_gn=5.210e-02 budget=0.0000 top_k=2 lr=1.948e-05 elapsed=110.3m
+[train] epoch=3/3 step=3800/5025 loss=1.1980 ce=1.1761 ce_ema=1.1944 pairwise=0.2354 pairwise_acc=0.9500 aux=1.0112 ewp_gn=4.656e-02 budget=0.0000 top_k=2 lr=1.865e-05 elapsed=111.7m
+[train] epoch=3/3 step=3850/5025 loss=1.2278 ce=1.1974 ce_ema=1.2023 pairwise=0.4032 pairwise_acc=0.8500 aux=1.0147 ewp_gn=4.372e-02 budget=0.0000 top_k=2 lr=1.784e-05 elapsed=113.2m
+[train] epoch=3/3 step=3900/5025 loss=1.1631 ce=1.1368 ce_ema=1.2089 pairwise=0.3222 pairwise_acc=0.9000 aux=1.0112 ewp_gn=4.188e-02 budget=0.0000 top_k=2 lr=1.705e-05 elapsed=114.7m
+[train] epoch=3/3 step=3950/5025 loss=1.2572 ce=1.2334 ce_ema=1.2113 pairwise=0.2742 pairwise_acc=0.8500 aux=1.0100 ewp_gn=4.231e-02 budget=0.0000 top_k=2 lr=1.630e-05 elapsed=116.1m
+[train] epoch=3/3 step=4000/5025 loss=1.2139 ce=1.1932 ce_ema=1.2301 pairwise=0.2134 pairwise_acc=0.9500 aux=1.0077 ewp_gn=4.676e-02 budget=0.0000 top_k=2 lr=1.557e-05 elapsed=117.6m
+[train] epoch=3/3 step=4050/5025 loss=1.2573 ce=1.2256 ce_ema=1.2065 pairwise=0.4304 pairwise_acc=0.8000 aux=1.0135 ewp_gn=4.719e-02 budget=0.0000 top_k=2 lr=1.488e-05 elapsed=119.1m
+[train] epoch=3/3 step=4100/5025 loss=1.3150 ce=1.2889 ce_ema=1.1987 pairwise=0.3187 pairwise_acc=0.8500 aux=1.0156 ewp_gn=4.702e-02 budget=0.0000 top_k=2 lr=1.421e-05 elapsed=120.5m
+[train] epoch=3/3 step=4150/5025 loss=1.2495 ce=1.2192 ce_ema=1.2078 pairwise=0.4015 pairwise_acc=0.8500 aux=1.0163 ewp_gn=4.805e-02 budget=0.0000 top_k=2 lr=1.357e-05 elapsed=122.0m
+[train] epoch=3/3 step=4200/5025 loss=1.2407 ce=1.2137 ce_ema=1.2051 pairwise=0.3388 pairwise_acc=0.9500 aux=1.0087 ewp_gn=4.467e-02 budget=0.0000 top_k=2 lr=1.297e-05 elapsed=123.5m
+[train] epoch=3/3 step=4250/5025 loss=1.1886 ce=1.1596 ce_ema=1.1992 pairwise=0.3786 pairwise_acc=0.8000 aux=1.0099 ewp_gn=4.012e-02 budget=0.0000 top_k=2 lr=1.240e-05 elapsed=124.9m
+[train] epoch=3/3 step=4300/5025 loss=1.1248 ce=1.0926 ce_ema=1.2090 pairwise=0.4406 pairwise_acc=0.8500 aux=1.0120 ewp_gn=4.716e-02 budget=0.0000 top_k=2 lr=1.186e-05 elapsed=126.4m
+[train] epoch=3/3 step=4350/5025 loss=1.2330 ce=1.2048 ce_ema=1.1956 pairwise=0.3619 pairwise_acc=0.7500 aux=1.0057 ewp_gn=4.422e-02 budget=0.0000 top_k=2 lr=1.135e-05 elapsed=127.9m
+[train] epoch=3/3 step=4400/5025 loss=1.2593 ce=1.2248 ce_ema=1.1958 pairwise=0.4864 pairwise_acc=0.6500 aux=1.0117 ewp_gn=4.935e-02 budget=0.0000 top_k=2 lr=1.088e-05 elapsed=129.4m
+[train] epoch=3/3 step=4450/5025 loss=1.2209 ce=1.1943 ce_ema=1.1948 pairwise=0.3298 pairwise_acc=0.9500 aux=1.0118 ewp_gn=4.492e-02 budget=0.0000 top_k=2 lr=1.044e-05 elapsed=130.8m
+[train] epoch=3/3 step=4500/5025 loss=1.3045 ce=1.2784 ce_ema=1.2004 pairwise=0.3205 pairwise_acc=0.9500 aux=1.0092 ewp_gn=4.936e-02 budget=0.0000 top_k=2 lr=1.004e-05 elapsed=132.3m
+[train] epoch=3/3 step=4550/5025 loss=1.1313 ce=1.0982 ce_ema=1.2037 pairwise=0.4607 pairwise_acc=0.7000 aux=1.0055 ewp_gn=4.926e-02 budget=0.0000 top_k=2 lr=9.673e-06 elapsed=133.8m
+[train] epoch=3/3 step=4600/5025 loss=1.2466 ce=1.2184 ce_ema=1.2037 pairwise=0.3623 pairwise_acc=0.9000 aux=1.0122 ewp_gn=4.444e-02 budget=0.0000 top_k=2 lr=9.342e-06 elapsed=135.2m
+[train] epoch=3/3 step=4650/5025 loss=1.2216 ce=1.1997 ce_ema=1.2017 pairwise=0.2346 pairwise_acc=0.9000 aux=1.0089 ewp_gn=4.658e-02 budget=0.0000 top_k=2 lr=9.046e-06 elapsed=136.7m
+[train] epoch=3/3 step=4700/5025 loss=1.3411 ce=1.3101 ce_ema=1.2106 pairwise=0.4188 pairwise_acc=0.7500 aux=1.0052 ewp_gn=4.431e-02 budget=0.0000 top_k=2 lr=8.787e-06 elapsed=138.2m
+[train] epoch=3/3 step=4750/5025 loss=1.1998 ce=1.1712 ce_ema=1.2072 pairwise=0.3694 pairwise_acc=0.8500 aux=1.0074 ewp_gn=4.606e-02 budget=0.0000 top_k=2 lr=8.564e-06 elapsed=139.7m
+[train] epoch=3/3 step=4800/5025 loss=1.2341 ce=1.2018 ce_ema=1.2087 pairwise=0.4440 pairwise_acc=0.8000 aux=1.0078 ewp_gn=4.286e-02 budget=0.0000 top_k=2 lr=8.378e-06 elapsed=141.1m
+[train] epoch=3/3 step=4850/5025 loss=1.2359 ce=1.1963 ce_ema=1.2049 pairwise=0.5881 pairwise_acc=0.7500 aux=1.0121 ewp_gn=4.542e-02 budget=0.0000 top_k=2 lr=8.229e-06 elapsed=142.6m
+[train] epoch=3/3 step=4900/5025 loss=1.1514 ce=1.1229 ce_ema=1.1961 pairwise=0.3678 pairwise_acc=0.9000 aux=1.0112 ewp_gn=3.869e-02 budget=0.0000 top_k=2 lr=8.117e-06 elapsed=144.1m
+[train] epoch=3/3 step=4950/5025 loss=1.1502 ce=1.1203 ce_ema=1.2024 pairwise=0.3953 pairwise_acc=0.8000 aux=1.0104 ewp_gn=4.194e-02 budget=0.0000 top_k=2 lr=8.042e-06 elapsed=145.5m
+[train] epoch=3/3 step=5000/5025 loss=1.1412 ce=1.1124 ce_ema=1.1908 pairwise=0.3740 pairwise_acc=0.8500 aux=1.0083 ewp_gn=4.142e-02 budget=0.0000 top_k=2 lr=8.005e-06 elapsed=147.0m
+[save] moving merged model to cpu before export
+[save] merged + fp32 full model -> /mnt/data/models/fv1_siqa_s43
+[save] final router top_k -> 2
+[2026-05-19 11:50:34,553] [INFO] [real_accelerator.py:203:get_accelerator] Setting ds_accelerator to cuda (auto detect)
+[93m [WARNING] [0m async_io requires the dev libaio .so object and headers but these were not found.
+[93m [WARNING] [0m async_io: please install the libaio-dev package with apt
+[93m [WARNING] [0m If libaio is already installed (perhaps from source), try setting the CFLAGS and LDFLAGS environment variables to where it can be found.
+[93m [WARNING] [0m Please specify the CUTLASS repo directory as environment variable $CUTLASS_PATH
+[93m [WARNING] [0m sparse_attn requires a torch version >= 1.5 and < 2.0 but detected 2.5
+[93m [WARNING] [0m using untested triton version (3.1.0), only 1.0.0 is known to be compatible
+
+[launcher] done.

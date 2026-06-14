@@ -1,0 +1,218 @@
+
+[launcher] running:
+  /home/vipuser/miniconda3/envs/op/bin/python -m torch.distributed.run --nproc_per_node 1 /root/Predict_v2/run_stage1_qwen_dynamic_moe.py --model_path /root/models/Qwen_MoE --output_dir /root/models/out_qw_cb_lowlr_norestrict_abl_newlr01_ctx03 --dataset piqa --debug_nonfinite_router 1 --eval_dataset piqa --piqa_local_dir /root/datasets/PIQA --train_split train --eval_split validation --block_size 72 --batch_size 24 --grad_accum 1 --epochs 2 --lr 0.0001 --dataloader_num_workers 0 --weight_decay 0.0 --warmup_ratio 0.03 --min_lr_ratio 0.25 --lora_r 16 --lora_alpha 16 --lora_dropout 0.05 --lora_target_modules q_proj,k_proj,v_proj,o_proj,gate_proj,up_proj,down_proj --num_proc 8 --eval_max_samples 200 --load_in_4bit 0 --load_in_8bit 1 --use_bnb_8bit 0 --load_in_fp16 0 --fp16 0 --bf16 0 --save_dtype bfloat16 --bnb_4bit_quant_type nf4 --bnb_4bit_use_double_quant 1 --bnb_4bit_compute_dtype bfloat16 --gradient_checkpointing 0 --train_extra_params_in_fp32 1 --train_new_router_params 1 --router_top_k 4 --router_use_entmax 0 --router_entmax_alpha 1.7 --router_use_softmax_temperature 1 --router_softmax_temperature 1.0 --share_router_expert_embedding 0 --router_aux_loss_coef 0.0 --router_z_loss_coef 0.0 --router_pull_loss_coef 0.0 --router_use_ema_update 1 --router_ema_momentum 0.99 --router_pull_temperature 1.0 --router_pull_loss_type hard_ce --router_lr_mult 1.15 --use_router_context 1 --router_context_scale 0.3 --stage1_epochs 1 --stage1_lr 0.0002 --stage1_grad_accum 1 --stage1_data_ratio 0.2 --stage1_distill_temperature 2.0 --stage1_kl_coef 2.0 --stage1_logit_coef 0.25 --stage1_use_logit_loss 1
+[load] tokenizer from model_path: /root/models/Qwen_MoE
+[load] distributed=True world_size=1 4bit=False 8bit=True
+[train] mixed precision: fp16=False bf16=False
+[train] two-stage path: stage1 router distillation, then stage2 LoRA fine-tuning
+[stage1] loading base model for router distillation
+[init] layer 0 expert_embed initialized from legacy router.weight
+[init] layer 0 expert_key initialized from legacy router.weight
+[init] layer 0 expert_value initialized from legacy router.weight
+[init] layer 1 expert_embed initialized from legacy router.weight
+[init] layer 1 expert_key initialized from legacy router.weight
+[init] layer 1 expert_value initialized from legacy router.weight
+[init] layer 2 expert_embed initialized from legacy router.weight
+[init] layer 2 expert_key initialized from legacy router.weight
+[init] layer 2 expert_value initialized from legacy router.weight
+[init] layer 3 expert_embed initialized from legacy router.weight
+[init] layer 3 expert_key initialized from legacy router.weight
+[init] layer 3 expert_value initialized from legacy router.weight
+[init] layer 4 expert_embed initialized from legacy router.weight
+[init] layer 4 expert_key initialized from legacy router.weight
+[init] layer 4 expert_value initialized from legacy router.weight
+[init] layer 5 expert_embed initialized from legacy router.weight
+[init] layer 5 expert_key initialized from legacy router.weight
+[init] layer 5 expert_value initialized from legacy router.weight
+[init] layer 6 expert_embed initialized from legacy router.weight
+[init] layer 6 expert_key initialized from legacy router.weight
+[init] layer 6 expert_value initialized from legacy router.weight
+[init] layer 7 expert_embed initialized from legacy router.weight
+[init] layer 7 expert_key initialized from legacy router.weight
+[init] layer 7 expert_value initialized from legacy router.weight
+[init] layer 8 expert_embed initialized from legacy router.weight
+[init] layer 8 expert_key initialized from legacy router.weight
+[init] layer 8 expert_value initialized from legacy router.weight
+[init] layer 9 expert_embed initialized from legacy router.weight
+[init] layer 9 expert_key initialized from legacy router.weight
+[init] layer 9 expert_value initialized from legacy router.weight
+[init] layer 10 expert_embed initialized from legacy router.weight
+[init] layer 10 expert_key initialized from legacy router.weight
+[init] layer 10 expert_value initialized from legacy router.weight
+[init] layer 11 expert_embed initialized from legacy router.weight
+[init] layer 11 expert_key initialized from legacy router.weight
+[init] layer 11 expert_value initialized from legacy router.weight
+[init] layer 12 expert_embed initialized from legacy router.weight
+[init] layer 12 expert_key initialized from legacy router.weight
+[init] layer 12 expert_value initialized from legacy router.weight
+[init] layer 13 expert_embed initialized from legacy router.weight
+[init] layer 13 expert_key initialized from legacy router.weight
+[init] layer 13 expert_value initialized from legacy router.weight
+[init] layer 14 expert_embed initialized from legacy router.weight
+[init] layer 14 expert_key initialized from legacy router.weight
+[init] layer 14 expert_value initialized from legacy router.weight
+[init] layer 15 expert_embed initialized from legacy router.weight
+[init] layer 15 expert_key initialized from legacy router.weight
+[init] layer 15 expert_value initialized from legacy router.weight
+[init] layer 16 expert_embed initialized from legacy router.weight
+[init] layer 16 expert_key initialized from legacy router.weight
+[init] layer 16 expert_value initialized from legacy router.weight
+[init] layer 17 expert_embed initialized from legacy router.weight
+[init] layer 17 expert_key initialized from legacy router.weight
+[init] layer 17 expert_value initialized from legacy router.weight
+[init] layer 18 expert_embed initialized from legacy router.weight
+[init] layer 18 expert_key initialized from legacy router.weight
+[init] layer 18 expert_value initialized from legacy router.weight
+[init] layer 19 expert_embed initialized from legacy router.weight
+[init] layer 19 expert_key initialized from legacy router.weight
+[init] layer 19 expert_value initialized from legacy router.weight
+[init] layer 20 expert_embed initialized from legacy router.weight
+[init] layer 20 expert_key initialized from legacy router.weight
+[init] layer 20 expert_value initialized from legacy router.weight
+[init] layer 21 expert_embed initialized from legacy router.weight
+[init] layer 21 expert_key initialized from legacy router.weight
+[init] layer 21 expert_value initialized from legacy router.weight
+[init] layer 22 expert_embed initialized from legacy router.weight
+[init] layer 22 expert_key initialized from legacy router.weight
+[init] layer 22 expert_value initialized from legacy router.weight
+[init] layer 23 expert_embed initialized from legacy router.weight
+[init] layer 23 expert_key initialized from legacy router.weight
+[init] layer 23 expert_value initialized from legacy router.weight
+[init] initialized new router modules from legacy dense router for 24 layers
+[stage1] trainable cross-attention router params: 509214720
+[stage1][data] train=3222 (ratio=0.200, seed=42)
+[stage1] epoch=1/1 step=50 loss=0.701056 kl=0.300673 logit=0.398835 t_ent=3.6431 s_ent=3.8951 top1=0.1720 topk=0.3384 cos=0.2678 elapsed=1.0m
+[stage1] epoch=1/1 step=100 loss=0.585210 kl=0.258085 logit=0.276159 t_ent=3.5432 s_ent=3.8485 top1=0.2625 topk=0.4152 cos=0.2329 elapsed=2.6m
+[stage1] collecting router state for CPU fp16 checkpoint save -> /root/models/out_qw_cb_lowlr_norestrict_abl_newlr01_ctx03/ckpt_after_stage1
+[stage1] rebuilding CPU export model and saving full checkpoint to /root/models/out_qw_cb_lowlr_norestrict_abl_newlr01_ctx03/ckpt_after_stage1
+[save][stage1] cpu reload from base checkpoint: missing=192 unexpected=24 dtype=torch.bfloat16
+[init] layer 0 expert_embed initialized from legacy router.weight
+[init] layer 0 expert_key initialized from legacy router.weight
+[init] layer 0 expert_value initialized from legacy router.weight
+[init] layer 1 expert_embed initialized from legacy router.weight
+[init] layer 1 expert_key initialized from legacy router.weight
+[init] layer 1 expert_value initialized from legacy router.weight
+[init] layer 2 expert_embed initialized from legacy router.weight
+[init] layer 2 expert_key initialized from legacy router.weight
+[init] layer 2 expert_value initialized from legacy router.weight
+[init] layer 3 expert_embed initialized from legacy router.weight
+[init] layer 3 expert_key initialized from legacy router.weight
+[init] layer 3 expert_value initialized from legacy router.weight
+[init] layer 4 expert_embed initialized from legacy router.weight
+[init] layer 4 expert_key initialized from legacy router.weight
+[init] layer 4 expert_value initialized from legacy router.weight
+[init] layer 5 expert_embed initialized from legacy router.weight
+[init] layer 5 expert_key initialized from legacy router.weight
+[init] layer 5 expert_value initialized from legacy router.weight
+[init] layer 6 expert_embed initialized from legacy router.weight
+[init] layer 6 expert_key initialized from legacy router.weight
+[init] layer 6 expert_value initialized from legacy router.weight
+[init] layer 7 expert_embed initialized from legacy router.weight
+[init] layer 7 expert_key initialized from legacy router.weight
+[init] layer 7 expert_value initialized from legacy router.weight
+[init] layer 8 expert_embed initialized from legacy router.weight
+[init] layer 8 expert_key initialized from legacy router.weight
+[init] layer 8 expert_value initialized from legacy router.weight
+[init] layer 9 expert_embed initialized from legacy router.weight
+[init] layer 9 expert_key initialized from legacy router.weight
+[init] layer 9 expert_value initialized from legacy router.weight
+[init] layer 10 expert_embed initialized from legacy router.weight
+[init] layer 10 expert_key initialized from legacy router.weight
+[init] layer 10 expert_value initialized from legacy router.weight
+[init] layer 11 expert_embed initialized from legacy router.weight
+[init] layer 11 expert_key initialized from legacy router.weight
+[init] layer 11 expert_value initialized from legacy router.weight
+[init] layer 12 expert_embed initialized from legacy router.weight
+[init] layer 12 expert_key initialized from legacy router.weight
+[init] layer 12 expert_value initialized from legacy router.weight
+[init] layer 13 expert_embed initialized from legacy router.weight
+[init] layer 13 expert_key initialized from legacy router.weight
+[init] layer 13 expert_value initialized from legacy router.weight
+[init] layer 14 expert_embed initialized from legacy router.weight
+[init] layer 14 expert_key initialized from legacy router.weight
+[init] layer 14 expert_value initialized from legacy router.weight
+[init] layer 15 expert_embed initialized from legacy router.weight
+[init] layer 15 expert_key initialized from legacy router.weight
+[init] layer 15 expert_value initialized from legacy router.weight
+[init] layer 16 expert_embed initialized from legacy router.weight
+[init] layer 16 expert_key initialized from legacy router.weight
+[init] layer 16 expert_value initialized from legacy router.weight
+[init] layer 17 expert_embed initialized from legacy router.weight
+[init] layer 17 expert_key initialized from legacy router.weight
+[init] layer 17 expert_value initialized from legacy router.weight
+[init] layer 18 expert_embed initialized from legacy router.weight
+[init] layer 18 expert_key initialized from legacy router.weight
+[init] layer 18 expert_value initialized from legacy router.weight
+[init] layer 19 expert_embed initialized from legacy router.weight
+[init] layer 19 expert_key initialized from legacy router.weight
+[init] layer 19 expert_value initialized from legacy router.weight
+[init] layer 20 expert_embed initialized from legacy router.weight
+[init] layer 20 expert_key initialized from legacy router.weight
+[init] layer 20 expert_value initialized from legacy router.weight
+[init] layer 21 expert_embed initialized from legacy router.weight
+[init] layer 21 expert_key initialized from legacy router.weight
+[init] layer 21 expert_value initialized from legacy router.weight
+[init] layer 22 expert_embed initialized from legacy router.weight
+[init] layer 22 expert_key initialized from legacy router.weight
+[init] layer 22 expert_value initialized from legacy router.weight
+[init] layer 23 expert_embed initialized from legacy router.weight
+[init] layer 23 expert_key initialized from legacy router.weight
+[init] layer 23 expert_value initialized from legacy router.weight
+[save][stage1] cpu router init from legacy dense router for 24 layers
+[save][stage1] applied router-only state onto CPU export model: router_tensors=168 missing_after_partial_load=4659
+[save] full checkpoint export dtype=torch.bfloat16 -> /root/models/out_qw_cb_lowlr_norestrict_abl_newlr01_ctx03/ckpt_after_stage1
+[2026-04-22 00:01:04,771] [INFO] [real_accelerator.py:203:get_accelerator] Setting ds_accelerator to cuda (auto detect)
+[93m [WARNING] [0m async_io requires the dev libaio .so object and headers but these were not found.
+[93m [WARNING] [0m async_io: please install the libaio-dev package with apt
+[93m [WARNING] [0m If libaio is already installed (perhaps from source), try setting the CFLAGS and LDFLAGS environment variables to where it can be found.
+[93m [WARNING] [0m Please specify the CUTLASS repo directory as environment variable $CUTLASS_PATH
+[93m [WARNING] [0m sparse_attn requires a torch version >= 1.5 and < 2.0 but detected 2.5
+[93m [WARNING] [0m using untested triton version (3.1.0), only 1.0.0 is known to be compatible
+
+[launcher] running:
+  /home/vipuser/miniconda3/envs/op/bin/python -m torch.distributed.run --nproc_per_node 1 /root/Predict_v2/run_stage2_qwen_dynamic_moe.py --model_path /root/models/Qwen_MoE --output_dir /root/models/out_qw_cb_lowlr_norestrict_abl_newlr01_ctx03 --dataset piqa --debug_nonfinite_router 1 --eval_dataset piqa --piqa_local_dir /root/datasets/PIQA --train_split train --eval_split validation --block_size 72 --batch_size 24 --grad_accum 1 --epochs 2 --lr 0.0001 --dataloader_num_workers 0 --weight_decay 0.0 --warmup_ratio 0.03 --min_lr_ratio 0.25 --lora_r 16 --lora_alpha 16 --lora_dropout 0.05 --lora_target_modules q_proj,k_proj,v_proj,o_proj,gate_proj,up_proj,down_proj --num_proc 8 --eval_max_samples 200 --load_in_4bit 0 --load_in_8bit 1 --use_bnb_8bit 0 --load_in_fp16 0 --fp16 0 --bf16 0 --save_dtype bfloat16 --bnb_4bit_quant_type nf4 --bnb_4bit_use_double_quant 1 --bnb_4bit_compute_dtype bfloat16 --gradient_checkpointing 0 --train_extra_params_in_fp32 1 --train_new_router_params 1 --router_top_k 4 --router_use_entmax 0 --router_entmax_alpha 1.7 --router_use_softmax_temperature 1 --router_softmax_temperature 1.0 --share_router_expert_embedding 0 --router_aux_loss_coef 0.0 --router_z_loss_coef 0.0 --router_pull_loss_coef 0.0 --router_use_ema_update 1 --router_ema_momentum 0.99 --router_pull_temperature 1.0 --router_pull_loss_type hard_ce --router_lr_mult 1.15 --use_router_context 1 --router_context_scale 0.3 --stage2_init_path /root/models/out_qw_cb_lowlr_norestrict_abl_newlr01_ctx03/ckpt_after_stage1 --stage2_include_validation_in_train 0 --stage2_validation_train_ratio 0.1 --router_aux_loss_coef 0.0 --router_z_loss_coef 0.0
+[load] tokenizer from model_path: /root/models/Qwen_MoE
+[load] distributed=True world_size=1 4bit=False 8bit=True
+[train] mixed precision: fp16=False bf16=False
+[train] two-stage path: stage1 router distillation, then stage2 LoRA fine-tuning
+[stage2] loading model from /root/models/out_qw_cb_lowlr_norestrict_abl_newlr01_ctx03/ckpt_after_stage1
+[stage2] extra trainable new-router params: 509214720
+[stage2] cast selected router params to fp32: 0
+[stage2] trainable params: 763232256/15079016448 (5.06%)
+trainable params: 763,232,256 || all params: 15,079,016,448 || trainable%: 5.0616
+[stage2][data] train=16113 eval=200 block_size=72
+[stage2][opt] param groups: other=8976 router=168
+[stage2][opt] lrs: other=1.000e-04 router=1.150e-04
+[train] epoch=1/2 step=50/1342 loss=3.3929 ce=3.3929 ce_ema=4.9015 aux=1.9806 z=17.6202 pull=3.6806 pull_coef=0.000 pull_type=hard_ce budget=0.0000 top_k=4 budget_scale=0.000 lr=9.999e-05 elapsed=4.7m
+[train] epoch=1/2 step=100/1342 loss=2.6536 ce=2.6536 ce_ema=3.6714 aux=1.8581 z=17.6485 pull=3.6651 pull_coef=0.000 pull_type=hard_ce budget=0.0000 top_k=4 budget_scale=0.000 lr=9.961e-05 elapsed=9.3m
+[train] epoch=1/2 step=150/1342 loss=2.5493 ce=2.5493 ce_ema=3.0472 aux=1.9404 z=17.5906 pull=3.6696 pull_coef=0.000 pull_type=hard_ce budget=0.0000 top_k=4 budget_scale=0.000 lr=9.869e-05 elapsed=13.9m
+[train] epoch=1/2 step=200/1342 loss=2.8582 ce=2.8582 ce_ema=2.7993 aux=2.0234 z=17.7123 pull=3.6528 pull_coef=0.000 pull_type=hard_ce budget=0.0000 top_k=4 budget_scale=0.000 lr=9.724e-05 elapsed=18.8m
+[eval] step=200 loss=2.6827 ppl=14.62
+[train] epoch=1/2 step=250/1342 loss=2.4490 ce=2.4490 ce_ema=2.7081 aux=2.1050 z=17.8090 pull=3.6483 pull_coef=0.000 pull_type=hard_ce budget=0.0000 top_k=4 budget_scale=0.000 lr=9.529e-05 elapsed=23.4m
+[train] epoch=1/2 step=300/1342 loss=2.9007 ce=2.9007 ce_ema=2.6221 aux=2.0329 z=17.8057 pull=3.6577 pull_coef=0.000 pull_type=hard_ce budget=0.0000 top_k=4 budget_scale=0.000 lr=9.286e-05 elapsed=27.9m
+[train] epoch=1/2 step=350/1342 loss=2.3654 ce=2.3654 ce_ema=2.5669 aux=1.9992 z=17.8080 pull=3.6438 pull_coef=0.000 pull_type=hard_ce budget=0.0000 top_k=4 budget_scale=0.000 lr=8.999e-05 elapsed=32.4m
+[train] epoch=1/2 step=400/1342 loss=2.2638 ce=2.2638 ce_ema=2.5696 aux=2.0945 z=17.9188 pull=3.6295 pull_coef=0.000 pull_type=hard_ce budget=0.0000 top_k=4 budget_scale=0.000 lr=8.672e-05 elapsed=37.3m
+[eval] step=400 loss=2.5551 ppl=12.87
+[train] epoch=1/2 step=450/1342 loss=2.5594 ce=2.5594 ce_ema=2.5026 aux=2.0532 z=17.8387 pull=3.6336 pull_coef=0.000 pull_type=hard_ce budget=0.0000 top_k=4 budget_scale=0.000 lr=8.310e-05 elapsed=41.9m
+[train] epoch=1/2 step=500/1342 loss=2.2465 ce=2.2465 ce_ema=2.4911 aux=2.2651 z=18.0642 pull=3.6290 pull_coef=0.000 pull_type=hard_ce budget=0.0000 top_k=4 budget_scale=0.000 lr=7.918e-05 elapsed=46.4m
+[train] epoch=1/2 step=550/1342 loss=2.7169 ce=2.7169 ce_ema=2.4639 aux=2.3828 z=17.9949 pull=3.6199 pull_coef=0.000 pull_type=hard_ce budget=0.0000 top_k=4 budget_scale=0.000 lr=7.501e-05 elapsed=51.0m
+[train] epoch=1/2 step=600/1342 loss=2.4958 ce=2.4958 ce_ema=2.4386 aux=2.1376 z=17.9659 pull=3.6230 pull_coef=0.000 pull_type=hard_ce budget=0.0000 top_k=4 budget_scale=0.000 lr=7.067e-05 elapsed=56.0m
+[eval] step=600 loss=2.4841 ppl=11.99
+[train] epoch=1/2 step=650/1342 loss=2.3210 ce=2.3210 ce_ema=2.4403 aux=2.2167 z=18.0232 pull=3.6190 pull_coef=0.000 pull_type=hard_ce budget=0.0000 top_k=4 budget_scale=0.000 lr=6.620e-05 elapsed=60.5m
+[train] epoch=2/2 step=700/1342 loss=1.9838 ce=1.9838 ce_ema=2.3273 aux=2.4111 z=18.1166 pull=3.6106 pull_coef=0.000 pull_type=hard_ce budget=0.0000 top_k=4 budget_scale=0.000 lr=6.169e-05 elapsed=65.1m
+[train] epoch=2/2 step=750/1342 loss=2.1568 ce=2.1568 ce_ema=2.2642 aux=2.5670 z=18.2441 pull=3.6064 pull_coef=0.000 pull_type=hard_ce budget=0.0000 top_k=4 budget_scale=0.000 lr=5.718e-05 elapsed=69.6m
+[train] epoch=2/2 step=800/1342 loss=2.2920 ce=2.2920 ce_ema=2.2280 aux=2.3406 z=18.1770 pull=3.6121 pull_coef=0.000 pull_type=hard_ce budget=0.0000 top_k=4 budget_scale=0.000 lr=5.275e-05 elapsed=74.6m
+[eval] step=800 loss=2.4468 ppl=11.55
+[train] epoch=2/2 step=850/1342 loss=2.3984 ce=2.3984 ce_ema=2.2213 aux=2.4892 z=18.2169 pull=3.6039 pull_coef=0.000 pull_type=hard_ce budget=0.0000 top_k=4 budget_scale=0.000 lr=4.846e-05 elapsed=79.2m
+[train] epoch=2/2 step=900/1342 loss=1.8076 ce=1.8076 ce_ema=2.1982 aux=2.3739 z=18.2055 pull=3.6087 pull_coef=0.000 pull_type=hard_ce budget=0.0000 top_k=4 budget_scale=0.000 lr=4.438e-05 elapsed=83.8m
+[train] epoch=2/2 step=950/1342 loss=2.1733 ce=2.1733 ce_ema=2.1881 aux=2.5914 z=18.2490 pull=3.5995 pull_coef=0.000 pull_type=hard_ce budget=0.0000 top_k=4 budget_scale=0.000 lr=4.056e-05 elapsed=88.3m
+[train] epoch=2/2 step=1000/1342 loss=2.4217 ce=2.4217 ce_ema=2.2109 aux=2.4038 z=18.2513 pull=3.6037 pull_coef=0.000 pull_type=hard_ce budget=0.0000 top_k=4 budget_scale=0.000 lr=3.706e-05 elapsed=93.4m
+[eval] step=1000 loss=2.4427 ppl=11.50
+[train] epoch=2/2 step=1050/1342 loss=2.1126 ce=2.1126 ce_ema=2.1840 aux=2.2699 z=18.2682 pull=3.6114 pull_coef=0.000 pull_type=hard_ce budget=0.0000 top_k=4 budget_scale=0.000 lr=3.393e-05 elapsed=97.9m
+[train] epoch=2/2 step=1100/1342 loss=2.1436 ce=2.1436 ce_ema=2.1689 aux=2.3275 z=18.3119 pull=3.6052 pull_coef=0.000 pull_type=hard_ce budget=0.0000 top_k=4 budget_scale=0.000 lr=3.121e-05 elapsed=102.3m
+[train] epoch=2/2 step=1150/1342 loss=2.1902 ce=2.1902 ce_ema=2.1518 aux=2.3004 z=18.2198 pull=3.6097 pull_coef=0.000 pull_type=hard_ce budget=0.0000 top_k=4 budget_scale=0.000 lr=2.895e-05 elapsed=106.9m
+[train] epoch=2/2 step=1200/1342 loss=2.2474 ce=2.2474 ce_ema=2.1592 aux=2.3350 z=18.2542 pull=3.6051 pull_coef=0.000 pull_type=hard_ce budget=0.0000 top_k=4 budget_scale=0.000 lr=2.718e-05 elapsed=111.9m
+[eval] step=1200 loss=2.4264 ppl=11.32
+[train] epoch=2/2 step=1250/1342 loss=2.3556 ce=2.3556 ce_ema=2.1583 aux=2.3334 z=18.2800 pull=3.6063 pull_coef=0.000 pull_type=hard_ce budget=0.0000 top_k=4 budget_scale=0.000 lr=2.592e-05 elapsed=116.4m
+[train] epoch=2/2 step=1300/1342 loss=2.1038 ce=2.1038 ce_ema=2.1634 aux=2.2474 z=18.3246 pull=3.6060 pull_coef=0.000 pull_type=hard_ce budget=0.0000 top_k=4 budget_scale=0.000 lr=2.519e-05 elapsed=121.0m
+[save] trying to dequantize model before export to torch.bfloat16

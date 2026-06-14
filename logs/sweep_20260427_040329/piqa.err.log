@@ -1,0 +1,206 @@
+/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/cuda/__init__.py:61: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+WARNING:__main__:
+*****************************************
+Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
+*****************************************
+/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/cuda/__init__.py:61: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/cuda/__init__.py:61: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+[W427 04:03:34.469251258 CUDAAllocatorConfig.h:28] Warning: expandable_segments not supported on this platform (function operator())
+[W427 04:03:34.737149327 CUDAAllocatorConfig.h:28] Warning: expandable_segments not supported on this platform (function operator())
+You are using the default legacy behaviour of the <class 'transformers.models.llama.tokenization_llama.LlamaTokenizer'>. This is expected, and simply means that the `legacy` (previous) behavior will be used so nothing changes for you. If you want to use the new behaviour, set `legacy=False`. This should only be set if you understand what it means, and thoroughly read the reason why this was added as explained in https://github.com/huggingface/transformers/pull/24565 - if you loaded a llama tokenizer from a GGUF file you can ignore this message
+You are using the default legacy behaviour of the <class 'transformers.models.llama.tokenization_llama.LlamaTokenizer'>. This is expected, and simply means that the `legacy` (previous) behavior will be used so nothing changes for you. If you want to use the new behaviour, set `legacy=False`. This should only be set if you understand what it means, and thoroughly read the reason why this was added as explained in https://github.com/huggingface/transformers/pull/24565 - if you loaded a llama tokenizer from a GGUF file you can ignore this message
+You are using the default legacy behaviour of the <class 'transformers.models.llama.tokenization_llama_fast.LlamaTokenizerFast'>. This is expected, and simply means that the `legacy` (previous) behavior will be used so nothing changes for you. If you want to use the new behaviour, set `legacy=False`. This should only be set if you understand what it means, and thoroughly read the reason why this was added as explained in https://github.com/huggingface/transformers/pull/24565 - if you loaded a llama tokenizer from a GGUF file you can ignore this message.
+You are using the default legacy behaviour of the <class 'transformers.models.llama.tokenization_llama_fast.LlamaTokenizerFast'>. This is expected, and simply means that the `legacy` (previous) behavior will be used so nothing changes for you. If you want to use the new behaviour, set `legacy=False`. This should only be set if you understand what it means, and thoroughly read the reason why this was added as explained in https://github.com/huggingface/transformers/pull/24565 - if you loaded a llama tokenizer from a GGUF file you can ignore this message.
+MoEForCausalLM has generative capabilities, as `prepare_inputs_for_generation` is explicitly defined. However, it doesn't directly inherit from `GenerationMixin`. From 👉v4.50👈 onwards, `PreTrainedModel` will NOT inherit from `GenerationMixin`, and this model will lose the ability to call `generate` and other related functions.
+  - If you're using `trust_remote_code=True`, you can get rid of this warning by loading the model with an auto class. See https://huggingface.co/docs/transformers/en/model_doc/auto#auto-classes
+  - If you are the owner of the model architecture code, please modify your model class such that it inherits from `GenerationMixin` (after `PreTrainedModel`, otherwise you'll get an exception).
+  - If you are not the owner of the model architecture class, please contact the model code owner to update it.
+MoEForCausalLM has generative capabilities, as `prepare_inputs_for_generation` is explicitly defined. However, it doesn't directly inherit from `GenerationMixin`. From 👉v4.50👈 onwards, `PreTrainedModel` will NOT inherit from `GenerationMixin`, and this model will lose the ability to call `generate` and other related functions.
+  - If you're using `trust_remote_code=True`, you can get rid of this warning by loading the model with an auto class. See https://huggingface.co/docs/transformers/en/model_doc/auto#auto-classes
+  - If you are the owner of the model architecture code, please modify your model class such that it inherits from `GenerationMixin` (after `PreTrainedModel`, otherwise you'll get an exception).
+  - If you are not the owner of the model architecture class, please contact the model code owner to update it.
+/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/datasets/load.py:1491: FutureWarning: The repository for ybisk/piqa contains custom code which must be executed to correctly load the dataset. You can inspect the repository content at https://hf.co/datasets/ybisk/piqa
+You can avoid this message in future by passing the argument `trust_remote_code=True`.
+Passing `trust_remote_code=True` will be mandatory to load this dataset from the next major release of `datasets`.
+  warnings.warn(
+/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/datasets/load.py:1491: FutureWarning: The repository for ybisk/piqa contains custom code which must be executed to correctly load the dataset. You can inspect the repository content at https://hf.co/datasets/ybisk/piqa
+You can avoid this message in future by passing the argument `trust_remote_code=True`.
+Passing `trust_remote_code=True` will be mandatory to load this dataset from the next major release of `datasets`.
+  warnings.warn(
+stage1 1/1:   0%|          | 0/115 [00:00<?, ?it/s]stage1 1/1:   1%|          | 1/115 [00:02<04:22,  2.30s/it]stage1 1/1:   2%|▏         | 2/115 [00:03<03:17,  1.75s/it]stage1 1/1:   3%|▎         | 3/115 [00:05<03:02,  1.63s/it]stage1 1/1:   3%|▎         | 4/115 [00:06<02:54,  1.57s/it]stage1 1/1:   4%|▍         | 5/115 [00:08<02:49,  1.54s/it]stage1 1/1:   5%|▌         | 6/115 [00:09<02:45,  1.52s/it]stage1 1/1:   6%|▌         | 7/115 [00:11<02:43,  1.51s/it]stage1 1/1:   7%|▋         | 8/115 [00:12<02:40,  1.50s/it]stage1 1/1:   8%|▊         | 9/115 [00:13<02:34,  1.46s/it]stage1 1/1:   9%|▊         | 10/115 [00:15<02:30,  1.43s/it]stage1 1/1:  10%|▉         | 11/115 [00:16<02:30,  1.45s/it]stage1 1/1:  10%|█         | 12/115 [00:18<02:30,  1.46s/it]stage1 1/1:  11%|█▏        | 13/115 [00:19<02:29,  1.47s/it]stage1 1/1:  12%|█▏        | 14/115 [00:21<02:29,  1.48s/it]stage1 1/1:  13%|█▎        | 15/115 [00:23<02:44,  1.64s/it]stage1 1/1:  14%|█▍        | 16/115 [00:24<02:34,  1.56s/it]stage1 1/1:  15%|█▍        | 17/115 [00:26<02:46,  1.69s/it]stage1 1/1:  16%|█▌        | 18/115 [00:28<02:34,  1.59s/it]stage1 1/1:  17%|█▋        | 19/115 [00:30<02:45,  1.72s/it]stage1 1/1:  17%|█▋        | 20/115 [00:31<02:33,  1.61s/it]stage1 1/1:  18%|█▊        | 21/115 [00:33<02:43,  1.74s/it]stage1 1/1:  19%|█▉        | 22/115 [00:34<02:31,  1.62s/it]stage1 1/1:  20%|██        | 23/115 [00:36<02:40,  1.74s/it]stage1 1/1:  21%|██        | 24/115 [00:38<02:28,  1.63s/it]stage1 1/1:  22%|██▏       | 25/115 [00:40<02:37,  1.75s/it]stage1 1/1:  23%|██▎       | 26/115 [00:41<02:25,  1.63s/it]stage1 1/1:  23%|██▎       | 27/115 [00:43<02:34,  1.75s/it]stage1 1/1:  24%|██▍       | 28/115 [00:44<02:22,  1.64s/it]stage1 1/1:  25%|██▌       | 29/115 [00:46<02:17,  1.59s/it]stage1 1/1:  26%|██▌       | 30/115 [00:48<02:26,  1.72s/it]stage1 1/1:  27%|██▋       | 31/115 [00:49<02:15,  1.62s/it]stage1 1/1:  28%|██▊       | 32/115 [00:51<02:24,  1.74s/it]stage1 1/1:  29%|██▊       | 33/115 [00:53<02:13,  1.63s/it]stage1 1/1:  30%|██▉       | 34/115 [00:55<02:21,  1.74s/it]stage1 1/1:  30%|███       | 35/115 [00:56<02:10,  1.63s/it]stage1 1/1:  31%|███▏      | 36/115 [00:58<02:18,  1.75s/it]stage1 1/1:  32%|███▏      | 37/115 [01:00<02:07,  1.63s/it]stage1 1/1:  33%|███▎      | 38/115 [01:02<02:14,  1.75s/it]stage1 1/1:  34%|███▍      | 39/115 [01:03<02:04,  1.64s/it]stage1 1/1:  35%|███▍      | 40/115 [01:05<02:11,  1.75s/it]stage1 1/1:  36%|███▌      | 41/115 [01:06<02:01,  1.64s/it]stage1 1/1:  37%|███▋      | 42/115 [01:07<01:44,  1.43s/it]stage1 1/1:  37%|███▋      | 43/115 [01:09<01:56,  1.61s/it]stage1 1/1:  38%|███▊      | 44/115 [01:11<01:49,  1.54s/it]stage1 1/1:  39%|███▉      | 45/115 [01:13<01:57,  1.68s/it]stage1 1/1:  40%|████      | 46/115 [01:14<01:49,  1.59s/it]stage1 1/1:  41%|████      | 47/115 [01:16<01:56,  1.72s/it]stage1 1/1:  42%|████▏     | 48/115 [01:17<01:48,  1.61s/it]stage1 1/1:  43%|████▎     | 49/115 [01:19<01:54,  1.74s/it]stage1 1/1:  43%|████▎     | 50/115 [01:21<01:48,  1.67s/it]stage1 1/1:  44%|████▍     | 51/115 [01:23<01:51,  1.74s/it]stage1 1/1:  45%|████▌     | 52/115 [01:24<01:42,  1.62s/it]stage1 1/1:  46%|████▌     | 53/115 [01:26<01:48,  1.74s/it]stage1 1/1:  47%|████▋     | 54/115 [01:28<01:39,  1.63s/it]stage1 1/1:  48%|████▊     | 55/115 [01:30<01:44,  1.75s/it]stage1 1/1:  49%|████▊     | 56/115 [01:31<01:36,  1.64s/it]stage1 1/1:  50%|████▉     | 57/115 [01:33<01:41,  1.76s/it]stage1 1/1:  50%|█████     | 58/115 [01:34<01:33,  1.64s/it]stage1 1/1:  51%|█████▏    | 59/115 [01:36<01:38,  1.76s/it]stage1 1/1:  52%|█████▏    | 60/115 [01:38<01:30,  1.64s/it]stage1 1/1:  53%|█████▎    | 61/115 [01:40<01:34,  1.76s/it]stage1 1/1:  54%|█████▍    | 62/115 [01:41<01:26,  1.64s/it]stage1 1/1:  55%|█████▍    | 63/115 [01:43<01:31,  1.76s/it]stage1 1/1:  56%|█████▌    | 64/115 [01:45<01:23,  1.64s/it]stage1 1/1:  57%|█████▋    | 65/115 [01:47<01:27,  1.76s/it]stage1 1/1:  57%|█████▋    | 66/115 [01:48<01:20,  1.64s/it]stage1 1/1:  58%|█████▊    | 67/115 [01:50<01:24,  1.76s/it]stage1 1/1:  59%|█████▉    | 68/115 [01:51<01:17,  1.64s/it]stage1 1/1:  60%|██████    | 69/115 [01:52<01:06,  1.44s/it]stage1 1/1:  61%|██████    | 70/115 [01:54<01:12,  1.62s/it]stage1 1/1:  62%|██████▏   | 71/115 [01:56<01:07,  1.54s/it]stage1 1/1:  63%|██████▎   | 72/115 [01:58<01:12,  1.69s/it]stage1 1/1:  63%|██████▎   | 73/115 [01:59<01:06,  1.59s/it]stage1 1/1:  64%|██████▍   | 74/115 [02:01<01:10,  1.72s/it]stage1 1/1:  65%|██████▌   | 75/115 [02:03<01:04,  1.62s/it]stage1 1/1:  66%|██████▌   | 76/115 [02:05<01:07,  1.74s/it]stage1 1/1:  67%|██████▋   | 77/115 [02:06<01:01,  1.63s/it]stage1 1/1:  68%|██████▊   | 78/115 [02:08<01:04,  1.75s/it]stage1 1/1:  69%|██████▊   | 79/115 [02:09<00:58,  1.64s/it]stage1 1/1:  70%|██████▉   | 80/115 [02:11<01:01,  1.75s/it]stage1 1/1:  70%|███████   | 81/115 [02:13<00:55,  1.64s/it]stage1 1/1:  71%|███████▏  | 82/115 [02:15<00:57,  1.75s/it]stage1 1/1:  72%|███████▏  | 83/115 [02:16<00:52,  1.64s/it]stage1 1/1:  73%|███████▎  | 84/115 [02:18<00:54,  1.76s/it]stage1 1/1:  74%|███████▍  | 85/115 [02:20<00:49,  1.64s/it]stage1 1/1:  75%|███████▍  | 86/115 [02:22<00:51,  1.76s/it]stage1 1/1:  76%|███████▌  | 87/115 [02:23<00:45,  1.64s/it]stage1 1/1:  77%|███████▋  | 88/115 [02:25<00:47,  1.76s/it]stage1 1/1:  77%|███████▋  | 89/115 [02:26<00:42,  1.64s/it]stage1 1/1:  78%|███████▊  | 90/115 [02:28<00:43,  1.76s/it]stage1 1/1:  79%|███████▉  | 91/115 [02:30<00:39,  1.64s/it]stage1 1/1:  80%|████████  | 92/115 [02:32<00:40,  1.76s/it]stage1 1/1:  81%|████████  | 93/115 [02:33<00:36,  1.64s/it]stage1 1/1:  82%|████████▏ | 94/115 [02:35<00:36,  1.76s/it]stage1 1/1:  83%|████████▎ | 95/115 [02:37<00:32,  1.64s/it]stage1 1/1:  83%|████████▎ | 96/115 [02:39<00:33,  1.76s/it]stage1 1/1:  84%|████████▍ | 97/115 [02:40<00:29,  1.64s/it]stage1 1/1:  85%|████████▌ | 98/115 [02:41<00:24,  1.44s/it]stage1 1/1:  86%|████████▌ | 99/115 [02:43<00:25,  1.62s/it]stage1 1/1:  87%|████████▋ | 100/115 [02:44<00:23,  1.58s/it]stage1 1/1:  88%|████████▊ | 101/115 [02:46<00:23,  1.68s/it]stage1 1/1:  89%|████████▊ | 102/115 [02:48<00:20,  1.59s/it]stage1 1/1:  90%|████████▉ | 103/115 [02:50<00:20,  1.72s/it]stage1 1/1:  90%|█████████ | 104/115 [02:51<00:17,  1.62s/it]stage1 1/1:  91%|█████████▏| 105/115 [02:53<00:17,  1.74s/it]stage1 1/1:  92%|█████████▏| 106/115 [02:55<00:14,  1.63s/it]stage1 1/1:  93%|█████████▎| 107/115 [02:57<00:14,  1.75s/it]stage1 1/1:  94%|█████████▍| 108/115 [02:58<00:11,  1.64s/it]stage1 1/1:  95%|█████████▍| 109/115 [03:00<00:10,  1.76s/it]stage1 1/1:  96%|█████████▌| 110/115 [03:01<00:08,  1.64s/it]stage1 1/1:  97%|█████████▋| 111/115 [03:03<00:07,  1.76s/it]stage1 1/1:  97%|█████████▋| 112/115 [03:05<00:04,  1.64s/it]stage1 1/1:  98%|█████████▊| 113/115 [03:07<00:03,  1.76s/it]stage1 1/1:  99%|█████████▉| 114/115 [03:08<00:01,  1.64s/it]stage1 1/1: 100%|██████████| 115/115 [03:10<00:00,  1.76s/it]stage1 1/1: 100%|██████████| 115/115 [03:10<00:00,  1.66s/it]
+/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/deepspeed/runtime/zero/linear.py:49: FutureWarning: `torch.cuda.amp.custom_fwd(args...)` is deprecated. Please use `torch.amp.custom_fwd(args..., device_type='cuda')` instead.
+  def forward(ctx, input, weight, bias=None):
+/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/deepspeed/runtime/zero/linear.py:67: FutureWarning: `torch.cuda.amp.custom_bwd(args...)` is deprecated. Please use `torch.amp.custom_bwd(args..., device_type='cuda')` instead.
+  def backward(ctx, grad_output):
+MoEForCausalLM has generative capabilities, as `prepare_inputs_for_generation` is explicitly defined. However, it doesn't directly inherit from `GenerationMixin`. From 👉v4.50👈 onwards, `PreTrainedModel` will NOT inherit from `GenerationMixin`, and this model will lose the ability to call `generate` and other related functions.
+  - If you're using `trust_remote_code=True`, you can get rid of this warning by loading the model with an auto class. See https://huggingface.co/docs/transformers/en/model_doc/auto#auto-classes
+  - If you are the owner of the model architecture code, please modify your model class such that it inherits from `GenerationMixin` (after `PreTrainedModel`, otherwise you'll get an exception).
+  - If you are not the owner of the model architecture class, please contact the model code owner to update it.
+MoEForCausalLM has generative capabilities, as `prepare_inputs_for_generation` is explicitly defined. However, it doesn't directly inherit from `GenerationMixin`. From 👉v4.50👈 onwards, `PreTrainedModel` will NOT inherit from `GenerationMixin`, and this model will lose the ability to call `generate` and other related functions.
+  - If you're using `trust_remote_code=True`, you can get rid of this warning by loading the model with an auto class. See https://huggingface.co/docs/transformers/en/model_doc/auto#auto-classes
+  - If you are the owner of the model architecture code, please modify your model class such that it inherits from `GenerationMixin` (after `PreTrainedModel`, otherwise you'll get an exception).
+  - If you are not the owner of the model architecture class, please contact the model code owner to update it.
+/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/cuda/__init__.py:61: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+WARNING:__main__:
+*****************************************
+Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
+*****************************************
+/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/cuda/__init__.py:61: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/cuda/__init__.py:61: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+[W427 04:08:04.725033332 CUDAAllocatorConfig.h:28] Warning: expandable_segments not supported on this platform (function operator())
+[W427 04:08:04.037182835 CUDAAllocatorConfig.h:28] Warning: expandable_segments not supported on this platform (function operator())
+You are using the default legacy behaviour of the <class 'transformers.models.llama.tokenization_llama.LlamaTokenizer'>. This is expected, and simply means that the `legacy` (previous) behavior will be used so nothing changes for you. If you want to use the new behaviour, set `legacy=False`. This should only be set if you understand what it means, and thoroughly read the reason why this was added as explained in https://github.com/huggingface/transformers/pull/24565 - if you loaded a llama tokenizer from a GGUF file you can ignore this message
+You are using the default legacy behaviour of the <class 'transformers.models.llama.tokenization_llama.LlamaTokenizer'>. This is expected, and simply means that the `legacy` (previous) behavior will be used so nothing changes for you. If you want to use the new behaviour, set `legacy=False`. This should only be set if you understand what it means, and thoroughly read the reason why this was added as explained in https://github.com/huggingface/transformers/pull/24565 - if you loaded a llama tokenizer from a GGUF file you can ignore this message
+You are using the default legacy behaviour of the <class 'transformers.models.llama.tokenization_llama_fast.LlamaTokenizerFast'>. This is expected, and simply means that the `legacy` (previous) behavior will be used so nothing changes for you. If you want to use the new behaviour, set `legacy=False`. This should only be set if you understand what it means, and thoroughly read the reason why this was added as explained in https://github.com/huggingface/transformers/pull/24565 - if you loaded a llama tokenizer from a GGUF file you can ignore this message.
+You are using the default legacy behaviour of the <class 'transformers.models.llama.tokenization_llama_fast.LlamaTokenizerFast'>. This is expected, and simply means that the `legacy` (previous) behavior will be used so nothing changes for you. If you want to use the new behaviour, set `legacy=False`. This should only be set if you understand what it means, and thoroughly read the reason why this was added as explained in https://github.com/huggingface/transformers/pull/24565 - if you loaded a llama tokenizer from a GGUF file you can ignore this message.
+MoEForCausalLM has generative capabilities, as `prepare_inputs_for_generation` is explicitly defined. However, it doesn't directly inherit from `GenerationMixin`. From 👉v4.50👈 onwards, `PreTrainedModel` will NOT inherit from `GenerationMixin`, and this model will lose the ability to call `generate` and other related functions.
+  - If you're using `trust_remote_code=True`, you can get rid of this warning by loading the model with an auto class. See https://huggingface.co/docs/transformers/en/model_doc/auto#auto-classes
+  - If you are the owner of the model architecture code, please modify your model class such that it inherits from `GenerationMixin` (after `PreTrainedModel`, otherwise you'll get an exception).
+  - If you are not the owner of the model architecture class, please contact the model code owner to update it.
+MoEForCausalLM has generative capabilities, as `prepare_inputs_for_generation` is explicitly defined. However, it doesn't directly inherit from `GenerationMixin`. From 👉v4.50👈 onwards, `PreTrainedModel` will NOT inherit from `GenerationMixin`, and this model will lose the ability to call `generate` and other related functions.
+  - If you're using `trust_remote_code=True`, you can get rid of this warning by loading the model with an auto class. See https://huggingface.co/docs/transformers/en/model_doc/auto#auto-classes
+  - If you are the owner of the model architecture code, please modify your model class such that it inherits from `GenerationMixin` (after `PreTrainedModel`, otherwise you'll get an exception).
+  - If you are not the owner of the model architecture class, please contact the model code owner to update it.
+/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/cuda/__init__.py:61: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/cuda/__init__.py:61: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/datasets/load.py:1491: FutureWarning: The repository for ybisk/piqa contains custom code which must be executed to correctly load the dataset. You can inspect the repository content at https://hf.co/datasets/ybisk/piqa
+You can avoid this message in future by passing the argument `trust_remote_code=True`.
+Passing `trust_remote_code=True` will be mandatory to load this dataset from the next major release of `datasets`.
+  warnings.warn(
+/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/datasets/load.py:1491: FutureWarning: The repository for ybisk/piqa contains custom code which must be executed to correctly load the dataset. You can inspect the repository content at https://hf.co/datasets/ybisk/piqa
+You can avoid this message in future by passing the argument `trust_remote_code=True`.
+Passing `trust_remote_code=True` will be mandatory to load this dataset from the next major release of `datasets`.
+  warnings.warn(
+/root/Predict_v2/finetune_moe_att.py:1062: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler(enabled=(fp16 and device.type == "cuda"))
+train:   0%|          | 0/1150 [00:00<?, ?it/s]/root/Predict_v2/finetune_moe_att.py:1062: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler(enabled=(fp16 and device.type == "cuda"))
+
+epoch 1/2:   0%|          | 0/575 [00:00<?, ?it/s][A[rank1]: Traceback (most recent call last):
+[rank1]:   File "/root/Predict_v2/run_stage2_moe_att.py", line 29, in <module>
+[rank1]:     main()
+[rank1]:   File "/root/Predict_v2/run_stage2_moe_att.py", line 25, in main
+[rank1]:     finetune_moe_att.main()
+[rank1]:   File "/root/Predict_v2/finetune_moe_att.py", line 2923, in main
+[rank1]:     train(
+[rank1]:   File "/root/Predict_v2/finetune_moe_att.py", line 1128, in train
+[rank1]:     loss_stats = _forward_stage2_batch(model, batch, amp_dtype=amp_dtype, device=device)
+[rank1]:   File "/root/Predict_v2/finetune_moe_att.py", line 590, in _forward_stage2_batch
+[rank1]:     out = _run_model(batch)
+[rank1]:   File "/root/Predict_v2/finetune_moe_att.py", line 587, in _run_model
+[rank1]:     return model(**inputs)
+[rank1]:   File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1736, in _wrapped_call_impl
+[rank1]:     return self._call_impl(*args, **kwargs)
+[rank1]:   File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1747, in _call_impl
+[rank1]:     return forward_call(*args, **kwargs)
+[rank1]:   File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/nn/parallel/distributed.py", line 1643, in forward
+[rank1]:     else self._run_ddp_forward(*inputs, **kwargs)
+[rank1]:   File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/nn/parallel/distributed.py", line 1459, in _run_ddp_forward
+[rank1]:     return self.module(*inputs, **kwargs)  # type: ignore[index]
+[rank1]:   File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1736, in _wrapped_call_impl
+[rank1]:     return self._call_impl(*args, **kwargs)
+[rank1]:   File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1747, in _call_impl
+[rank1]:     return forward_call(*args, **kwargs)
+[rank1]:   File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/peft/peft_model.py", line 1850, in forward
+[rank1]:     return self.base_model(
+[rank1]:   File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1736, in _wrapped_call_impl
+[rank1]:     return self._call_impl(*args, **kwargs)
+[rank1]:   File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1747, in _call_impl
+[rank1]:     return forward_call(*args, **kwargs)
+[rank1]:   File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/peft/tuners/tuners_utils.py", line 222, in forward
+[rank1]:     return self.model.forward(*args, **kwargs)
+[rank1]:   File "/root/Predict_v2/qwen_moe/modeling/modeling_moe_att_dm.py", line 1290, in forward
+[rank1]:     expert_logits = self.lm_head(expert_outputs.to(self.lm_head.weight.dtype)).float()
+[rank1]: torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 1.92 GiB. GPU 1 has a total capacity of 39.38 GiB of which 417.88 MiB is free. Including non-PyTorch memory, this process has 38.95 GiB memory in use. Of the allocated memory 37.54 GiB is allocated by PyTorch, and 791.35 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+epoch 1/2:   0%|          | 0/575 [00:01<?, ?it/s]
+[rank0]: Traceback (most recent call last):
+[rank0]:   File "/root/Predict_v2/run_stage2_moe_att.py", line 29, in <module>
+[rank0]:     main()
+[rank0]:   File "/root/Predict_v2/run_stage2_moe_att.py", line 25, in main
+[rank0]:     finetune_moe_att.main()
+[rank0]:   File "/root/Predict_v2/finetune_moe_att.py", line 2923, in main
+[rank0]:     train(
+[rank0]:   File "/root/Predict_v2/finetune_moe_att.py", line 1128, in train
+[rank0]:     loss_stats = _forward_stage2_batch(model, batch, amp_dtype=amp_dtype, device=device)
+[rank0]:   File "/root/Predict_v2/finetune_moe_att.py", line 590, in _forward_stage2_batch
+[rank0]:     out = _run_model(batch)
+[rank0]:   File "/root/Predict_v2/finetune_moe_att.py", line 587, in _run_model
+[rank0]:     return model(**inputs)
+[rank0]:   File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1736, in _wrapped_call_impl
+[rank0]:     return self._call_impl(*args, **kwargs)
+[rank0]:   File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1747, in _call_impl
+[rank0]:     return forward_call(*args, **kwargs)
+[rank0]:   File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/nn/parallel/distributed.py", line 1643, in forward
+[rank0]:     else self._run_ddp_forward(*inputs, **kwargs)
+[rank0]:   File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/nn/parallel/distributed.py", line 1459, in _run_ddp_forward
+[rank0]:     return self.module(*inputs, **kwargs)  # type: ignore[index]
+[rank0]:   File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1736, in _wrapped_call_impl
+[rank0]:     return self._call_impl(*args, **kwargs)
+[rank0]:   File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1747, in _call_impl
+[rank0]:     return forward_call(*args, **kwargs)
+[rank0]:   File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/peft/peft_model.py", line 1850, in forward
+[rank0]:     return self.base_model(
+[rank0]:   File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1736, in _wrapped_call_impl
+[rank0]:     return self._call_impl(*args, **kwargs)
+[rank0]:   File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1747, in _call_impl
+[rank0]:     return forward_call(*args, **kwargs)
+[rank0]:   File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/peft/tuners/tuners_utils.py", line 222, in forward
+[rank0]:     return self.model.forward(*args, **kwargs)
+[rank0]:   File "/root/Predict_v2/qwen_moe/modeling/modeling_moe_att_dm.py", line 1290, in forward
+[rank0]:     expert_logits = self.lm_head(expert_outputs.to(self.lm_head.weight.dtype)).float()
+[rank0]: torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 1.92 GiB. GPU 0 has a total capacity of 39.38 GiB of which 417.88 MiB is free. Including non-PyTorch memory, this process has 38.95 GiB memory in use. Of the allocated memory 37.54 GiB is allocated by PyTorch, and 791.35 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+train:   0%|          | 0/1150 [00:02<?, ?it/s]
+[rank0]:[W427 04:09:10.777189076 ProcessGroupNCCL.cpp:1250] Warning: WARNING: process group has NOT been destroyed before we destruct ProcessGroupNCCL. On normal program exit, the application should call destroy_process_group to ensure that any pending NCCL operations have finished in this process. In rare cases this process can exit before this point and block the progress of another member of the process group. This constraint has always been present,  but this warning has only been added since PyTorch 2.4 (function operator())
+W0427 04:09:11.883976 8049 site-packages/torch/distributed/elastic/multiprocessing/api.py:897] Sending process 8092 closing signal SIGTERM
+E0427 04:09:11.947872 8049 site-packages/torch/distributed/elastic/multiprocessing/api.py:869] failed (exitcode: 1) local_rank: 1 (pid: 8093) of binary: /home/vipuser/miniconda3/envs/op/bin/python
+Traceback (most recent call last):
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/runpy.py", line 196, in _run_module_as_main
+    return _run_code(code, main_globals, None,
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/runpy.py", line 86, in _run_code
+    exec(code, run_globals)
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/distributed/run.py", line 923, in <module>
+    main()
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/distributed/elastic/multiprocessing/errors/__init__.py", line 355, in wrapper
+    return f(*args, **kwargs)
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/distributed/run.py", line 919, in main
+    run(args)
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/distributed/run.py", line 910, in run
+    elastic_launch(
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/distributed/launcher/api.py", line 138, in __call__
+    return launch_agent(self._config, self._entrypoint, list(args))
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/distributed/launcher/api.py", line 269, in launch_agent
+    raise ChildFailedError(
+torch.distributed.elastic.multiprocessing.errors.ChildFailedError: 
+============================================================
+/root/Predict_v2/run_stage2_moe_att.py FAILED
+------------------------------------------------------------
+Failures:
+  <NO_OTHER_FAILURES>
+------------------------------------------------------------
+Root Cause (first observed failure):
+[0]:
+  time      : 2026-04-27_04:09:11
+  host      : ubuntu22.04
+  rank      : 1 (local_rank: 1)
+  exitcode  : 1 (pid: 8093)
+  error_file: <N/A>
+  traceback : To enable traceback see: https://pytorch.org/docs/stable/elastic/errors.html
+============================================================
+Traceback (most recent call last):
+  File "/root/Predict_v2/launch_two_stage_torchrun_moe_att.py", line 166, in <module>
+    main()
+  File "/root/Predict_v2/launch_two_stage_torchrun_moe_att.py", line 160, in main
+    _run(cmd2, env)
+  File "/root/Predict_v2/launch_two_stage_torchrun_moe_att.py", line 96, in _run
+    subprocess.run(cmd, check=True, env=env)
+  File "/home/vipuser/miniconda3/envs/op/lib/python3.10/subprocess.py", line 524, in run
+    raise CalledProcessError(retcode, process.args,
+subprocess.CalledProcessError: Command '['/home/vipuser/miniconda3/envs/op/bin/python', '-m', 'torch.distributed.run', '--nproc_per_node', '2', '/root/Predict_v2/run_stage2_moe_att.py', '--model_path', '/root/models/Dynamic_MoE', '--output_dir', '/mnt/data/models/out_moe_att_piqa', '--dataset', 'piqa', '--eval_dataset', 'piqa', '--train_split', 'train', '--eval_split', 'validation', '--block_size', '72', '--batch_size', '14', '--grad_accum', '1', '--epochs', '2', '--lr', '0.0001', '--lora_r', '8', '--lora_alpha', '16', '--lora_dropout', '0.05', '--num_proc', '16', '--load_in_8bit', '0', '--load_in_fp16', '1', '--bf16', '0', '--train_extra_params_in_fp32', '1', '--router_use_entmax', '0', '--router_top_k', '2', '--moe_att_expert_loss_coef', '1.0', '--moe_att_kl_loss_coef', '0.1', '--moe_att_use_detach', '1', '--stage2_init_path', '/mnt/data/models/out_moe_att_piqa/ckpt_after_stage1']' returned non-zero exit status 1.

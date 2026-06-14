@@ -1,0 +1,8 @@
+/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/cuda/__init__.py:61: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/cuda/__init__.py:61: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+`torch_dtype` is deprecated! Use `dtype` instead!
+/home/vipuser/miniconda3/envs/op/lib/python3.10/site-packages/torch/cuda/__init__.py:61: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+Loading checkpoint shards:   0%|          | 0/8 [00:00<?, ?it/s]Loading checkpoint shards:  12%|█▎        | 1/8 [00:13<01:33, 13.41s/it]Loading checkpoint shards:  25%|██▌       | 2/8 [00:34<01:46, 17.73s/it]Loading checkpoint shards:  38%|███▊      | 3/8 [00:55<01:36, 19.31s/it]Loading checkpoint shards:  50%|█████     | 4/8 [01:10<01:10, 17.71s/it]Loading checkpoint shards:  62%|██████▎   | 5/8 [01:30<00:55, 18.35s/it]Loading checkpoint shards:  75%|███████▌  | 6/8 [01:43<00:33, 16.62s/it]Loading checkpoint shards:  88%|████████▊ | 7/8 [02:05<00:18, 18.31s/it]

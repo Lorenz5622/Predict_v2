@@ -1,0 +1,50 @@
+
+[launcher] running:
+  /home/vipuser/miniconda3/envs/op/bin/python -m torch.distributed.run --nproc_per_node 1 /root/Predict_v2/run_stage1_moe_att.py --model_path /root/models/Dynamic_MoE --output_dir /mnt/data/models/out_moe_att_obqa --dataset openbookqa --eval_dataset openbookqa --train_split train --eval_split validation --block_size 108 --batch_size 2 --grad_accum 8 --epochs 3 --lr 0.0001 --lora_r 8 --lora_alpha 16 --lora_dropout 0.05 --num_proc 16 --load_in_8bit 0 --load_in_fp16 1 --bf16 0 --train_extra_params_in_fp32 1 --router_use_entmax 0 --router_top_k 2 --moe_att_expert_loss_coef 1.0 --moe_att_kl_loss_coef 0.1 --moe_att_use_detach 1 --stage1_epochs 1 --stage1_lr 0.0002 --stage1_grad_accum 1 --stage1_data_ratio 0.2 --stage1_distill_temperature 1.0 --stage1_kl_coef 1.0 --stage1_logit_coef 1.0 --stage1_use_logit_loss 1
+[load] tokenizer from model_path: /root/models/Dynamic_MoE
+[load] distributed=True world_size=1 4bit=False 8bit=False
+[train] mixed precision: fp16=False bf16=False
+[warn] load_in_fp16=1 only loads model weights in fp16; it does not enable AMP autocast. Set --fp16 1 or --bf16 1 to reduce activation memory.
+[stage1] loading base model for router distillation
+[load] checkpoint loaded with strict=False: missing=96 unexpected=24 dtype=torch.float16
+[stage1] trainable cross-attention router params: 75497472
+[stage1][data] train=991 (ratio=0.200, seed=42)
+[stage1] epoch=1/1 step=50 loss=2.018828 kl=1.739792 logit=0.279037 t_ent=1.7081 s_ent=1.2917 top1=0.5674 topk=0.5713 cos=0.5960 elapsed=0.3m
+[stage1] epoch=1/1 step=100 loss=2.210340 kl=1.972021 logit=0.238319 t_ent=1.6995 s_ent=1.3474 top1=0.6063 topk=0.6030 cos=0.6491 elapsed=0.6m
+[stage1] epoch=1/1 step=150 loss=1.583757 kl=1.354395 logit=0.229361 t_ent=1.6895 s_ent=1.3403 top1=0.6298 topk=0.6177 cos=0.6577 elapsed=0.9m
+[stage1] epoch=1/1 step=200 loss=1.415033 kl=1.228575 logit=0.186458 t_ent=1.6961 s_ent=1.3270 top1=0.6707 topk=0.6548 cos=0.7097 elapsed=1.2m
+[stage1] epoch=1/1 step=250 loss=1.439343 kl=1.249594 logit=0.189749 t_ent=1.6857 s_ent=1.3399 top1=0.6585 topk=0.6446 cos=0.7087 elapsed=1.4m
+[stage1] epoch=1/1 step=300 loss=1.351422 kl=1.171188 logit=0.180234 t_ent=1.6962 s_ent=1.3698 top1=0.6684 topk=0.6670 cos=0.7224 elapsed=1.7m
+[stage1] epoch=1/1 step=350 loss=1.237743 kl=1.074499 logit=0.163244 t_ent=1.6477 s_ent=1.2986 top1=0.6974 topk=0.6873 cos=0.7412 elapsed=2.0m
+[stage1] epoch=1/1 step=400 loss=1.252449 kl=1.081298 logit=0.171150 t_ent=1.6730 s_ent=1.3609 top1=0.6885 topk=0.6774 cos=0.7339 elapsed=2.3m
+[stage1] epoch=1/1 step=450 loss=1.007185 kl=0.860653 logit=0.146533 t_ent=1.6511 s_ent=1.3450 top1=0.7329 topk=0.7083 cos=0.7554 elapsed=2.6m
+[stage1] saving full checkpoint to /mnt/data/models/out_moe_att_obqa/ckpt_after_stage1
+[2026-04-27 14:13:32,061] [INFO] [real_accelerator.py:203:get_accelerator] Setting ds_accelerator to cuda (auto detect)
+[93m [WARNING] [0m async_io requires the dev libaio .so object and headers but these were not found.
+[93m [WARNING] [0m async_io: please install the libaio-dev package with apt
+[93m [WARNING] [0m If libaio is already installed (perhaps from source), try setting the CFLAGS and LDFLAGS environment variables to where it can be found.
+[93m [WARNING] [0m Please specify the CUTLASS repo directory as environment variable $CUTLASS_PATH
+[93m [WARNING] [0m sparse_attn requires a torch version >= 1.5 and < 2.0 but detected 2.5
+[93m [WARNING] [0m using untested triton version (3.1.0), only 1.0.0 is known to be compatible
+
+[launcher] running:
+  /home/vipuser/miniconda3/envs/op/bin/python -m torch.distributed.run --nproc_per_node 1 /root/Predict_v2/run_stage2_moe_att.py --model_path /root/models/Dynamic_MoE --output_dir /mnt/data/models/out_moe_att_obqa --dataset openbookqa --eval_dataset openbookqa --train_split train --eval_split validation --block_size 108 --batch_size 2 --grad_accum 8 --epochs 3 --lr 0.0001 --lora_r 8 --lora_alpha 16 --lora_dropout 0.05 --num_proc 16 --load_in_8bit 0 --load_in_fp16 1 --bf16 0 --train_extra_params_in_fp32 1 --router_use_entmax 0 --router_top_k 2 --moe_att_expert_loss_coef 1.0 --moe_att_kl_loss_coef 0.1 --moe_att_use_detach 1 --stage2_init_path /mnt/data/models/out_moe_att_obqa/ckpt_after_stage1
+[load] tokenizer from model_path: /root/models/Dynamic_MoE
+[load] distributed=True world_size=1 4bit=False 8bit=False
+[train] mixed precision: fp16=False bf16=False
+[warn] load_in_fp16=1 only loads model weights in fp16; it does not enable AMP autocast. Set --fp16 1 or --bf16 1 to reduce activation memory.
+[stage2] loading model from /mnt/data/models/out_moe_att_obqa/ckpt_after_stage1
+[load] checkpoint loaded with strict=False: missing=0 unexpected=0 dtype=torch.float16
+[stage2] extra trainable new-router params: 75497472
+[stage2] cast selected router params to fp32: 75497472
+[stage2] trainable params: 112459776/3600598016 (3.12%)
+trainable params: 112,459,776 || all params: 3,600,598,016 || trainable%: 3.1234
+[stage2][eval] using OpenCompass-style PPL ranking for openbookqa
+[stage2][data] train=4957 eval=20 block_size=108
+[stage2][opt] param groups: other=2496 router=72
+[stage2][opt] lrs: other=1.000e-04 router=1.000e-04
+[train] epoch=1/3 step=50/930 loss=11.2555 ce=1.9199 ce_ema=2.7888 expert=9.0908 kl=2.4482 ewp_gn=2.830e+00 budget=0.0000 top_k=2 lr=9.995e-05 elapsed=6.6m
+[train] epoch=1/3 step=100/930 loss=10.4947 ce=2.2324 ce_ema=2.2925 expert=8.0120 kl=2.5029 ewp_gn=2.751e+00 budget=0.0000 top_k=2 lr=9.952e-05 elapsed=13.3m
+[train] epoch=1/3 step=150/930 loss=10.6348 ce=2.4551 ce_ema=2.1540 expert=7.9328 kl=2.4701 ewp_gn=6.014e+00 budget=0.0000 top_k=2 lr=9.865e-05 elapsed=20.0m
+[train] epoch=1/3 step=200/930 loss=9.4103 ce=1.9746 ce_ema=2.1029 expert=7.1827 kl=2.5295 ewp_gn=1.141e+01 budget=0.0000 top_k=2 lr=9.736e-05 elapsed=26.6m
+[train] epoch=1/3 step=250/930 loss=9.5522 ce=2.0508 ce_ema=2.0961 expert=7.2491 kl=2.5229 ewp_gn=4.246e+00 budget=0.0000 top_k=2 lr=9.571e-05 elapsed=33.2m

@@ -1,0 +1,85 @@
+[train] single-stage qw finetune ignores stage1/two-stage compatibility settings: stage1_data_ratio, stage1_distill_temperature, stage1_kl_coef, stage1_logit_coef, stage2_init_path
+[load] tokenizer from model_path: /root/models/Qwen_MoE
+[load] distributed=True world_size=1 4bit=True 8bit=False
+[load] 4bit compute_dtype=torch.bfloat16
+[train] mixed precision: fp16=False bf16=False
+[train] single-stage path: initialize CrossAttentionRouter from dense gate, then fine-tune directly
+[train] loading training model from /root/models/Qwen_MoE
+[init] layer 0 expert_embed initialized from legacy router.weight
+[init] layer 0 expert_key initialized from legacy router.weight
+[init] layer 1 expert_embed initialized from legacy router.weight
+[init] layer 1 expert_key initialized from legacy router.weight
+[init] layer 2 expert_embed initialized from legacy router.weight
+[init] layer 2 expert_key initialized from legacy router.weight
+[init] layer 3 expert_embed initialized from legacy router.weight
+[init] layer 3 expert_key initialized from legacy router.weight
+[init] layer 4 expert_embed initialized from legacy router.weight
+[init] layer 4 expert_key initialized from legacy router.weight
+[init] layer 5 expert_embed initialized from legacy router.weight
+[init] layer 5 expert_key initialized from legacy router.weight
+[init] layer 6 expert_embed initialized from legacy router.weight
+[init] layer 6 expert_key initialized from legacy router.weight
+[init] layer 7 expert_embed initialized from legacy router.weight
+[init] layer 7 expert_key initialized from legacy router.weight
+[init] layer 8 expert_embed initialized from legacy router.weight
+[init] layer 8 expert_key initialized from legacy router.weight
+[init] layer 9 expert_embed initialized from legacy router.weight
+[init] layer 9 expert_key initialized from legacy router.weight
+[init] layer 10 expert_embed initialized from legacy router.weight
+[init] layer 10 expert_key initialized from legacy router.weight
+[init] layer 11 expert_embed initialized from legacy router.weight
+[init] layer 11 expert_key initialized from legacy router.weight
+[init] layer 12 expert_embed initialized from legacy router.weight
+[init] layer 12 expert_key initialized from legacy router.weight
+[init] layer 13 expert_embed initialized from legacy router.weight
+[init] layer 13 expert_key initialized from legacy router.weight
+[init] layer 14 expert_embed initialized from legacy router.weight
+[init] layer 14 expert_key initialized from legacy router.weight
+[init] layer 15 expert_embed initialized from legacy router.weight
+[init] layer 15 expert_key initialized from legacy router.weight
+[init] layer 16 expert_embed initialized from legacy router.weight
+[init] layer 16 expert_key initialized from legacy router.weight
+[init] layer 17 expert_embed initialized from legacy router.weight
+[init] layer 17 expert_key initialized from legacy router.weight
+[init] layer 18 expert_embed initialized from legacy router.weight
+[init] layer 18 expert_key initialized from legacy router.weight
+[init] layer 19 expert_embed initialized from legacy router.weight
+[init] layer 19 expert_key initialized from legacy router.weight
+[init] layer 20 expert_embed initialized from legacy router.weight
+[init] layer 20 expert_key initialized from legacy router.weight
+[init] layer 21 expert_embed initialized from legacy router.weight
+[init] layer 21 expert_key initialized from legacy router.weight
+[init] layer 22 expert_embed initialized from legacy router.weight
+[init] layer 22 expert_key initialized from legacy router.weight
+[init] layer 23 expert_embed initialized from legacy router.weight
+[init] layer 23 expert_key initialized from legacy router.weight
+[init] initialized new router modules from legacy dense router for 24 layers
+[stage2] extra trainable new-router params: 509214720
+[stage2] cast selected router params to fp32: 0
+[stage2] trainable params: 763232256/8078305280 (9.45%)
+trainable params: 763,232,256 || all params: 15,079,016,448 || trainable%: 5.0616
+[stage2][data] train=16113 eval=200 block_size=128
+[stage2][opt] param groups: other=8976 router=168
+[stage2][opt] lrs: other=5.000e-05 router=5.750e-05
+[router-nonfinite][rank0] router.expert_value.input: shape=(60, 2048) device=cuda:0 dtype=torch.float32 nonfinite=4347/122880 finite_min=-1.625 finite_max=3.190147189883798e+38 finite_mean=inf sample_bad=[inf, inf, inf, inf, inf, inf, inf, inf]
+[router-nonfinite][rank0] router.v: shape=(60, 2048) device=cuda:0 dtype=torch.float32 nonfinite=69632/122880 finite_min=0.0 finite_max=0.0 finite_mean=0.0 sample_bad=[nan, nan, nan, nan, nan, nan, nan, nan]
+[router-nonfinite][rank0] router.context.pre_clean: shape=(3, 128, 2048) device=cuda:0 dtype=torch.float32 nonfinite=786432/786432 finite_min=None finite_max=None finite_mean=None sample_bad=[nan, nan, nan, nan, nan, nan, nan, nan]
+[router-nonfinite][rank0] moe.hidden_states.input: shape=(3, 128, 2048) device=cuda:0 dtype=torch.float32 nonfinite=786432/786432 finite_min=None finite_max=None finite_mean=None sample_bad=[nan, nan, nan, nan, nan, nan, nan, nan]
+[router-nonfinite][rank0] router.hidden_states: shape=(3, 128, 2048) device=cuda:0 dtype=torch.float32 nonfinite=786432/786432 finite_min=None finite_max=None finite_mean=None sample_bad=[nan, nan, nan, nan, nan, nan, nan, nan]
+[router-nonfinite][rank0] router.expert_key.input: shape=(60, 2048) device=cuda:0 dtype=torch.float32 nonfinite=122880/122880 finite_min=None finite_max=None finite_mean=None sample_bad=[nan, nan, nan, nan, nan, nan, nan, nan]
+[router-nonfinite][rank0] router.q: shape=(3, 128, 2048) device=cuda:0 dtype=torch.float32 nonfinite=786432/786432 finite_min=None finite_max=None finite_mean=None sample_bad=[nan, nan, nan, nan, nan, nan, nan, nan]
+[router-nonfinite][rank0] router.k: shape=(60, 2048) device=cuda:0 dtype=torch.float32 nonfinite=122880/122880 finite_min=None finite_max=None finite_mean=None sample_bad=[nan, nan, nan, nan, nan, nan, nan, nan]
+[router-nonfinite][rank0] router.attn_scores.pre_clean: shape=(3, 128, 60) device=cuda:0 dtype=torch.float32 nonfinite=23040/23040 finite_min=None finite_max=None finite_mean=None sample_bad=[nan, nan, nan, nan, nan, nan, nan, nan]
+[router-nonfinite][rank0] router.projected_context.pre_clean: shape=(3, 128, 2048) device=cuda:0 dtype=torch.float32 nonfinite=786432/786432 finite_min=None finite_max=None finite_mean=None sample_bad=[nan, nan, nan, nan, nan, nan, nan, nan]
+[router-nonfinite][rank0] moe.conditioned_hidden_states: shape=(3, 128, 2048) device=cuda:0 dtype=torch.float32 nonfinite=786432/786432 finite_min=None finite_max=None finite_mean=None sample_bad=[nan, nan, nan, nan, nan, nan, nan, nan]
+[router-nonfinite][rank0] pull_loss.token_q: shape=(3, 128, 2048) device=cuda:0 dtype=torch.float32 nonfinite=786432/786432 finite_min=None finite_max=None finite_mean=None sample_bad=[nan, nan, nan, nan, nan, nan, nan, nan]
+[router-nonfinite][rank0] pull_loss.expert_k: shape=(60, 2048) device=cuda:0 dtype=torch.float32 nonfinite=122880/122880 finite_min=None finite_max=None finite_mean=None sample_bad=[nan, nan, nan, nan, nan, nan, nan, nan]
+[router-nonfinite][rank0] pull_loss.sim: shape=(3, 128, 60) device=cuda:0 dtype=torch.float32 nonfinite=23040/23040 finite_min=None finite_max=None finite_mean=None sample_bad=[nan, nan, nan, nan, nan, nan, nan, nan]
+[router-nonfinite][rank0] moe.flat_hidden: shape=(384, 2048) device=cuda:0 dtype=torch.float32 nonfinite=786432/786432 finite_min=None finite_max=None finite_mean=None sample_bad=[nan, nan, nan, nan, nan, nan, nan, nan]
+[router-nonfinite][rank0] moe.expert0.selected_hidden: shape=(384, 2048) device=cuda:0 dtype=torch.float32 nonfinite=786432/786432 finite_min=None finite_max=None finite_mean=None sample_bad=[nan, nan, nan, nan, nan, nan, nan, nan]
+[router-nonfinite][rank0] moe.expert0.output: shape=(384, 2048) device=cuda:0 dtype=torch.float32 nonfinite=786432/786432 finite_min=None finite_max=None finite_mean=None sample_bad=[nan, nan, nan, nan, nan, nan, nan, nan]
+[router-nonfinite][rank0] moe.expert1.selected_hidden: shape=(384, 2048) device=cuda:0 dtype=torch.float32 nonfinite=786432/786432 finite_min=None finite_max=None finite_mean=None sample_bad=[nan, nan, nan, nan, nan, nan, nan, nan]
+[router-nonfinite][rank0] moe.expert1.output: shape=(384, 2048) device=cuda:0 dtype=torch.float32 nonfinite=786432/786432 finite_min=None finite_max=None finite_mean=None sample_bad=[nan, nan, nan, nan, nan, nan, nan, nan]
+[router-nonfinite][rank0] moe.shared_hidden: shape=(384, 2048) device=cuda:0 dtype=torch.float32 nonfinite=786432/786432 finite_min=None finite_max=None finite_mean=None sample_bad=[nan, nan, nan, nan, nan, nan, nan, nan]
+[router-nonfinite][rank0] moe.shared_expert_output: shape=(384, 2048) device=cuda:0 dtype=torch.float32 nonfinite=786432/786432 finite_min=None finite_max=None finite_mean=None sample_bad=[nan, nan, nan, nan, nan, nan, nan, nan]
+[router-nonfinite][rank0] moe.output_total: shape=(384, 2048) device=cuda:0 dtype=torch.float32 nonfinite=786432/786432 finite_min=None finite_max=None finite_mean=None sample_bad=[nan, nan, nan, nan, nan, nan, nan, nan]

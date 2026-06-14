@@ -1,0 +1,65 @@
+{
+  "launcher": {
+    "nproc_per_node": 1
+  },
+  "run": {
+    "name": "winogrande",
+    "log_path": "/home/cyx/qwen_moe",
+    "output_dir": "/mnt/data/models/fv1_winogrande_s44"
+  },
+  "common_args": {
+    "model_path": "/root/models/Dynamic_MoE",
+    "output_dir": "/mnt/data/models/fv1_winogrande_s44",
+    "dataset": "winogrande",
+    "eval_dataset": "winogrande",
+    "train_split": "train",
+    "eval_split": "validation",
+    "winogrande_config": "winogrande_xl",
+    "block_size": 150,
+    "batch_size": 22,
+    "grad_accum": 1,
+    "epochs": 3,
+    "lr": 0.00008,
+    "lora_r": 16,
+    "lora_alpha": 16,
+    "lora_dropout": 0.05,
+    "num_proc": 16,
+    "load_in_4bit": 0,
+    "load_in_8bit": 0,
+    "use_bnb_8bit": 0,
+    "load_in_fp16": 0,
+    "fp16": 0,
+    "bf16": 0,
+    "train_extra_params_in_fp32": 1,
+    "router_use_entmax": 0,
+    "router_top_k": 2,
+    "router_entmax_alpha": 1.7,
+    "router_value_anchor_loss_coef": 0.01,
+    "router_anchor_momentum": 0.99,
+    "min_lr_ratio": 0.1,
+    "router_lr_mult": 1.0,
+    "eval_max_samples": 400,
+    "router_use_softmax_temperature": 1,
+    "router_softmax_temperature": 1.1,
+    "train_new_router_params": 1,
+    "router_aux_loss_coef": 0.01,
+    "init_new_router_from_legacy": 1,
+    "eval_every":3000,
+    "seed": 44,
+    "stage_split_seed": 44
+  },
+  "stage1_args": {
+    "stage1_epochs": 1,
+    "stage1_lr": 0.0001,
+    "stage1_grad_accum": 1,
+    "stage1_data_ratio": 0.5,
+    "stage1_distill_temperature": 2.0,
+    "stage1_kl_coef": 2.0,
+    "stage1_logit_coef": 0.25,
+    "stage1_use_logit_loss": 1
+  },
+  "stage2_args": {
+    "stage2_include_validation_in_train": 0,
+    "stage2_validation_train_ratio": 0.05
+  }
+}

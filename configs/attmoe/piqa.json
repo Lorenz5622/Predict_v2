@@ -1,0 +1,50 @@
+{
+  "launcher": {
+    "nproc_per_node": 2
+  },
+  "run": {
+    "name": "moe_att_piqa",
+    "log_path": "/root/Predict_v2/logs",
+    "output_dir": "/mnt/data/models/out_moe_att_piqa"
+  },
+  "common_args": {
+    "model_path": "/root/models/Dynamic_MoE",
+    "output_dir": "/mnt/data/models/out_moe_att_piqa",
+    "dataset": "piqa",
+    "eval_dataset": "piqa",
+    "train_split": "train",
+    "eval_split": "validation",
+    "block_size": 72,
+    "batch_size": 16,
+    "grad_accum": 1,
+    "epochs": 3,
+    "lr": 0.0001,
+    "lora_r": 8,
+    "lora_alpha": 16,
+    "lora_dropout": 0.05,
+    "num_proc": 16,
+    "load_in_8bit": 0,
+    "load_in_fp16": 1,
+    "bf16": 0,
+    "fp16": 1,
+    "train_extra_params_in_fp32": 1,
+    "router_use_entmax": 0,
+    "router_top_k": 2,
+    "moe_att_expert_loss_coef": 1.0,
+    "moe_att_kl_loss_coef": 0.1,
+    "moe_att_use_detach": 1
+  },
+  "stage1_args": {
+    "stage1_epochs": 1,
+    "stage1_lr": 0.0002,
+    "stage1_grad_accum": 1,
+    "stage1_data_ratio": 0.2,
+    "stage1_distill_temperature": 1.0,
+    "stage1_kl_coef": 1.0,
+    "stage1_logit_coef": 1.0,
+    "stage1_use_logit_loss": 1
+  },
+  "stage2_args": {
+    "stage2_init_path": "{output_dir}/ckpt_after_stage1"
+  }
+}
